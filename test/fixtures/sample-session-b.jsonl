@@ -1,0 +1,2 @@
+{"type":"session","version":3,"id":"sample-b","timestamp":"2026-04-17T00:00:00.000Z","cwd":"/tmp/project"}
+{"type":"message","id":"b-1","parentId":null,"timestamp":"2026-04-17T00:00:01.000Z","message":{"role":"user","content":"Execute the handoff","timestamp":1}}

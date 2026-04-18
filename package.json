@@ -1,0 +1,28 @@
+{
+  "name": "pi-dual-agent-coordinator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "pi-dual": "./dist/src/index.js"
+  },
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "repl": "node ./dist/src/index.js repl",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.67.68",
+    "zod": "^4.3.6"
+  }
+}

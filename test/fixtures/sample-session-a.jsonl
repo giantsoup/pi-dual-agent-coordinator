@@ -1,0 +1,2 @@
+{"type":"session","version":3,"id":"sample-a","timestamp":"2026-04-17T00:00:00.000Z","cwd":"/tmp/project"}
+{"type":"message","id":"a-1","parentId":null,"timestamp":"2026-04-17T00:00:01.000Z","message":{"role":"user","content":"Plan the work","timestamp":1}}
