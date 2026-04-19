@@ -38,6 +38,8 @@ export interface ExecutionPlanEnvelope {
   constraints?: string[] | undefined;
 }
 
+export type PlanProposalEnvelope = ExecutionPlanEnvelope;
+
 export interface CompletionRecord {
   schemaVersion: 1;
   workflowId: string;

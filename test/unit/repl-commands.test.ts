@@ -11,6 +11,18 @@ describe("repl commands", () => {
     expect(parseReplCommand("/status")).toEqual({ type: "status" });
   });
 
+  it("parses approve", () => {
+    expect(parseReplCommand("/approve")).toEqual({ type: "approve" });
+  });
+
+  it("parses discard", () => {
+    expect(parseReplCommand("/discard")).toEqual({ type: "discard" });
+  });
+
+  it("parses help", () => {
+    expect(parseReplCommand("/help")).toEqual({ type: "help" });
+  });
+
   it("parses sessions", () => {
     expect(parseReplCommand("/sessions")).toEqual({ type: "sessions" });
   });
@@ -34,5 +46,20 @@ describe("repl commands", () => {
 
   it("parses max review rounds from CLI args", () => {
     expect(parseCliArgs(["repl", ".", "--max-review-rounds", "5"]).maxReviewRounds).toBe(5);
+  });
+
+  it("defaults cwd to INIT_CWD when no path is provided", () => {
+    const previous = process.env.INIT_CWD;
+    process.env.INIT_CWD = "/tmp/operator-project";
+
+    try {
+      expect(parseCliArgs(["repl"]).cwd).toBe("/tmp/operator-project");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.INIT_CWD;
+      } else {
+        process.env.INIT_CWD = previous;
+      }
+    }
   });
 });

@@ -15,6 +15,97 @@ import {
 import { SessionLedger } from "../../src/persistence/session-ledger.js";
 
 describe("workflow review loop", () => {
+  it("supports approval-gated planning with pi-plan, /status exposure, and /approve execution", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-dual-handoff-approve-"));
+    const runtimes = new Map<string, FakeRuntime>();
+    let planningTurnCount = 0;
+
+    const coordinator = new Coordinator({
+      cwd: process.cwd(),
+      sessionRoot: root,
+      sessionMode: "memory",
+      jsonLogs: false,
+      verbose: false,
+      createRoleRuntime: async (options: CreateRoleRuntimeOptions) => {
+        const session =
+          options.role === "A"
+            ? new FakeSession(
+                "A-session-1",
+                join(root, "A.jsonl"),
+                async (promptText) => {
+                  if (promptText.includes("Coordinator review prompt")) {
+                    const workflowId = extractField(promptText, "Workflow ID");
+                    await session.emit(
+                      assistantTurnEnd(`
+\`\`\`pi-final
+{"schemaVersion":1,"workflowId":"${workflowId}","iteration":1,"decision":"approved","summary":"Complete","userResponse":"Implemented from the approved plan.","changedPaths":["src/index.ts"]}
+\`\`\`
+`)
+                    );
+                    return;
+                  }
+
+                  planningTurnCount += 1;
+                  if (planningTurnCount === 1) {
+                    await session.emit(
+                      assistantTurnEnd(`
+Plan draft below.
+\n\`\`\`pi-plan
+{"schemaVersion":1,"objective":"Implement the feature","summary":"The feature is planned and ready for approval.","acceptanceCriteria":["Tests pass"],"relevantPaths":["src/index.ts"],"executionPlan":["Update the implementation","Run focused tests"],"constraints":["Keep the diff scoped"]}
+\`\`\`
+`)
+                    );
+                    return;
+                  }
+                  await session.emit(assistantTurnEnd("Revised planning response."));
+                }
+              )
+            : new FakeSession(
+                "B-session-1",
+                join(root, "B.jsonl"),
+                async (promptText) => {
+                  const workflowId = extractField(promptText, "Workflow ID");
+                  const handoffId = extractField(promptText, "Handoff ID");
+                  const iteration = extractField(promptText, "Iteration");
+                  await session.emit(
+                    assistantTurnEnd(`
+\`\`\`pi-completion
+{"schemaVersion":1,"workflowId":"${workflowId}","handoffId":"${handoffId}","iteration":${iteration},"summary":"Done","changedPaths":["src/index.ts"]}
+\`\`\`
+`)
+                  );
+                }
+              );
+        const runtime = new FakeRuntime(process.cwd(), session, options.role);
+        runtimes.set(options.role, runtime);
+        return createFakeBinding(options.role, runtime);
+      }
+    });
+
+    await coordinator.start();
+
+    const planned = await coordinator.submitUserInput("Come up with the plan first.");
+
+    expect(planned.pendingPlan?.summary).toBe("The feature is planned and ready for approval.");
+    expect(planned.userResponse).toContain("Plan draft below.");
+    expect(coordinator.getStatus().conversationMode).toBe("planning");
+    expect(coordinator.getStatus().pendingPlanReady).toBe(true);
+    expect(coordinator.getStatus().pendingPlan?.constraints).toEqual(["Keep the diff scoped"]);
+    expect(coordinator.getStatus().nextActionHint).toBe(
+      "Run /approve to start coordinated execution with Agent B."
+    );
+    expect(runtimes.get("B")?.session.prompts).toHaveLength(0);
+
+    const approved = await coordinator.approvePendingPlan();
+
+    expect(approved.workflow?.status).toBe("completed");
+    expect(approved.userResponse).toContain("Implemented from the approved plan.");
+    expect(coordinator.getStatus().pendingPlanReady).toBe(false);
+    expect(runtimes.get("B")?.session.prompts).toHaveLength(1);
+
+    await coordinator.dispose();
+  });
+
   it("supports multiple planning turns before execution and returns to planning afterward", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-dual-handoff-"));
     const runtimes = new Map<string, FakeRuntime>();
@@ -91,7 +182,8 @@ describe("workflow review loop", () => {
 
     await coordinator.start();
 
-    expect(coordinator.getStatus().conversationMode).toBe("planning");
+    expect(coordinator.getStatus().phase).toBe("planning");
+    expect(coordinator.getStatus().activeRole).toBe("A");
 
     const first = await coordinator.submitUserInput("Talk through the plan.");
     const second = await coordinator.submitUserInput("Keep planning for now.");
@@ -107,7 +199,8 @@ describe("workflow review loop", () => {
     expect(execution.userResponse).toContain("Implemented the feature.");
     expect(runtimes.get("B")?.session.prompts).toHaveLength(1);
     expect((await coordinator.getLastHandoff()).workflow?.status).toBe("completed");
-    expect(coordinator.getStatus().conversationMode).toBe("planning");
+    expect(coordinator.getStatus().phase).toBe("planning");
+    expect(coordinator.getStatus().activeRole).toBe("A");
 
     const afterCompletion = await coordinator.submitUserInput("What should we do next?");
 
@@ -260,18 +353,110 @@ describe("workflow review loop", () => {
     });
 
     await coordinator.start();
-    expect(coordinator.getStatus().conversationMode).toBe("planning");
+    expect(coordinator.getStatus().phase).toBe("planning");
+    expect(coordinator.getStatus().activeRole).toBe("A");
 
     const pending = coordinator.submitUserInput("Start execution now.");
-    await waitFor(() => coordinator.getStatus().conversationMode === "executing");
+    await waitFor(() => coordinator.getStatus().phase === "execution");
 
     expect(coordinator.getStatus().conversationMode).toBe("executing");
+    expect(coordinator.getStatus().phase).toBe("execution");
+    expect(coordinator.getStatus().activeRole).toBe("B");
+    expect(coordinator.getStatus().activeWorkflowId).toBeTruthy();
+    expect(coordinator.getStatus().currentIteration).toBe(1);
+    expect(coordinator.getStatus().workflowStatus).toBe("running");
 
     bGate.resolve();
     const result = await pending;
 
     expect(result.workflow?.status).toBe("completed");
-    expect(coordinator.getStatus().conversationMode).toBe("planning");
+    expect(coordinator.getStatus().phase).toBe("planning");
+    expect(coordinator.getStatus().activeRole).toBe("A");
+
+    await coordinator.dispose();
+  });
+
+  it("reports repair state and live repair counts while a repair prompt is in flight", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-dual-handoff-live-repair-"));
+    const repairGate = createDeferred<void>();
+    let bPromptCount = 0;
+
+    const coordinator = new Coordinator({
+      cwd: process.cwd(),
+      sessionRoot: root,
+      sessionMode: "memory",
+      jsonLogs: false,
+      verbose: false,
+      createRoleRuntime: async (options: CreateRoleRuntimeOptions) => {
+        const session =
+          options.role === "A"
+            ? new FakeSession(
+                "A-session-1",
+                join(root, "A.jsonl"),
+                async (promptText) => {
+                  if (promptText.includes("Coordinator review prompt")) {
+                    const workflowId = extractField(promptText, "Workflow ID");
+                    await session.emit(
+                      assistantTurnEnd(`
+\`\`\`pi-final
+{"schemaVersion":1,"workflowId":"${workflowId}","iteration":1,"decision":"approved","summary":"Complete","userResponse":"Done after repair.","changedPaths":["src/index.ts"]}
+\`\`\`
+`)
+                    );
+                    return;
+                  }
+                  await session.emit(
+                    assistantTurnEnd(`
+\`\`\`pi-execute
+{"schemaVersion":1,"objective":"Implement the feature","summary":"Ready","acceptanceCriteria":["Tests pass"],"relevantPaths":["src/index.ts"],"executionPlan":["Update the implementation","Run focused tests"]}
+\`\`\`
+`)
+                  );
+                }
+              )
+            : new FakeSession(
+                "B-session-1",
+                join(root, "B.jsonl"),
+                async (promptText) => {
+                  bPromptCount += 1;
+                  const workflowId = extractField(promptText, "Workflow ID");
+                  const handoffId = extractField(promptText, "Handoff ID");
+                  const iteration = extractField(promptText, "Iteration");
+                  if (bPromptCount === 1) {
+                    await session.emit(assistantTurnEnd("This is not a valid completion block."));
+                    return;
+                  }
+                  await repairGate.promise;
+                  await session.emit(
+                    assistantTurnEnd(`
+\`\`\`pi-completion
+{"schemaVersion":1,"workflowId":"${workflowId}","handoffId":"${handoffId}","iteration":${iteration},"summary":"Done","changedPaths":["src/index.ts"]}
+\`\`\`
+`)
+                  );
+                }
+              );
+        return createFakeBinding(options.role, new FakeRuntime(process.cwd(), session, options.role));
+      }
+    });
+
+    await coordinator.start();
+
+    const pending = coordinator.submitUserInput("Start execution now.");
+    await waitFor(
+      () => coordinator.getStatus().phase === "repair" && coordinator.getStatus().repairCount === 1
+    );
+
+    expect(coordinator.getStatus().activeRole).toBe("B");
+    expect(coordinator.getStatus().activeWorkflowId).toBeTruthy();
+    expect(coordinator.getStatus().currentIteration).toBe(1);
+    expect(coordinator.getStatus().workflowStatus).toBe("running");
+
+    repairGate.resolve();
+    const result = await pending;
+
+    expect(result.workflow?.status).toBe("completed");
+    expect(result.workflow?.finalSummary).toContain("Complete");
 
     await coordinator.dispose();
   });

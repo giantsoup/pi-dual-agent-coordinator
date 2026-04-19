@@ -13,9 +13,23 @@ export interface WorkflowRunResult {
   requestId: string;
 }
 
+export interface PendingExecutionPlanSnapshot {
+  objective: string;
+  summary: string;
+  acceptanceCriteria: string[];
+  relevantPaths: string[];
+  executionPlan: string[];
+  constraints?: string[] | undefined;
+  proposedAt: string;
+  requestId: string;
+  proposedByRole: "A";
+}
+
 export interface CoordinatorTurnResult {
   mode: ConversationMode;
   userResponse: string;
+  pendingPlan?: PendingExecutionPlanSnapshot | undefined;
+  nextActionHint?: string | undefined;
   workflow?:
     | {
         workflowId: string;

@@ -5,15 +5,18 @@ import {
   completionRecordSchema,
   executionPlanEnvelopeSchema,
   finalDecisionSchema,
-  handoffEnvelopeSchema
+  handoffEnvelopeSchema,
+  planProposalEnvelopeSchema
 } from "./handoff-envelope-schema.js";
 import type {
   CompletionRecord,
   ExecutionPlanEnvelope,
   FinalDecisionRecord,
-  HandoffEnvelope
+  HandoffEnvelope,
+  PlanProposalEnvelope
 } from "../types/handoff.js";
 
+export const PLAN_BLOCK_TYPE = "pi-plan";
 export const EXECUTE_BLOCK_TYPE = "pi-execute";
 export const HANDOFF_BLOCK_TYPE = "pi-handoff";
 export const COMPLETION_BLOCK_TYPE = "pi-completion";
@@ -53,6 +56,16 @@ export function parseExecutionPlanEnvelope(
   return executionPlanEnvelopeSchema.parse(JSON.parse(block));
 }
 
+export function parsePlanProposalEnvelope(
+  message: AgentMessage
+): PlanProposalEnvelope | undefined {
+  const block = extractMachineBlock(extractAssistantText(message), PLAN_BLOCK_TYPE);
+  if (!block) {
+    return undefined;
+  }
+  return planProposalEnvelopeSchema.parse(JSON.parse(block));
+}
+
 export function parseCompletionRecord(message: AgentMessage): CompletionRecord | undefined {
   const block = extractMachineBlock(extractAssistantText(message), COMPLETION_BLOCK_TYPE);
   if (!block) {
@@ -82,6 +95,16 @@ export function maybeParseExecutionPlanEnvelope(
 ): ExecutionPlanEnvelope | undefined {
   try {
     return parseExecutionPlanEnvelope(message);
+  } catch {
+    return undefined;
+  }
+}
+
+export function maybeParsePlanProposalEnvelope(
+  message: AgentMessage
+): PlanProposalEnvelope | undefined {
+  try {
+    return parsePlanProposalEnvelope(message);
   } catch {
     return undefined;
   }

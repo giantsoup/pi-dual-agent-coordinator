@@ -20,6 +20,11 @@ describe("renderHandoffMessage", () => {
     expect(message).toContain("Execution plan:");
     expect(message).toContain("- Update the implementation");
     expect(message).toContain("- Run tests");
+    expect(message).toContain("It is not a tool name");
+    expect(message).toContain("For `pi-completion.summary`, describe the concrete code changes");
+    expect(message).toContain("Include `verification`");
+    expect(message).toContain("not as a tool call");
+    expect(message).toContain("do not place prose after the completion block");
     expect(message).not.toContain("raw planning transcript");
   });
 });

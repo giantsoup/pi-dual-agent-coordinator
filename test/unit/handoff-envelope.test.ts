@@ -4,7 +4,8 @@ import {
   maybeParseCompletionRecord,
   maybeParseExecutionPlanEnvelope,
   maybeParseFinalDecisionRecord,
-  maybeParseHandoffEnvelope
+  maybeParseHandoffEnvelope,
+  maybeParsePlanProposalEnvelope
 } from "../../src/handoff/handoff-envelope.js";
 import { assistantMessage } from "../helpers/fakes.js";
 
@@ -23,6 +24,19 @@ describe("workflow machine blocks", () => {
       "Update the implementation",
       "Run tests"
     ]);
+  });
+
+  it("accepts a valid plan block", () => {
+    const message = assistantMessage(`
+\`\`\`pi-plan
+{"schemaVersion":1,"objective":"Implement feature","summary":"Ready for approval","acceptanceCriteria":["tests pass"],"relevantPaths":["src/index.ts"],"executionPlan":["Update the implementation","Run tests"],"constraints":["Keep the diff scoped"]}
+\`\`\`
+`);
+
+    const envelope = maybeParsePlanProposalEnvelope(message);
+
+    expect(envelope?.summary).toBe("Ready for approval");
+    expect(envelope?.constraints).toEqual(["Keep the diff scoped"]);
   });
 
   it("accepts a valid handoff block", () => {

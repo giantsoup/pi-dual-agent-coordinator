@@ -2,5 +2,6 @@ export {
   completionRecordSchema,
   executionPlanEnvelopeSchema,
   finalDecisionSchema,
-  handoffEnvelopeSchema
+  handoffEnvelopeSchema,
+  planProposalEnvelopeSchema
 } from "../workflow/workflow-schema.js";

@@ -38,6 +38,8 @@ export const executionPlanEnvelopeSchema = z.object({
   constraints: z.array(z.string().min(1)).optional()
 });
 
+export const planProposalEnvelopeSchema = executionPlanEnvelopeSchema;
+
 export const completionRecordSchema = z.object({
   schemaVersion: schemaVersionSchema,
   workflowId: workflowIdSchema,

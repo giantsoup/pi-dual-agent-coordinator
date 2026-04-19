@@ -21,7 +21,10 @@ export interface ReplCliOptions {
 
 export type ParsedReplCommand =
   | { type: "user_turn"; text: string }
+  | { type: "help" }
   | { type: "status" }
+  | { type: "approve" }
+  | { type: "discard" }
   | { type: "sessions" }
   | { type: "handoff" }
   | { type: "new"; role: Role }
@@ -30,7 +33,10 @@ export type ParsedReplCommand =
 
 const VALID_THINKING = new Set<ReplThinkingLevel>(["off", "low", "medium", "high"]);
 
-export function parseCliArgs(argv: string[], baseCwd = process.cwd()): ReplCliOptions {
+export function parseCliArgs(
+  argv: string[],
+  baseCwd = process.env.INIT_CWD ? resolve(process.env.INIT_CWD) : process.cwd()
+): ReplCliOptions {
   const [command, maybeCwd, ...rest] = argv;
 
   if (command !== "repl") {
@@ -103,6 +109,15 @@ export function parseReplCommand(input: string): ParsedReplCommand {
   }
   if (trimmed === "/status") {
     return { type: "status" };
+  }
+  if (trimmed === "/approve") {
+    return { type: "approve" };
+  }
+  if (trimmed === "/discard") {
+    return { type: "discard" };
+  }
+  if (trimmed === "/help") {
+    return { type: "help" };
   }
   if (trimmed === "/sessions") {
     return { type: "sessions" };

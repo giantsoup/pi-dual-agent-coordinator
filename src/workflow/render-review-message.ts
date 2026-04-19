@@ -17,6 +17,7 @@ export function renderReviewMessage(
     "Coordinator review prompt for Agent A.",
     "You are the final sign-off owner for this workflow.",
     "Do not rely on any raw Agent B assistant text beyond this normalized completion summary.",
+    "If you finalize, make the operator-facing response specific and informative rather than generic.",
     "",
     `Original user objective: ${workflow.userTask ?? "(missing)"}`,
     `Workflow ID: ${workflow.workflowId}`,
@@ -31,9 +32,17 @@ export function renderReviewMessage(
     "",
     ...renderList("Open questions:", completion.openQuestions),
     "",
+    "If you emit `pi-final`:",
+    "- Keep `summary` short and factual.",
+    "- Remember that `pi-final` is a fenced block label in assistant text, not a tool name.",
+    "- Make `userResponse` explain what Agent B changed, which files or areas were touched, what verification ran, and any notable caveats or follow-ups when relevant.",
+    "- Use the normalized completion data above instead of a generic success statement.",
+    "",
+    "If you emit `pi-handoff`, provide concrete revision notes that Agent B can act on directly.",
+    "",
     `If you emit \`pi-final\`, its iteration must stay ${completion.iteration}.`,
     `If you emit \`pi-handoff\`, its iteration must advance to ${completion.iteration + 1}.`,
-    "Either emit `pi-final` if the workflow is complete, or emit the next `pi-handoff` with concrete revision notes."
+    "End your turn with exactly one `pi-final` or `pi-handoff` JSON block. Write it as plain assistant text, not as a tool call. Do not emit any other machine blocks."
   ]
     .filter((line, index, lines) => !(line === "" && lines[index - 1] === ""))
     .join("\n");

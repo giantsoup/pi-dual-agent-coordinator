@@ -1,8 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
+import {
+  deriveActivityUpdate,
+  renderActivityText,
+  renderReasonText,
+  type ActivitySnapshot
+} from "../app/activity-summary.js";
 import { withPromptProvenance } from "../app/prompt-provenance.js";
 import { createRequestId } from "../telemetry/correlation.js";
+import { normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
 import { RuntimeEventBridge } from "./bind-runtime-events.js";
 import { createEmptyHandoffState } from "./handoff-state-machine.js";
 import { WorkflowOrchestrator, createWorkflowHandoffEnvelope } from "./workflow-orchestrator.js";
@@ -23,15 +30,25 @@ import { SessionLedger } from "../persistence/session-ledger.js";
 import { createHandoffId } from "../handoff/handoff-id.js";
 import {
   COMPLETION_BLOCK_TYPE,
+  PLAN_BLOCK_TYPE,
   EXECUTE_BLOCK_TYPE,
   FINAL_BLOCK_TYPE,
   HANDOFF_BLOCK_TYPE,
   extractAssistantText,
-  maybeParseExecutionPlanEnvelope
+  maybeParseExecutionPlanEnvelope,
+  maybeParsePlanProposalEnvelope
 } from "../handoff/handoff-envelope.js";
 import type { HandoffRecord } from "../types/handoff.js";
 import type { Role } from "../types/role.js";
-import type { CoordinatorTurnResult, ConversationMode, WorkflowSnapshot, WorkflowState } from "../types/workflow.js";
+import type { NormalizedTelemetryEvent } from "../types/telemetry.js";
+import type { CoordinatorStatusSnapshot, CoordinatorUiPhase } from "../types/status.js";
+import type {
+  CoordinatorTurnResult,
+  ConversationMode,
+  PendingExecutionPlanSnapshot,
+  WorkflowSnapshot,
+  WorkflowState
+} from "../types/workflow.js";
 import { isWorkflowTerminal } from "../types/workflow.js";
 
 export interface CoordinatorOptions {
@@ -63,7 +80,15 @@ export class Coordinator {
   private readonly eventBridge: RuntimeEventBridge;
   private workflowState: WorkflowState = createEmptyHandoffState();
   private lastSummary: string | undefined;
-  private executionInFlight = false;
+  private pendingPlan: PendingExecutionPlanSnapshot | undefined;
+  private uiState: { phase: CoordinatorUiPhase; activeRole: Role } = {
+    phase: "planning",
+    activeRole: "A"
+  };
+  private readonly runtimeActivity = new Map<Role, ActivitySnapshot>();
+  private readonly lastToolNames = new Map<Role, string>();
+  private coordinatorActivity: ActivitySnapshot | undefined;
+  private readonly unsubscribeActivityListener: () => void;
 
   public constructor(private readonly options: CoordinatorOptions) {
     this.sessionRoot = options.sessionRoot ?? getDefaultSessionRoot(options.cwd);
@@ -83,8 +108,17 @@ export class Coordinator {
       this.ledger,
       this.eventBridge,
       this.logger,
-      this.metrics
+      this.metrics,
+      (phase, role) => {
+        this.uiState = { phase, activeRole: role };
+      },
+      (state) => {
+        this.workflowState = state;
+      }
     );
+    this.unsubscribeActivityListener = this.logger.subscribe((event) => {
+      this.observeActivityEvent(event);
+    });
   }
 
   public async start(): Promise<void> {
@@ -111,9 +145,11 @@ export class Coordinator {
     this.registry.set(bindingB);
     await this.eventBridge.bind(bindingA);
     await this.eventBridge.bind(bindingB);
+    this.setUiState("planning", "A");
   }
 
   public async submitUserInput(text: string): Promise<CoordinatorTurnResult> {
+    this.clearAllActivity();
     const activeWorkflow = this.getActiveWorkflow();
     if (activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)) {
       throw new Error(
@@ -127,8 +163,10 @@ export class Coordinator {
     this.eventBridge.setRequestId("A", requestId);
     this.eventBridge.setRequestId("B", requestId);
     this.lastSummary = undefined;
+    this.pendingPlan = undefined;
 
     try {
+      this.setUiState("planning", "A");
       const planningOutcome = await this.submitPlanningTurn({
         bindingA,
         requestId,
@@ -137,15 +175,39 @@ export class Coordinator {
 
       if (planningOutcome.kind === "planning") {
         await this.eventBridge.waitForIdle();
+        this.setUiState("planning", "A");
         return {
           mode: "planning",
           userResponse: planningOutcome.userResponse
         };
       }
 
-      this.executionInFlight = true;
+      if (planningOutcome.kind === "plan") {
+        this.pendingPlan = createPendingExecutionPlanSnapshot(
+          planningOutcome.plan,
+          requestId
+        );
+        this.logPlanningLifecycleEvent("planning.plan_ready", bindingA, requestId, {
+          objective: this.pendingPlan.objective,
+          summary: this.pendingPlan.summary,
+          relevantPaths: this.pendingPlan.relevantPaths,
+          acceptanceCriteria: this.pendingPlan.acceptanceCriteria,
+          executionPlan: this.pendingPlan.executionPlan,
+          constraints: this.pendingPlan.constraints,
+          proposedAt: this.pendingPlan.proposedAt
+        });
+        await this.eventBridge.waitForIdle();
+        this.setUiState("planning", "A");
+        return {
+          mode: "planning",
+          userResponse: planningOutcome.userResponse,
+          pendingPlan: this.pendingPlan,
+          nextActionHint: buildPendingPlanHint()
+        };
+      }
+
       try {
-        const { result } = await this.startExecutionFromPlan({
+        const { result } = await this.executeApprovedPlan({
           bindingA,
           bindingB,
           requestId,
@@ -154,6 +216,7 @@ export class Coordinator {
         this.workflowState = await this.recoveryLoader.load();
         this.lastSummary = result.finalSummary;
         await this.eventBridge.waitForIdle();
+        this.setUiState("planning", "A");
         return {
           mode: "planning",
           userResponse: result.userResponse,
@@ -167,11 +230,80 @@ export class Coordinator {
           }
         };
       } finally {
-        this.executionInFlight = false;
+        this.setUiState("planning", "A");
       }
     } finally {
       this.eventBridge.setRequestId("A", undefined);
       this.eventBridge.setRequestId("B", undefined);
+    }
+  }
+
+  public async approvePendingPlan(): Promise<CoordinatorTurnResult> {
+    this.clearAllActivity();
+    const activeWorkflow = this.getActiveWorkflow();
+    if (activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)) {
+      throw new Error(
+        `Cannot approve a pending plan while workflow ${activeWorkflow.workflowId} is still active.`
+      );
+    }
+    if (!this.pendingPlan) {
+      throw new Error("No pending plan is available. Ask Agent A for a plan first.");
+    }
+
+    const bindingA = this.requireBinding("A");
+    const bindingB = this.requireBinding("B");
+    const pendingPlan = this.pendingPlan;
+    this.pendingPlan = undefined;
+    this.lastSummary = undefined;
+    this.eventBridge.setRequestId("A", pendingPlan.requestId);
+    this.eventBridge.setRequestId("B", pendingPlan.requestId);
+
+    try {
+      this.logPlanningLifecycleEvent("planning.plan_approved", bindingA, pendingPlan.requestId, {
+        objective: pendingPlan.objective,
+        summary: pendingPlan.summary,
+        proposedAt: pendingPlan.proposedAt
+      });
+      const { result } = await this.executeApprovedPlan({
+        bindingA,
+        bindingB,
+        requestId: pendingPlan.requestId,
+        executionPlan: createExecutionPlanEnvelopeFromPendingPlan(pendingPlan)
+      });
+      this.workflowState = await this.recoveryLoader.load();
+      this.lastSummary = result.finalSummary;
+      await this.eventBridge.waitForIdle();
+      this.setUiState("planning", "A");
+      return {
+        mode: "planning",
+        userResponse: result.userResponse,
+        workflow: {
+          workflowId: result.workflowId,
+          status: result.status,
+          iterations: result.iterations,
+          finalSummary: result.finalSummary,
+          changedPaths: result.changedPaths,
+          requestId: result.requestId
+        }
+      };
+    } finally {
+      this.eventBridge.setRequestId("A", undefined);
+      this.eventBridge.setRequestId("B", undefined);
+      this.setUiState("planning", "A");
+    }
+  }
+
+  public discardPendingPlan(): void {
+    if (!this.pendingPlan) {
+      return;
+    }
+    const bindingA = this.registry.get("A");
+    const requestId = this.pendingPlan.requestId;
+    this.pendingPlan = undefined;
+    if (bindingA) {
+      this.logPlanningLifecycleEvent("planning.plan_discarded", bindingA, requestId);
+    } else {
+      this.coordinatorActivity = undefined;
     }
   }
 
@@ -180,31 +312,61 @@ export class Coordinator {
     const updated = await applyRuntimeOperation(binding, action);
     this.registry.set(updated);
     await this.eventBridge.bind(updated);
+    this.pendingPlan = undefined;
+    this.runtimeActivity.delete(role);
+    this.lastToolNames.delete(role);
+    this.coordinatorActivity = undefined;
     await this.supersedeActiveWorkflowIfNeeded(role, updated);
     await this.eventBridge.waitForIdle();
   }
 
-  public getStatus(): Record<string, unknown> {
-    const list = this.registry.list().map((binding) => ({
-      role: binding.role,
-      sessionId: binding.sessionId,
-      sessionFile: binding.sessionFile,
-      cwd: binding.cwd,
-      model: binding.session.model
-        ? `${binding.session.model.provider}/${binding.session.model.id}`
-        : "(pi-default)",
-      thinking: binding.session.thinkingLevel ?? "(default)"
-    }));
+  public getStatus(): CoordinatorStatusSnapshot {
+    const list = this.registry.list().map((binding) => {
+      const health = getRuntimeHealth(binding);
+      const snapshot = this.runtimeActivity.get(binding.role);
+      return {
+        ...health,
+        currentActivity: snapshot ? renderActivityText(snapshot) : undefined,
+        currentReason: snapshot ? renderReasonText(snapshot) : undefined,
+        currentTarget: snapshot?.target,
+        lastToolName: this.lastToolNames.get(binding.role)
+      };
+    });
     const workflow = this.getActiveWorkflow() ?? this.getLatestWorkflowSnapshot();
+    const activeRuntime =
+      list.find((runtime) => runtime.role === this.uiState.activeRole) ?? list[0];
+    const phaseLabel = labelPhase(this.uiState.phase);
+    const activeSnapshot = this.runtimeActivity.get(this.uiState.activeRole);
 
     return {
       cwd: this.options.cwd,
       conversationMode: this.getConversationMode(),
+      phase: this.uiState.phase,
+      phaseLabel,
+      activeRole: this.uiState.activeRole,
+      activeRoleLabel: labelRole(this.uiState.activeRole),
+      activeModelName: activeRuntime?.modelName,
+      activeModelProvider: activeRuntime?.modelProvider,
+      activeModelId: activeRuntime?.modelId,
+      activeModelCanonical: activeRuntime?.modelCanonical,
+      activeModelDisplay: activeRuntime?.modelDisplay ?? "(pi-default)",
       sessionRoot: this.options.sessionMode === "memory" ? "(memory)" : this.sessionRoot,
       lastSummary: this.lastSummary,
+      pendingPlan: this.pendingPlan,
+      pendingPlanReady: Boolean(this.pendingPlan),
+      nextActionHint: this.pendingPlan ? buildApproveStatusHint() : undefined,
       activeWorkflowId: this.workflowState.activeWorkflowId,
       currentIteration: workflow?.currentIteration,
       workflowStatus: workflow?.status,
+      currentActivity: activeSnapshot ? renderActivityText(activeSnapshot) : undefined,
+      currentReason: activeSnapshot ? renderReasonText(activeSnapshot) : undefined,
+      currentTarget: activeSnapshot?.target,
+      coordinatorActivity: this.coordinatorActivity
+        ? renderActivityText(this.coordinatorActivity)
+        : undefined,
+      coordinatorReason: this.coordinatorActivity
+        ? renderReasonText(this.coordinatorActivity)
+        : undefined,
       lastCompletionSummary: workflow?.latestCompletion?.summary,
       repairCount: workflow?.repairCount ?? 0,
       maxReviewRounds: this.options.maxReviewRounds ?? 3,
@@ -215,6 +377,10 @@ export class Coordinator {
 
   public getSessions(): ReturnType<typeof getRuntimeHealth>[] {
     return this.registry.list().map(getRuntimeHealth);
+  }
+
+  public subscribeEvents(listener: (event: NormalizedTelemetryEvent) => void): () => void {
+    return this.logger.subscribe(listener);
   }
 
   public async getWorkflowStatus(): Promise<{
@@ -239,6 +405,7 @@ export class Coordinator {
   }
 
   public async dispose(): Promise<void> {
+    this.unsubscribeActivityListener();
     this.eventBridge.dispose();
     await this.registry.disposeAll();
   }
@@ -297,6 +464,7 @@ export class Coordinator {
     userInput: string;
   }): Promise<
     | { kind: "planning"; userResponse: string }
+    | { kind: "plan"; userResponse: string; plan: NonNullable<ReturnType<typeof maybeParsePlanProposalEnvelope>> }
     | { kind: "execute"; executionPlan: NonNullable<ReturnType<typeof maybeParseExecutionPlanEnvelope>> }
   > {
     const response = await this.eventBridge.promptAndWaitForTurnEnd(
@@ -311,10 +479,11 @@ export class Coordinator {
       )
     );
     const first = resolvePlanningTurn(response);
-    if (first.kind !== "invalid_execute") {
+    if (first.kind !== "invalid_machine_block") {
       return first;
     }
 
+    this.setUiState("repair", "A");
     const repairedResponse = await this.eventBridge.promptAndWaitForTurnEnd(
       options.bindingA,
       withPromptProvenance(
@@ -327,10 +496,24 @@ export class Coordinator {
       )
     );
     const repaired = resolvePlanningTurn(repairedResponse);
-    if (repaired.kind === "invalid_execute") {
+    if (repaired.kind === "invalid_machine_block") {
       throw new Error(`Agent A planning response remained invalid after repair: ${repaired.reason}`);
     }
     return repaired;
+  }
+
+  private async executeApprovedPlan(options: {
+    bindingA: RoleRuntimeBinding;
+    bindingB: RoleRuntimeBinding;
+    requestId: string;
+    executionPlan: NonNullable<ReturnType<typeof maybeParseExecutionPlanEnvelope>>;
+  }) {
+    try {
+      this.setUiState("execution", "B");
+      return await this.startExecutionFromPlan(options);
+    } finally {
+      this.setUiState("planning", "A");
+    }
   }
 
   private async startExecutionFromPlan(options: {
@@ -366,14 +549,33 @@ export class Coordinator {
     });
   }
 
+  private logPlanningLifecycleEvent(
+    eventType: "planning.plan_ready" | "planning.plan_approved" | "planning.plan_discarded",
+    bindingA: RoleRuntimeBinding,
+    requestId: string,
+    details?: Record<string, unknown>
+  ): void {
+    const event = normalizeLifecycleEvent({
+      role: "A",
+      sessionId: bindingA.sessionId,
+      sessionFile: bindingA.sessionFile,
+      eventType,
+      requestId,
+      details
+    });
+    this.logger.log(event);
+    this.metrics.observe(event);
+  }
+
   private getConversationMode(): ConversationMode {
-    if (this.executionInFlight) {
-      return "executing";
-    }
     const activeWorkflow = this.getActiveWorkflow();
     return activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)
       ? "executing"
       : "planning";
+  }
+
+  private setUiState(phase: CoordinatorUiPhase, activeRole: Role): void {
+    this.uiState = { phase, activeRole };
   }
 
   private async supersedeActiveWorkflowIfNeeded(
@@ -401,6 +603,47 @@ export class Coordinator {
     });
     this.workflowState = await this.recoveryLoader.load();
     this.lastSummary = `Workflow ${activeWorkflow.workflowId} was superseded after runtime ${role} was replaced.`;
+    this.clearAllActivity();
+  }
+
+  private observeActivityEvent(event: NormalizedTelemetryEvent): void {
+    if (
+      (event.eventType === "pi.tool_execution_start" ||
+        event.eventType === "pi.tool_execution_update" ||
+        event.eventType === "pi.tool_execution_end") &&
+      typeof event.details.toolName === "string"
+    ) {
+      this.lastToolNames.set(event.role, event.details.toolName);
+    }
+
+    const update = deriveActivityUpdate(event, this.getStatus());
+    if (update?.clear) {
+      if (update.role === "coordinator") {
+        this.coordinatorActivity = undefined;
+      } else {
+        this.runtimeActivity.delete(update.role);
+      }
+    } else if (update?.snapshot) {
+      if (update.role === "coordinator") {
+        this.coordinatorActivity = update.snapshot;
+      } else {
+        this.runtimeActivity.set(update.role, update.snapshot);
+      }
+    }
+
+    if (
+      event.eventType === "workflow.finalized" ||
+      event.eventType === "workflow.blocked" ||
+      event.eventType === "workflow.capped"
+    ) {
+      this.runtimeActivity.clear();
+      this.coordinatorActivity = undefined;
+    }
+  }
+
+  private clearAllActivity(): void {
+    this.runtimeActivity.clear();
+    this.coordinatorActivity = undefined;
   }
 }
 
@@ -417,9 +660,11 @@ function renderPlanningTurnMessage(userInput: string): string {
     "Planning prompt for Agent A.",
     "You are in planning mode.",
     "Converse normally with the operator.",
-    "Agent B is unavailable until you decide execution should start now.",
-    "Emit no machine block unless execution is being started now.",
-    "If execution should start now, end the turn with exactly one `pi-execute` JSON block.",
+    "Agent B is unavailable until the operator explicitly approves execution or asks to start now.",
+    "If the operator only wants discussion or brainstorming, reply with plain prose and no machine block.",
+    "If the operator wants a concrete implementation plan but has not approved execution yet, end the turn with exactly one `pi-plan` JSON block.",
+    "If the operator explicitly wants execution to start now, end the turn with exactly one `pi-execute` JSON block.",
+    "`pi-plan` and `pi-execute` are mutually exclusive.",
     "",
     "Operator turn:",
     userInput
@@ -430,56 +675,114 @@ function renderPlanningRepairMessage(reason: string): string {
   return [
     "Planning repair prompt for Agent A.",
     `Your previous planning response could not be accepted: ${reason}`,
-    "Reply with either normal prose and no machine block, or exactly one valid `pi-execute` block.",
-    "Do not emit `pi-handoff`, `pi-completion`, or `pi-final` in planning mode."
+    "Reply with either normal prose and no machine block, exactly one valid `pi-plan` block, or exactly one valid `pi-execute` block.",
+    "Do not emit `pi-handoff`, `pi-completion`, or `pi-final` in planning mode.",
+    "`pi-plan` and `pi-execute` are mutually exclusive."
   ].join("\n");
+}
+
+function labelPhase(phase: CoordinatorUiPhase): string {
+  switch (phase) {
+    case "planning":
+      return "Planning";
+    case "execution":
+      return "Execution";
+    case "review":
+      return "Review";
+    case "repair":
+      return "Repair";
+  }
+}
+
+function labelRole(role: Role): string {
+  return `Agent ${role}`;
 }
 
 function resolvePlanningTurn(message: Parameters<typeof maybeParseExecutionPlanEnvelope>[0]):
   | { kind: "planning"; userResponse: string }
+  | { kind: "plan"; userResponse: string; plan: NonNullable<ReturnType<typeof maybeParsePlanProposalEnvelope>> }
   | { kind: "execute"; executionPlan: NonNullable<ReturnType<typeof maybeParseExecutionPlanEnvelope>> }
-  | { kind: "invalid_execute"; reason: string } {
+  | { kind: "invalid_machine_block"; reason: string } {
   const text = extractAssistantText(message);
   const counts = {
+    plan: countMachineBlocks(text, PLAN_BLOCK_TYPE),
     execute: countMachineBlocks(text, EXECUTE_BLOCK_TYPE),
     handoff: countMachineBlocks(text, HANDOFF_BLOCK_TYPE),
     completion: countMachineBlocks(text, COMPLETION_BLOCK_TYPE),
     final: countMachineBlocks(text, FINAL_BLOCK_TYPE)
   };
-  const totalBlocks = counts.execute + counts.handoff + counts.completion + counts.final;
+  const totalKnownBlocks =
+    counts.plan + counts.execute + counts.handoff + counts.completion + counts.final;
+  const totalPiBlocks = countPiMachineBlocks(text);
+
+  if (totalPiBlocks !== totalKnownBlocks) {
+    return {
+      kind: "invalid_machine_block",
+      reason: "planning mode only accepts `pi-plan` or `pi-execute` machine blocks"
+    };
+  }
 
   if (counts.handoff + counts.completion + counts.final > 0) {
     return {
-      kind: "invalid_execute",
-      reason: "planning mode only accepts prose or exactly one `pi-execute` block"
+      kind: "invalid_machine_block",
+      reason: "planning mode only accepts prose, exactly one `pi-plan`, or exactly one `pi-execute` block"
     };
   }
 
-  if (counts.execute === 0) {
+  if (counts.plan === 0 && counts.execute === 0) {
+    const userResponse = stripMachineBlocks(text).trim();
+    if (!userResponse) {
+      return {
+        kind: "invalid_machine_block",
+        reason: "planning mode requires either operator-facing prose, exactly one `pi-plan`, or exactly one `pi-execute` block"
+      };
+    }
     return {
       kind: "planning",
-      userResponse: stripMachineBlocks(text).trim()
+      userResponse
     };
   }
 
-  if (counts.execute !== 1) {
+  if (counts.plan > 1 || counts.execute > 1) {
     return {
-      kind: "invalid_execute",
-      reason: "expected at most one `pi-execute` block"
+      kind: "invalid_machine_block",
+      reason: "expected at most one `pi-plan` block and at most one `pi-execute` block"
     };
   }
 
-  if (totalBlocks !== 1) {
+  if (counts.plan === 1 && counts.execute === 1) {
     return {
-      kind: "invalid_execute",
-      reason: "planning mode accepts exactly one `pi-execute` block and no other machine blocks"
+      kind: "invalid_machine_block",
+      reason: "planning mode does not allow `pi-plan` and `pi-execute` in the same turn"
+    };
+  }
+
+  if (totalKnownBlocks !== 1) {
+    return {
+      kind: "invalid_machine_block",
+      reason: "planning mode accepts at most one machine block"
+    };
+  }
+
+  if (counts.plan === 1) {
+    const plan = maybeParsePlanProposalEnvelope(message);
+    if (!plan) {
+      return {
+        kind: "invalid_machine_block",
+        reason: "invalid `pi-plan` block"
+      };
+    }
+    return {
+      kind: "plan",
+      userResponse: stripMachineBlocks(text).trim(),
+      plan
     };
   }
 
   const executionPlan = maybeParseExecutionPlanEnvelope(message);
   if (!executionPlan) {
     return {
-      kind: "invalid_execute",
+      kind: "invalid_machine_block",
       reason: "invalid `pi-execute` block"
     };
   }
@@ -494,8 +797,51 @@ function countMachineBlocks(text: string, type: string): number {
   return [...text.matchAll(new RegExp("```" + type + "\\b", "g"))].length;
 }
 
+function countPiMachineBlocks(text: string): number {
+  return [...text.matchAll(/```pi-[a-z-]+\b/g)].length;
+}
+
 function stripMachineBlocks(text: string): string {
   return text
-    .replace(/```pi-(?:execute|handoff|completion|final)\s*[\s\S]*?```/g, "")
+    .replace(/```pi-(?:plan|execute|handoff|completion|final)\s*[\s\S]*?```/g, "")
     .trim();
+}
+
+function createPendingExecutionPlanSnapshot(
+  plan: NonNullable<ReturnType<typeof maybeParsePlanProposalEnvelope>>,
+  requestId: string
+): PendingExecutionPlanSnapshot {
+  return {
+    objective: plan.objective,
+    summary: plan.summary,
+    acceptanceCriteria: [...plan.acceptanceCriteria],
+    relevantPaths: [...plan.relevantPaths],
+    executionPlan: [...plan.executionPlan],
+    constraints: plan.constraints ? [...plan.constraints] : undefined,
+    proposedAt: new Date().toISOString(),
+    requestId,
+    proposedByRole: "A"
+  };
+}
+
+function createExecutionPlanEnvelopeFromPendingPlan(
+  pendingPlan: PendingExecutionPlanSnapshot
+): NonNullable<ReturnType<typeof maybeParseExecutionPlanEnvelope>> {
+  return {
+    schemaVersion: 1,
+    objective: pendingPlan.objective,
+    summary: pendingPlan.summary,
+    acceptanceCriteria: [...pendingPlan.acceptanceCriteria],
+    relevantPaths: [...pendingPlan.relevantPaths],
+    executionPlan: [...pendingPlan.executionPlan],
+    constraints: pendingPlan.constraints ? [...pendingPlan.constraints] : undefined
+  };
+}
+
+function buildPendingPlanHint(): string {
+  return "Run /approve to start coordinated execution with Agent B, send another message to revise the plan, or run /discard to clear it.";
+}
+
+function buildApproveStatusHint(): string {
+  return "Run /approve to start coordinated execution with Agent B.";
 }

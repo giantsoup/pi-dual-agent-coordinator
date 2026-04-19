@@ -13,6 +13,8 @@ export function renderHandoffMessage(envelope: HandoffEnvelope): string {
     "Coordinator handoff for Agent B.",
     "Use your write-authoritative tools to execute the request.",
     "Do not assume access to any raw Agent A text beyond this rendered handoff.",
+    "Keep your completion record concrete and implementation-specific.",
+    "`pi-completion` is the fence label for your final JSON block. It is not a tool name, command, or function call.",
     "",
     `Workflow ID: ${envelope.workflowId}`,
     `Handoff ID: ${envelope.handoffId}`,
@@ -32,7 +34,11 @@ export function renderHandoffMessage(envelope: HandoffEnvelope): string {
     "",
     ...renderList("Constraints:", envelope.constraints),
     "",
-    `End your assistant turn with exactly one \`\`\`pi-completion\`\`\` JSON block for workflow ${envelope.workflowId}, handoff ${envelope.handoffId}, iteration ${envelope.iteration}.`
+    "For `pi-completion.summary`, describe the concrete code changes and the resulting outcome in 1-3 short sentences.",
+    "List every modified file in `changedPaths`.",
+    "Include `verification` with the checks or commands you actually ran whenever possible.",
+    "Include `openQuestions` only when something remains unresolved.",
+    `End your assistant turn with exactly one \`\`\`pi-completion\`\`\` JSON block for workflow ${envelope.workflowId}, handoff ${envelope.handoffId}, iteration ${envelope.iteration}. Write that block as plain assistant text, not as a tool call. Do not emit any other machine blocks, and do not place prose after the completion block.`
   ]
     .filter((line, index, lines) => !(line === "" && lines[index - 1] === ""))
     .join("\n");

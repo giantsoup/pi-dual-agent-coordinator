@@ -224,27 +224,44 @@ node dist/src/index.js repl . --no-session
 
 ## REPL behavior
 
+- REPL startup prints a banner with the project path, current phase, active operator-facing role, both model displays, command hints, and key hints.
+- The prompt is dynamic and shows the current idle phase and active model display.
 - REPL input starts in planning mode with Agent A.
 - Planning-only turns return immediately; turns that start execution block until the workflow reaches a terminal Agent A decision.
 - Agent A may answer in plain prose for one or more planning turns without starting execution.
-- When execution should start, Agent A emits `pi-execute`; the coordinator creates a workflow, renders the first deterministic handoff for Agent B, and enters the review loop.
+- When Agent A has a concrete plan but execution has not been approved yet, it can emit `pi-plan`; the coordinator stores that as a runtime-only pending plan, prints a structured "Plan Ready" view, exposes the draft through `/status`, and waits for `/approve`.
+- While a pending plan exists, a new planning turn replaces it; `/discard` clears it explicitly.
+- When execution should start immediately, Agent A can still emit `pi-execute`; the coordinator creates a workflow, renders the first deterministic handoff for Agent B, and enters the review loop.
+- When the operator runs `/approve`, the coordinator promotes the current pending `pi-plan` into the same execution workflow path used by `pi-execute`.
 - During execution, Agent B emits `pi-completion`, and Agent A either finalizes with `pi-final` or issues the next `pi-handoff`.
+- The CLI shows hybrid live progress on `stderr` by default: phase changes, active role/model, concrete tool or workflow targets, and short reason lines without streaming every raw token.
+- Raw model thinking is intentionally not exposed. Operator-facing reason text is derived locally from observable events only.
 - After execution finishes, the conversation returns to planning mode and the printed final answer still comes from Agent A’s `pi-final.userResponse`.
 - One deterministic repair prompt is allowed for each malformed or missing machine block before the workflow is blocked.
 - If Agent A still requests more execution work after the round cap, the coordinator forces a terminal blocked finalization path.
+- Modes switch automatically. There is no manual mode toggle.
 
 Useful REPL commands:
 
-- `/status` shows the active workflow id, iteration, workflow status, runtime bindings, last completion summary, and repair count.
-- `/sessions` shows the active session metadata for roles `A` and `B`.
+- `/help` shows the phase legend, automatic mode semantics, slash commands, runtime/session commands, and key hints.
+- `/status` shows the active workflow id, iteration, workflow status, active phase/role/model, pending plan state, next-step hint, current activity and reason fields, runtime bindings, last completion summary, and repair count.
+- `/approve` starts execution from the current pending plan.
+- `/discard` clears the current pending plan if one exists.
+- `/sessions` shows the active session metadata for roles `A` and `B`, including model display and thinking level.
 - `/handoff` shows workflow-level state plus the latest persisted records.
 - `/new A` or `/new B` creates a fresh session for one role.
 - `/switch A <session-path>` or `/switch B <session-path>` rebinds a role to an existing session file.
 - `/quit` exits cleanly.
 
+Output separation:
+
+- Progress and runtime chatter are written to `stderr`.
+- Final user-facing assistant responses remain on `stdout`.
+- ANSI styling is only used when running in a TTY.
+
 ## Workflow and recovery
 
-Each execution start becomes a workflow with a stable `workflowId`. Planning-only turns stay outside the workflow ledger. Each Agent B execution round has its own `iteration`.
+Each execution start becomes a workflow with a stable `workflowId`. Planning-only turns stay outside the workflow ledger. Pending plans created from `pi-plan` are runtime-only draft state and are not recovered after restart. Each Agent B execution round has its own `iteration`.
 
 The append-only ledger records workflow progress using these categories:
 

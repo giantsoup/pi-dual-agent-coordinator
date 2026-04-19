@@ -5,6 +5,7 @@ import { normalizeEvent, normalizeLifecycleEvent } from "../telemetry/event-norm
 import { CorrelationState } from "../telemetry/correlation.js";
 import { TelemetryLogger } from "../telemetry/logger.js";
 import { Metrics } from "../telemetry/metrics.js";
+import { getModelDisplayInfo } from "../runtime/model-display.js";
 import type { RoleRuntimeBinding } from "../runtime/create-role-runtime.js";
 import type { Role } from "../types/role.js";
 
@@ -13,6 +14,14 @@ interface TurnWaiter {
   reject(error: Error): void;
 }
 
+const MACHINE_BLOCK_PSEUDO_TOOLS = new Set([
+  "pi-plan",
+  "pi-execute",
+  "pi-handoff",
+  "pi-completion",
+  "pi-final"
+]);
+
 export class RuntimeEventBridge {
   private readonly subscriptions = new Map<Role, () => void>();
   private readonly correlation = new CorrelationState();
@@ -20,6 +29,7 @@ export class RuntimeEventBridge {
   private readonly pending = new Set<Promise<void>>();
   private readonly bufferedTurnEnds = new Map<string, AgentMessage[]>();
   private readonly turnWaiters = new Map<string, TurnWaiter[]>();
+  private readonly pseudoToolAttempts = new Map<string, { toolName: string; count: number }>();
   private lastError: Error | undefined;
 
   public constructor(
@@ -73,6 +83,7 @@ export class RuntimeEventBridge {
   ): Promise<AgentMessage> {
     const sessionKey = this.sessionKey(binding);
     this.bufferedTurnEnds.set(sessionKey, []);
+    this.pseudoToolAttempts.delete(sessionKey);
     const turnEndPromise = this.awaitNextTurnEnd(sessionKey);
     await binding.session.prompt(text, options);
     return turnEndPromise;
@@ -103,6 +114,7 @@ export class RuntimeEventBridge {
     }
     this.turnWaiters.clear();
     this.bufferedTurnEnds.clear();
+    this.pseudoToolAttempts.clear();
   }
 
   private async handleEvent(
@@ -122,12 +134,31 @@ export class RuntimeEventBridge {
       leafId: binding.session.sessionManager?.getLeafId?.() ?? undefined,
       correlation: this.correlation
     });
+    const model = getModelDisplayInfo(binding.session.model);
+    telemetry.details = {
+      ...telemetry.details,
+      modelName: model.name,
+      modelProvider: model.provider,
+      modelId: model.id,
+      modelCanonical: model.canonical,
+      modelDisplay: model.display,
+      thinking: binding.session.thinkingLevel ?? "(default)"
+    };
     this.logger.log(telemetry);
     this.metrics.observe(telemetry);
+
+    if (
+      event.type === "tool_execution_start" &&
+      MACHINE_BLOCK_PSEUDO_TOOLS.has(event.toolName)
+    ) {
+      this.observePseudoToolLoop(binding, sessionKey, event.toolName);
+    }
 
     if (event.type !== "turn_end") {
       return;
     }
+
+    this.pseudoToolAttempts.delete(sessionKey);
 
     const queue = this.turnWaiters.get(sessionKey);
     if (queue && queue.length > 0) {
@@ -162,5 +193,34 @@ export class RuntimeEventBridge {
 
   private sessionKey(binding: RoleRuntimeBinding): string {
     return `${binding.role}:${binding.sessionId}`;
+  }
+
+  private observePseudoToolLoop(
+    binding: RoleRuntimeBinding,
+    sessionKey: string,
+    toolName: string
+  ): void {
+    const previous = this.pseudoToolAttempts.get(sessionKey);
+    const count =
+      previous && previous.toolName === toolName ? previous.count + 1 : 1;
+    this.pseudoToolAttempts.set(sessionKey, { toolName, count });
+
+    if (count < 3 || !this.turnWaiters.has(sessionKey)) {
+      return;
+    }
+
+    this.subscriptions.get(binding.role)?.();
+    this.subscriptions.delete(binding.role);
+    this.bufferedTurnEnds.delete(sessionKey);
+    this.pseudoToolAttempts.delete(sessionKey);
+
+    const error = new Error(
+      `Agent ${binding.role} repeatedly attempted to call \`${toolName}\` as a tool. Machine blocks must be written as fenced assistant text. Run \`/new ${binding.role}\` to recover this runtime, then retry.`
+    );
+    const waiters = this.turnWaiters.get(sessionKey) ?? [];
+    this.turnWaiters.delete(sessionKey);
+    for (const waiter of waiters) {
+      waiter.reject(error);
+    }
   }
 }

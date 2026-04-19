@@ -9,8 +9,10 @@ import { renderReviewMessage } from "../workflow/render-review-message.js";
 import { resolveAgentAResponse, resolveAgentBResponse } from "./review-cycle.js";
 import { normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
 import { SessionLedger } from "../persistence/session-ledger.js";
+import { getModelDisplayInfo } from "../runtime/model-display.js";
 import type { RuntimeEventBridge } from "./bind-runtime-events.js";
 import type { RoleRuntimeBinding } from "../runtime/create-role-runtime.js";
+import type { CoordinatorUiPhase } from "../types/status.js";
 import type {
   CompletionRecord,
   FinalDecisionRecord,
@@ -40,11 +42,15 @@ export interface ApprovedPlanWorkflowOptions extends WorkflowOrchestratorOptions
 }
 
 export class WorkflowOrchestrator {
+  private currentState: WorkflowState | undefined;
+
   public constructor(
     private readonly ledger: SessionLedger,
     private readonly bridge: RuntimeEventBridge,
     private readonly logger: TelemetryLogger,
-    private readonly metrics: Metrics
+    private readonly metrics: Metrics,
+    private readonly setUiState: (phase: CoordinatorUiPhase, role: "A" | "B") => void,
+    private readonly onStateChange: (state: WorkflowState) => void
   ) {}
 
   public async run(options: WorkflowOrchestratorOptions): Promise<{
@@ -52,6 +58,8 @@ export class WorkflowOrchestrator {
     result: WorkflowRunResult;
   }> {
     let state = options.state;
+    this.currentState = state;
+    this.onStateChange(state);
     const workflowId = randomUUID();
     const startedAt = Date.now();
     try {
@@ -66,6 +74,7 @@ export class WorkflowOrchestrator {
         ? { streamingBehavior: "followUp" as const }
         : undefined;
 
+      this.setUiState("planning", "A");
       let agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
         options.bindingA,
         withPromptProvenance(
@@ -131,40 +140,54 @@ export class WorkflowOrchestrator {
         initialEnvelope: aOutcome.envelope
       });
     } catch (error) {
-      if (!(error instanceof WorkflowProtocolError)) {
-        throw error;
-      }
+      const failure =
+        error instanceof WorkflowProtocolError
+          ? {
+              workflowId: error.details.workflowId,
+              iteration: error.details.iteration,
+              binding: error.details.role === "A" ? options.bindingA : options.bindingB,
+              reason: error.details.reason
+            }
+          : {
+              workflowId,
+              iteration: 1,
+              binding: options.bindingA,
+              reason: error instanceof Error ? error.message : String(error)
+            };
 
       const blockedRecord = createTerminalRecord({
-        workflowId: error.details.workflowId,
-        iteration: error.details.iteration,
+        workflowId: failure.workflowId,
+        iteration: failure.iteration,
         requestId: options.requestId,
-        binding: error.details.role === "A" ? options.bindingA : options.bindingB,
+        binding: failure.binding,
         status: "blocked",
         userTask: options.userTask,
         details: {
-          reason: error.details.reason,
-          role: error.details.role
+          reason: failure.reason,
+          role: error instanceof WorkflowProtocolError ? error.details.role : "coordinator",
+          unexpectedError: !(error instanceof WorkflowProtocolError)
         }
       });
       state = await this.persistRecord(state, blockedRecord);
-      this.logWorkflowEvent("workflow.blocked", error.details.role === "A" ? options.bindingA : options.bindingB, options, {
-        workflowId: error.details.workflowId,
+      this.logWorkflowEvent("workflow.blocked", failure.binding, options, {
+        workflowId: failure.workflowId,
         handoffId: undefined,
-        iteration: error.details.iteration,
-        reason: error.details.reason,
+        iteration: failure.iteration,
+        reason: failure.reason,
         durationMs: Date.now() - startedAt
       });
       return {
         state,
         result: buildCoordinatorFailureResult({
-          workflowId: error.details.workflowId,
+          workflowId: failure.workflowId,
           requestId: options.requestId,
-          iteration: error.details.iteration,
+          iteration: failure.iteration,
           status: "blocked",
-          summary: `Workflow blocked: ${error.details.reason}`
+          summary: `Workflow blocked: ${failure.reason}`
         })
       };
+    } finally {
+      this.currentState = undefined;
     }
   }
 
@@ -172,6 +195,8 @@ export class WorkflowOrchestrator {
     state: WorkflowState;
     result: WorkflowRunResult;
   }> {
+    this.currentState = options.state;
+    this.onStateChange(options.state);
     try {
       this.logWorkflowEvent("workflow.started", options.bindingA, options, {
         workflowId: options.initialEnvelope.workflowId,
@@ -186,44 +211,53 @@ export class WorkflowOrchestrator {
         workflowId: options.initialEnvelope.workflowId
       });
     } catch (error) {
-      if (!(error instanceof WorkflowProtocolError)) {
-        throw error;
-      }
+      const failure =
+        error instanceof WorkflowProtocolError
+          ? {
+              workflowId: error.details.workflowId,
+              iteration: error.details.iteration,
+              binding: error.details.role === "A" ? options.bindingA : options.bindingB,
+              reason: error.details.reason
+            }
+          : deriveUnexpectedApprovedPlanFailure(options, this.currentState, error);
 
       const blockedRecord = createTerminalRecord({
-        workflowId: error.details.workflowId,
-        iteration: error.details.iteration,
+        workflowId: failure.workflowId,
+        iteration: failure.iteration,
         requestId: options.requestId,
-        binding: error.details.role === "A" ? options.bindingA : options.bindingB,
+        binding: failure.binding,
         status: "blocked",
         userTask: options.userTask,
         details: {
-          reason: error.details.reason,
-          role: error.details.role
+          reason: failure.reason,
+          role: error instanceof WorkflowProtocolError ? error.details.role : "coordinator",
+          unexpectedError: !(error instanceof WorkflowProtocolError)
         }
       });
-      const state = await this.persistRecord(options.state, blockedRecord);
+      const state = await this.persistRecord(this.currentState ?? options.state, blockedRecord);
       this.logWorkflowEvent(
         "workflow.blocked",
-        error.details.role === "A" ? options.bindingA : options.bindingB,
+        failure.binding,
         options,
         {
-          workflowId: error.details.workflowId,
+          workflowId: failure.workflowId,
           handoffId: options.initialEnvelope.handoffId,
-          iteration: error.details.iteration,
-          reason: error.details.reason
+          iteration: failure.iteration,
+          reason: failure.reason
         }
       );
       return {
         state,
         result: buildCoordinatorFailureResult({
-          workflowId: error.details.workflowId,
+          workflowId: failure.workflowId,
           requestId: options.requestId,
-          iteration: error.details.iteration,
+          iteration: failure.iteration,
           status: "blocked",
-          summary: `Workflow blocked: ${error.details.reason}`
+          summary: `Workflow blocked: ${failure.reason}`
         })
       };
+    } finally {
+      this.currentState = undefined;
     }
   }
 
@@ -275,6 +309,7 @@ export class WorkflowOrchestrator {
       reason: repairRecord.details?.reason
     });
 
+    this.setUiState("repair", "A");
     const repairedMessage = await this.bridge.promptAndWaitForTurnEnd(
       options.bindingA,
       withPromptProvenance(
@@ -360,6 +395,7 @@ export class WorkflowOrchestrator {
       reason: repairRecord.details?.reason
     });
 
+    this.setUiState("repair", "B");
     const repairedMessage = await this.bridge.promptAndWaitForTurnEnd(
       options.bindingB,
       withPromptProvenance(
@@ -394,11 +430,18 @@ export class WorkflowOrchestrator {
 
   private async persistRecord(state: WorkflowState, record: HandoffRecord): Promise<WorkflowState> {
     await this.ledger.append(record);
-    return applyTransition(state, record);
+    const nextState = applyTransition(state, record);
+    this.currentState = nextState;
+    this.onStateChange(nextState);
+    return nextState;
   }
 
   private async persistRecordNoStateMutation(record: HandoffRecord): Promise<void> {
     await this.ledger.append(record);
+    if (this.currentState) {
+      this.currentState = applyTransition(this.currentState, record);
+      this.onStateChange(this.currentState);
+    }
   }
 
   private logWorkflowEvent(
@@ -407,6 +450,8 @@ export class WorkflowOrchestrator {
     options: Pick<WorkflowOrchestratorOptions, "bindingA" | "bindingB" | "requestId">,
     details: Record<string, unknown>
   ): void {
+    const modelA = formatBindingModelDisplay(options.bindingA);
+    const modelB = formatBindingModelDisplay(options.bindingB);
     const event = normalizeLifecycleEvent({
       role: actor.role,
       sessionId: actor.sessionId,
@@ -415,8 +460,12 @@ export class WorkflowOrchestrator {
       requestId: options.requestId,
       details: {
         ...details,
-        modelA: modelLabel(options.bindingA),
-        modelB: modelLabel(options.bindingB),
+        modelDisplayA: modelA.display,
+        modelDisplayB: modelB.display,
+        modelNameA: modelA.name,
+        modelNameB: modelB.name,
+        modelIdA: modelA.id,
+        modelIdB: modelB.id,
         sessionIdA: options.bindingA.sessionId,
         sessionIdB: options.bindingB.sessionId,
         sessionFileA: options.bindingA.sessionFile,
@@ -464,6 +513,7 @@ export class WorkflowOrchestrator {
         iteration
       });
 
+      this.setUiState("execution", "B");
       const { delivered, message: agentBMessage } = await deliverHandoff({
         prepared,
         binding: options.bindingB,
@@ -501,6 +551,7 @@ export class WorkflowOrchestrator {
 
       const workflow = selectWorkflowSnapshot(state, options.workflowId);
       if (iteration >= options.maxReviewRounds) {
+        this.setUiState("review", "A");
         const agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
           options.bindingA,
           withPromptProvenance(
@@ -582,6 +633,7 @@ export class WorkflowOrchestrator {
         };
       }
 
+      this.setUiState("review", "A");
       const agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
         options.bindingA,
         withPromptProvenance(
@@ -647,6 +699,7 @@ function renderInitialPlanningMessage(options: {
   return [
     "Coordinator planning prompt for Agent A.",
     "You own planning, review, and final sign-off for this workflow.",
+    "When you finalize a workflow, keep `pi-final.summary` short and make `pi-final.userResponse` specific about implementation details, touched files or areas, verification, and any remaining caveats.",
     `Workflow ID: ${options.workflowId}`,
     `Request ID: ${options.requestId}`,
     `Iteration: ${options.iteration}`,
@@ -832,10 +885,30 @@ function statusFromFinal(finalDecision: FinalDecisionRecord | undefined): Workfl
   return finalDecision?.decision === "approved" ? "completed" : "blocked";
 }
 
-function modelLabel(binding: RoleRuntimeBinding): string {
-  return binding.session.model
-    ? `${binding.session.model.provider}/${binding.session.model.id}`
-    : "(pi-default)";
+function formatBindingModelDisplay(binding: RoleRuntimeBinding) {
+  return getModelDisplayInfo(binding.session.model);
+}
+
+function deriveUnexpectedApprovedPlanFailure(
+  options: ApprovedPlanWorkflowOptions,
+  currentState: WorkflowState | undefined,
+  error: unknown
+): {
+  workflowId: string;
+  iteration: number;
+  binding: RoleRuntimeBinding;
+  reason: string;
+} {
+  const workflow = currentState?.workflows[options.initialEnvelope.workflowId];
+  const latestIteration = workflow?.currentIteration ?? options.initialEnvelope.iteration;
+  const binding =
+    workflow?.latestCompletion || workflow?.finalDecision ? options.bindingA : options.bindingB;
+  return {
+    workflowId: options.initialEnvelope.workflowId,
+    iteration: latestIteration,
+    binding,
+    reason: error instanceof Error ? error.message : String(error)
+  };
 }
 
 export class WorkflowProtocolError extends Error {

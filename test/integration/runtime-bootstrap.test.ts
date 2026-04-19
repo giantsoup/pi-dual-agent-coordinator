@@ -32,10 +32,13 @@ describe("runtime bootstrap", () => {
 
     await coordinator.start();
     const status = coordinator.getStatus();
-    const runtimeStatus = status.runtimes as Array<{ role: string; sessionId: string }>;
+    const runtimeStatus = status.runtimes;
 
     expect(runtimeStatus).toHaveLength(2);
     expect(runtimeStatus[0]?.sessionId).not.toBe(runtimeStatus[1]?.sessionId);
+    expect(status.phase).toBe("planning");
+    expect(status.activeRole).toBe("A");
+    expect(runtimeStatus[0]?.modelDisplay).toBeTruthy();
     expect(runtimes.get("A")?.createdSessions).toHaveLength(1);
     expect(runtimes.get("B")?.createdSessions).toHaveLength(1);
 

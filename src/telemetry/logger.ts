@@ -14,6 +14,7 @@ export interface LoggerOptions {
 export class TelemetryLogger {
   private readonly stdout: NodeJS.WriteStream;
   private readonly stderr: NodeJS.WriteStream;
+  private readonly listeners = new Set<(event: NormalizedTelemetryEvent) => void>();
 
   public constructor(private readonly options: LoggerOptions) {
     mkdirSync(dirname(options.filePath), { recursive: true });
@@ -32,5 +33,20 @@ export class TelemetryLogger {
         `[${event.timestamp}] ${event.eventType} role=${event.role} session=${event.sessionId} request=${event.requestId ?? "-"}\n`
       );
     }
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.stderr.write(`Telemetry listener error: ${message}\n`);
+      }
+    }
+  }
+
+  public subscribe(listener: (event: NormalizedTelemetryEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 }
