@@ -35,6 +35,10 @@ export interface WorkflowOrchestratorOptions {
   state: WorkflowState;
 }
 
+export interface ApprovedPlanWorkflowOptions extends WorkflowOrchestratorOptions {
+  initialEnvelope: HandoffEnvelope;
+}
+
 export class WorkflowOrchestrator {
   public constructor(
     private readonly ledger: SessionLedger,
@@ -47,19 +51,14 @@ export class WorkflowOrchestrator {
     state: WorkflowState;
     result: WorkflowRunResult;
   }> {
+    let state = options.state;
     const workflowId = randomUUID();
     const startedAt = Date.now();
-    let state = options.state;
-    let iteration = 1;
-    let allowedAResponse = {
-      handoffIterations: [iteration],
-      finalIterations: [iteration]
-    };
     try {
       this.logWorkflowEvent("workflow.started", options.bindingA, options, {
         workflowId,
         handoffId: undefined,
-        iteration,
+        iteration: 1,
         userTask: options.userTask
       });
 
@@ -73,7 +72,7 @@ export class WorkflowOrchestrator {
           "user_task",
           renderInitialPlanningMessage({
             workflowId,
-            iteration,
+            iteration: 1,
             maxReviewRounds: options.maxReviewRounds,
             requestId: options.requestId,
             userTask: options.userTask
@@ -81,199 +80,56 @@ export class WorkflowOrchestrator {
           {
             requestId: options.requestId,
             workflowId,
-            iteration,
+            iteration: 1,
             sessionRole: "A"
           }
         ),
         initialPromptOptions
       );
 
-      while (true) {
-        const aOutcome = await this.acceptAgentAResponse({
-          bindingA: options.bindingA,
-          bindingB: options.bindingB,
-          workflowId,
-          allowedHandoffIterations: allowedAResponse.handoffIterations,
-          allowedFinalIterations: allowedAResponse.finalIterations,
-          requestId: options.requestId,
-          message: agentAMessage
-        });
+      const aOutcome = await this.acceptAgentAResponse({
+        bindingA: options.bindingA,
+        bindingB: options.bindingB,
+        workflowId,
+        allowedHandoffIterations: [1],
+        allowedFinalIterations: [1],
+        requestId: options.requestId,
+        message: agentAMessage
+      });
 
-        if (aOutcome.kind === "final") {
-          const finalRecord = createFinalizedRecord({
-            workflowId,
-            requestId: options.requestId,
-            binding: options.bindingA,
-            finalDecision: aOutcome.finalDecision,
-            userTask: options.userTask
-          });
-          state = await this.persistRecord(state, finalRecord);
-          this.logWorkflowEvent("workflow.finalized", options.bindingA, options, {
-            workflowId,
-            handoffId: undefined,
-            iteration: finalRecord.iteration,
-            decision: aOutcome.finalDecision.decision,
-            durationMs: Date.now() - startedAt
-          });
-          return {
-            state,
-            result: buildWorkflowRunResult(finalRecord.finalDecision, statusFromFinal(finalRecord.finalDecision), options.requestId)
-          };
-        }
-
-        iteration = aOutcome.envelope.iteration;
-        allowedAResponse = {
-          handoffIterations: [iteration],
-          finalIterations: [iteration]
-        };
-
-        const prepared = createPreparedRecord({
+      if (aOutcome.kind === "final") {
+        const finalRecord = createFinalizedRecord({
           workflowId,
           requestId: options.requestId,
           binding: options.bindingA,
-          envelope: aOutcome.envelope,
+          finalDecision: aOutcome.finalDecision,
           userTask: options.userTask
         });
-        state = await this.persistRecord(state, prepared);
-        this.logWorkflowEvent("workflow.iteration_prepared", options.bindingA, options, {
+        state = await this.persistRecord(state, finalRecord);
+        this.logWorkflowEvent("workflow.finalized", options.bindingA, options, {
           workflowId,
-          handoffId: prepared.handoffId,
-          iteration
+          handoffId: undefined,
+          iteration: finalRecord.iteration,
+          decision: aOutcome.finalDecision.decision,
+          durationMs: Date.now() - startedAt
         });
-
-        const { delivered, message: agentBMessage } = await deliverHandoff({
-          prepared,
-          binding: options.bindingB,
-          bridge: this.bridge
-        });
-        state = await this.persistRecord(state, delivered);
-        this.logWorkflowEvent("workflow.iteration_delivered", options.bindingB, options, {
-          workflowId,
-          handoffId: delivered.handoffId,
-          iteration
-        });
-
-        const bOutcome = await this.acceptAgentBResponse({
-          bindingB: options.bindingB,
-          bindingA: options.bindingA,
-          workflowId,
-          handoffId: prepared.handoffId ?? aOutcome.envelope.handoffId,
-          iteration,
-          requestId: options.requestId,
-          message: agentBMessage
-        });
-
-        const completed = createCompletedRecord({
-          workflowId,
-          requestId: options.requestId,
-          binding: options.bindingB,
-          completion: bOutcome
-        });
-        state = await this.persistRecord(state, completed);
-        this.logWorkflowEvent("workflow.iteration_completed", options.bindingB, options, {
-          workflowId,
-          handoffId: completed.handoffId,
-          iteration
-        });
-
-        const workflow = selectWorkflowSnapshot(state, workflowId);
-        if (iteration >= options.maxReviewRounds) {
-          agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
-            options.bindingA,
-            withPromptProvenance(
-              "coordinator_control",
-              renderCapExceededMessage(workflow),
-              {
-                requestId: options.requestId,
-                workflowId,
-                handoffId: completed.handoffId,
-                iteration,
-                sessionRole: "A"
-              }
-            )
-          );
-          const cappedOutcome = await this.acceptAgentAResponse({
-            bindingA: options.bindingA,
-            bindingB: options.bindingB,
-            workflowId,
-            allowedHandoffIterations: [],
-            allowedFinalIterations: [iteration],
-            requestId: options.requestId,
-            message: agentAMessage,
-            expectedBlockType: "pi-final"
-          });
-
-          if (cappedOutcome.kind !== "final") {
-            const cappedRecord = createTerminalRecord({
-              workflowId,
-              iteration,
-              requestId: options.requestId,
-              binding: options.bindingA,
-              status: "capped",
-              userTask: options.userTask,
-              details: {
-                reason: "Agent A did not provide a terminal `pi-final` response after the review cap was hit."
-              }
-            });
-            state = await this.persistRecord(state, cappedRecord);
-            this.logWorkflowEvent("workflow.capped", options.bindingA, options, {
-              workflowId,
-              handoffId: completed.handoffId,
-              iteration,
-              durationMs: Date.now() - startedAt
-            });
-            return {
-              state,
-              result: buildCoordinatorFailureResult({
-                workflowId,
-                requestId: options.requestId,
-                iteration,
-                status: "capped",
-                summary: "Review cap reached and Agent A did not produce a valid terminal response."
-              })
-            };
-          }
-
-          const finalRecord = createFinalizedRecord({
-            workflowId,
-            requestId: options.requestId,
-            binding: options.bindingA,
-            finalDecision: cappedOutcome.finalDecision,
-            userTask: options.userTask
-          });
-          state = await this.persistRecord(state, finalRecord);
-          this.logWorkflowEvent("workflow.finalized", options.bindingA, options, {
-            workflowId,
-            handoffId: completed.handoffId,
-            iteration: finalRecord.iteration,
-            decision: cappedOutcome.finalDecision.decision,
-            durationMs: Date.now() - startedAt
-          });
-          return {
-            state,
-            result: buildWorkflowRunResult(finalRecord.finalDecision, statusFromFinal(finalRecord.finalDecision), options.requestId)
-          };
-        }
-
-        agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
-          options.bindingA,
-          withPromptProvenance(
-            "coordinator_review",
-            renderReviewMessage(workflow, completed.completion as CompletionRecord),
-            {
-              requestId: options.requestId,
-              workflowId,
-              handoffId: completed.handoffId,
-              iteration,
-              sessionRole: "A"
-            }
+        return {
+          state,
+          result: buildWorkflowRunResult(
+            finalRecord.finalDecision,
+            statusFromFinal(finalRecord.finalDecision),
+            options.requestId
           )
-        );
-        allowedAResponse = {
-          handoffIterations: [iteration + 1],
-          finalIterations: [iteration]
         };
       }
+
+      return this.runApprovedPlanLoop({
+        ...options,
+        state,
+        startedAt,
+        workflowId,
+        initialEnvelope: aOutcome.envelope
+      });
     } catch (error) {
       if (!(error instanceof WorkflowProtocolError)) {
         throw error;
@@ -299,6 +155,65 @@ export class WorkflowOrchestrator {
         reason: error.details.reason,
         durationMs: Date.now() - startedAt
       });
+      return {
+        state,
+        result: buildCoordinatorFailureResult({
+          workflowId: error.details.workflowId,
+          requestId: options.requestId,
+          iteration: error.details.iteration,
+          status: "blocked",
+          summary: `Workflow blocked: ${error.details.reason}`
+        })
+      };
+    }
+  }
+
+  public async runFromApprovedPlan(options: ApprovedPlanWorkflowOptions): Promise<{
+    state: WorkflowState;
+    result: WorkflowRunResult;
+  }> {
+    try {
+      this.logWorkflowEvent("workflow.started", options.bindingA, options, {
+        workflowId: options.initialEnvelope.workflowId,
+        handoffId: options.initialEnvelope.handoffId,
+        iteration: options.initialEnvelope.iteration,
+        userTask: options.userTask
+      });
+
+      return await this.runApprovedPlanLoop({
+        ...options,
+        startedAt: Date.now(),
+        workflowId: options.initialEnvelope.workflowId
+      });
+    } catch (error) {
+      if (!(error instanceof WorkflowProtocolError)) {
+        throw error;
+      }
+
+      const blockedRecord = createTerminalRecord({
+        workflowId: error.details.workflowId,
+        iteration: error.details.iteration,
+        requestId: options.requestId,
+        binding: error.details.role === "A" ? options.bindingA : options.bindingB,
+        status: "blocked",
+        userTask: options.userTask,
+        details: {
+          reason: error.details.reason,
+          role: error.details.role
+        }
+      });
+      const state = await this.persistRecord(options.state, blockedRecord);
+      this.logWorkflowEvent(
+        "workflow.blocked",
+        error.details.role === "A" ? options.bindingA : options.bindingB,
+        options,
+        {
+          workflowId: error.details.workflowId,
+          handoffId: options.initialEnvelope.handoffId,
+          iteration: error.details.iteration,
+          reason: error.details.reason
+        }
+      );
       return {
         state,
         result: buildCoordinatorFailureResult({
@@ -521,6 +436,205 @@ export class WorkflowOrchestrator {
     }
     return expected === "pi-final" ? kind === "final" : true;
   }
+
+  private async runApprovedPlanLoop(options: WorkflowOrchestratorOptions & {
+    initialEnvelope: HandoffEnvelope;
+    startedAt: number;
+    workflowId: string;
+  }): Promise<{
+    state: WorkflowState;
+    result: WorkflowRunResult;
+  }> {
+    let state = options.state;
+    let envelope = options.initialEnvelope;
+
+    while (true) {
+      const iteration = envelope.iteration;
+      const prepared = createPreparedRecord({
+        workflowId: options.workflowId,
+        requestId: options.requestId,
+        binding: options.bindingA,
+        envelope,
+        userTask: options.userTask
+      });
+      state = await this.persistRecord(state, prepared);
+      this.logWorkflowEvent("workflow.iteration_prepared", options.bindingA, options, {
+        workflowId: options.workflowId,
+        handoffId: prepared.handoffId,
+        iteration
+      });
+
+      const { delivered, message: agentBMessage } = await deliverHandoff({
+        prepared,
+        binding: options.bindingB,
+        bridge: this.bridge
+      });
+      state = await this.persistRecord(state, delivered);
+      this.logWorkflowEvent("workflow.iteration_delivered", options.bindingB, options, {
+        workflowId: options.workflowId,
+        handoffId: delivered.handoffId,
+        iteration
+      });
+
+      const bOutcome = await this.acceptAgentBResponse({
+        bindingB: options.bindingB,
+        bindingA: options.bindingA,
+        workflowId: options.workflowId,
+        handoffId: prepared.handoffId ?? envelope.handoffId,
+        iteration,
+        requestId: options.requestId,
+        message: agentBMessage
+      });
+
+      const completed = createCompletedRecord({
+        workflowId: options.workflowId,
+        requestId: options.requestId,
+        binding: options.bindingB,
+        completion: bOutcome
+      });
+      state = await this.persistRecord(state, completed);
+      this.logWorkflowEvent("workflow.iteration_completed", options.bindingB, options, {
+        workflowId: options.workflowId,
+        handoffId: completed.handoffId,
+        iteration
+      });
+
+      const workflow = selectWorkflowSnapshot(state, options.workflowId);
+      if (iteration >= options.maxReviewRounds) {
+        const agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
+          options.bindingA,
+          withPromptProvenance(
+            "coordinator_control",
+            renderCapExceededMessage(workflow),
+            {
+              requestId: options.requestId,
+              workflowId: options.workflowId,
+              handoffId: completed.handoffId,
+              iteration,
+              sessionRole: "A"
+            }
+          )
+        );
+        const cappedOutcome = await this.acceptAgentAResponse({
+          bindingA: options.bindingA,
+          bindingB: options.bindingB,
+          workflowId: options.workflowId,
+          allowedHandoffIterations: [],
+          allowedFinalIterations: [iteration],
+          requestId: options.requestId,
+          message: agentAMessage,
+          expectedBlockType: "pi-final"
+        });
+
+        if (cappedOutcome.kind !== "final") {
+          const cappedRecord = createTerminalRecord({
+            workflowId: options.workflowId,
+            iteration,
+            requestId: options.requestId,
+            binding: options.bindingA,
+            status: "capped",
+            userTask: options.userTask,
+            details: {
+              reason: "Agent A did not provide a terminal `pi-final` response after the review cap was hit."
+            }
+          });
+          state = await this.persistRecord(state, cappedRecord);
+          this.logWorkflowEvent("workflow.capped", options.bindingA, options, {
+            workflowId: options.workflowId,
+            handoffId: completed.handoffId,
+            iteration,
+            durationMs: Date.now() - options.startedAt
+          });
+          return {
+            state,
+            result: buildCoordinatorFailureResult({
+              workflowId: options.workflowId,
+              requestId: options.requestId,
+              iteration,
+              status: "capped",
+              summary: "Review cap reached and Agent A did not produce a valid terminal response."
+            })
+          };
+        }
+
+        const finalRecord = createFinalizedRecord({
+          workflowId: options.workflowId,
+          requestId: options.requestId,
+          binding: options.bindingA,
+          finalDecision: cappedOutcome.finalDecision,
+          userTask: options.userTask
+        });
+        state = await this.persistRecord(state, finalRecord);
+        this.logWorkflowEvent("workflow.finalized", options.bindingA, options, {
+          workflowId: options.workflowId,
+          handoffId: completed.handoffId,
+          iteration: finalRecord.iteration,
+          decision: cappedOutcome.finalDecision.decision,
+          durationMs: Date.now() - options.startedAt
+        });
+        return {
+          state,
+          result: buildWorkflowRunResult(
+            finalRecord.finalDecision,
+            statusFromFinal(finalRecord.finalDecision),
+            options.requestId
+          )
+        };
+      }
+
+      const agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
+        options.bindingA,
+        withPromptProvenance(
+          "coordinator_review",
+          renderReviewMessage(workflow, completed.completion as CompletionRecord),
+          {
+            requestId: options.requestId,
+            workflowId: options.workflowId,
+            handoffId: completed.handoffId,
+            iteration,
+            sessionRole: "A"
+          }
+        )
+      );
+      const aOutcome = await this.acceptAgentAResponse({
+        bindingA: options.bindingA,
+        bindingB: options.bindingB,
+        workflowId: options.workflowId,
+        allowedHandoffIterations: [iteration + 1],
+        allowedFinalIterations: [iteration],
+        requestId: options.requestId,
+        message: agentAMessage
+      });
+
+      if (aOutcome.kind === "final") {
+        const finalRecord = createFinalizedRecord({
+          workflowId: options.workflowId,
+          requestId: options.requestId,
+          binding: options.bindingA,
+          finalDecision: aOutcome.finalDecision,
+          userTask: options.userTask
+        });
+        state = await this.persistRecord(state, finalRecord);
+        this.logWorkflowEvent("workflow.finalized", options.bindingA, options, {
+          workflowId: options.workflowId,
+          handoffId: completed.handoffId,
+          iteration: finalRecord.iteration,
+          decision: aOutcome.finalDecision.decision,
+          durationMs: Date.now() - options.startedAt
+        });
+        return {
+          state,
+          result: buildWorkflowRunResult(
+            finalRecord.finalDecision,
+            statusFromFinal(finalRecord.finalDecision),
+            options.requestId
+          )
+        };
+      }
+
+      envelope = aOutcome.envelope;
+    }
+  }
 }
 
 function renderInitialPlanningMessage(options: {
@@ -739,24 +853,27 @@ export class WorkflowProtocolError extends Error {
 
 export function createWorkflowHandoffEnvelope(options: {
   workflowId: string;
+  handoffId?: string | undefined;
   iteration: number;
   requestId: string;
   objective: string;
   summary: string;
   acceptanceCriteria: string[];
   relevantPaths: string[];
+  executionPlan?: string[] | undefined;
   reviewNotes?: string[] | undefined;
   constraints?: string[] | undefined;
 }): HandoffEnvelope {
   return {
     schemaVersion: 1,
     workflowId: options.workflowId,
-    handoffId: createHandoffId(),
+    handoffId: options.handoffId ?? createHandoffId(),
     iteration: options.iteration,
     objective: options.objective,
     summary: options.summary,
     acceptanceCriteria: options.acceptanceCriteria,
     relevantPaths: options.relevantPaths,
+    executionPlan: options.executionPlan,
     reviewNotes: options.reviewNotes,
     constraints: options.constraints,
     requestId: options.requestId

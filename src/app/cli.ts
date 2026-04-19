@@ -20,7 +20,7 @@ export interface ReplCliOptions {
 }
 
 export type ParsedReplCommand =
-  | { type: "task"; text: string }
+  | { type: "user_turn"; text: string }
   | { type: "status" }
   | { type: "sessions" }
   | { type: "handoff" }
@@ -96,10 +96,10 @@ export function parseCliArgs(argv: string[], baseCwd = process.cwd()): ReplCliOp
 export function parseReplCommand(input: string): ParsedReplCommand {
   const trimmed = input.trim();
   if (!trimmed) {
-    return { type: "task", text: "" };
+    return { type: "user_turn", text: "" };
   }
   if (!trimmed.startsWith("/")) {
-    return { type: "task", text: trimmed };
+    return { type: "user_turn", text: trimmed };
   }
   if (trimmed === "/status") {
     return { type: "status" };

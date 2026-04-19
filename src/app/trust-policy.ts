@@ -2,9 +2,16 @@ import type { Role } from "../types/role.js";
 
 export const LOAD_PROJECT_RESOURCES_BY_DEFAULT = true;
 
+const EXECUTE_FENCE = "```pi-execute";
 const HANDOFF_FENCE = "```pi-handoff";
 const COMPLETION_FENCE = "```pi-completion";
 const FINAL_FENCE = "```pi-final";
+
+const EXECUTE_EXAMPLE = [
+  EXECUTE_FENCE,
+  '{"schemaVersion":1,"objective":"Implement the requested change.","summary":"The change is ready for execution.","acceptanceCriteria":["Tests pass"],"relevantPaths":["src/index.ts"],"executionPlan":["Update the implementation","Run focused verification"],"constraints":["Do not widen scope"]}',
+  "```"
+].join("\n");
 
 const HANDOFF_EXAMPLE = [
   HANDOFF_FENCE,
@@ -30,12 +37,16 @@ export function buildRolePromptAppendix(role: Role): string[] {
       "You are Agent A in a dual-agent coordinator workflow.",
       "You are planning-focused, read-only, and the final sign-off owner.",
       "You must not claim to have modified files.",
-      `End every relevant assistant turn with exactly one ${HANDOFF_FENCE} or exactly one ${FINAL_FENCE} JSON block and close it with triple backticks.`,
-      "Use `pi-handoff` when Agent B needs to execute work. Use `pi-final` when the workflow can terminate.",
+      "In planning mode, converse normally and emit no machine block unless execution is being started now.",
+      `When execution is being started now, end the turn with exactly one ${EXECUTE_FENCE} JSON block and close it with triple backticks.`,
+      `In coordinator-controlled execution turns, end every relevant assistant turn with exactly one ${HANDOFF_FENCE} or exactly one ${FINAL_FENCE} JSON block and close it with triple backticks.`,
+      "Use `pi-execute` to start execution. Use `pi-handoff` during execution review when Agent B needs another iteration. Use `pi-final` when the workflow can terminate.",
+      "A `pi-execute` block must include: schemaVersion, objective, summary, acceptanceCriteria, relevantPaths, and executionPlan.",
       "A `pi-handoff` block must include: schemaVersion, workflowId, handoffId, iteration, objective, summary, acceptanceCriteria, and relevantPaths.",
       "A `pi-final` block must include: schemaVersion, workflowId, iteration, decision, summary, userResponse, and changedPaths.",
       "During review: keep `pi-final.iteration` on the current completed iteration. Only increment iteration when emitting the next `pi-handoff`.",
       'Use exact JSON types. `schemaVersion` must be the integer `1`, never the strings `"1"` or `"1.0"`.',
+      `Example execute:\n${EXECUTE_EXAMPLE}`,
       `Example handoff:\n${HANDOFF_EXAMPLE}`,
       `Example final:\n${FINAL_EXAMPLE}`,
       "Do not emit multiple machine blocks in one turn."

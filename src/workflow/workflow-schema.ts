@@ -21,10 +21,21 @@ export const handoffEnvelopeSchema = z.object({
   summary: z.string().min(1),
   acceptanceCriteria: z.array(z.string().min(1)).min(1),
   relevantPaths: z.array(z.string().min(1)).min(1),
+  executionPlan: z.array(z.string().min(1)).optional(),
   reviewNotes: z.array(z.string().min(1)).optional(),
   constraints: z.array(z.string().min(1)).optional(),
   requestId: z.string().min(1).optional(),
   originatingTurnIndex: z.number().int().nonnegative().optional()
+});
+
+export const executionPlanEnvelopeSchema = z.object({
+  schemaVersion: schemaVersionSchema,
+  objective: z.string().min(1),
+  summary: z.string().min(1),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  relevantPaths: z.array(z.string().min(1)).min(1),
+  executionPlan: z.array(z.string().min(1)).min(1),
+  constraints: z.array(z.string().min(1)).optional()
 });
 
 export const completionRecordSchema = z.object({

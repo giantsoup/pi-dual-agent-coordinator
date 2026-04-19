@@ -33,15 +33,11 @@ function createCoordinator(): ReplCoordinatorLike & {
 
   return {
     async start() {},
-    async submitUserTask(text: string) {
+    async submitUserInput(text: string) {
       return {
-        workflowId: "wf-1",
-        status: "completed",
-        iterations: 1,
+        mode: "planning" as const,
         userResponse: `submitted:${text}`,
-        finalSummary: `submitted:${text}`,
-        changedPaths: [],
-        requestId: "req-1"
+        workflow: undefined
       };
     },
     getStatus() {

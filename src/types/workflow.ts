@@ -1,5 +1,6 @@
 import type { CompletionRecord, FinalDecisionRecord, HandoffEnvelope, HandoffRecord } from "./handoff.js";
 
+export type ConversationMode = "planning" | "executing";
 export type WorkflowRunStatus = "running" | "completed" | "blocked" | "capped";
 
 export interface WorkflowRunResult {
@@ -10,6 +11,21 @@ export interface WorkflowRunResult {
   finalSummary: string;
   changedPaths: string[];
   requestId: string;
+}
+
+export interface CoordinatorTurnResult {
+  mode: ConversationMode;
+  userResponse: string;
+  workflow?:
+    | {
+        workflowId: string;
+        status: WorkflowRunStatus;
+        iterations: number;
+        finalSummary: string;
+        changedPaths: string[];
+        requestId: string;
+      }
+    | undefined;
 }
 
 export interface WorkflowIterationState {

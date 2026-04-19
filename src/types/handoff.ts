@@ -21,10 +21,21 @@ export interface HandoffEnvelope {
   summary: string;
   acceptanceCriteria: string[];
   relevantPaths: string[];
+  executionPlan?: string[] | undefined;
   reviewNotes?: string[] | undefined;
   constraints?: string[] | undefined;
   requestId?: string | undefined;
   originatingTurnIndex?: number | undefined;
+}
+
+export interface ExecutionPlanEnvelope {
+  schemaVersion: 1;
+  objective: string;
+  summary: string;
+  acceptanceCriteria: string[];
+  relevantPaths: string[];
+  executionPlan: string[];
+  constraints?: string[] | undefined;
 }
 
 export interface CompletionRecord {

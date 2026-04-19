@@ -1,0 +1,25 @@
+import { describe, expect, it } from "vitest";
+
+import { renderHandoffMessage } from "../../src/handoff/render-handoff-message.js";
+
+describe("renderHandoffMessage", () => {
+  it("includes execution plan bullets and only renders the structured brief", () => {
+    const message = renderHandoffMessage({
+      schemaVersion: 1,
+      workflowId: "wf-1",
+      handoffId: "h-1",
+      iteration: 1,
+      objective: "Implement feature",
+      summary: "Structured summary only",
+      acceptanceCriteria: ["tests pass"],
+      relevantPaths: ["src/index.ts"],
+      executionPlan: ["Update the implementation", "Run tests"],
+      constraints: ["Do not widen scope"]
+    });
+
+    expect(message).toContain("Execution plan:");
+    expect(message).toContain("- Update the implementation");
+    expect(message).toContain("- Run tests");
+    expect(message).not.toContain("raw planning transcript");
+  });
+});

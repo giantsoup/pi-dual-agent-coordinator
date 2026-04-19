@@ -224,10 +224,12 @@ node dist/src/index.js repl . --no-session
 
 ## REPL behavior
 
-- Each submitted task blocks until the full workflow finishes.
-- Agent A may terminate immediately with `pi-final` if no execution work is needed.
-- Otherwise Agent A emits `pi-handoff`, Agent B executes and emits `pi-completion`, and Agent A either finalizes or issues the next handoff.
-- The printed final answer always comes from Agent A’s `pi-final.userResponse`.
+- REPL input starts in planning mode with Agent A.
+- Planning-only turns return immediately; turns that start execution block until the workflow reaches a terminal Agent A decision.
+- Agent A may answer in plain prose for one or more planning turns without starting execution.
+- When execution should start, Agent A emits `pi-execute`; the coordinator creates a workflow, renders the first deterministic handoff for Agent B, and enters the review loop.
+- During execution, Agent B emits `pi-completion`, and Agent A either finalizes with `pi-final` or issues the next `pi-handoff`.
+- After execution finishes, the conversation returns to planning mode and the printed final answer still comes from Agent A’s `pi-final.userResponse`.
 - One deterministic repair prompt is allowed for each malformed or missing machine block before the workflow is blocked.
 - If Agent A still requests more execution work after the round cap, the coordinator forces a terminal blocked finalization path.
 
@@ -242,7 +244,7 @@ Useful REPL commands:
 
 ## Workflow and recovery
 
-Each user task becomes a workflow with a stable `workflowId`. Each Agent B execution round has its own `iteration`.
+Each execution start becomes a workflow with a stable `workflowId`. Planning-only turns stay outside the workflow ledger. Each Agent B execution round has its own `iteration`.
 
 The append-only ledger records workflow progress using these categories:
 

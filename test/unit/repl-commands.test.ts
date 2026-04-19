@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { parseCliArgs, parseReplCommand } from "../../src/app/cli.js";
 
 describe("repl commands", () => {
+  it("parses non-slash input as a planning user turn", () => {
+    expect(parseReplCommand("ship it")).toEqual({ type: "user_turn", text: "ship it" });
+  });
+
   it("parses status", () => {
     expect(parseReplCommand("/status")).toEqual({ type: "status" });
   });

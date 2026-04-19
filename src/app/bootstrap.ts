@@ -3,11 +3,11 @@ import { stdin, stdout, stderr } from "node:process";
 
 import { parseReplCommand, type ReplCliOptions } from "./cli.js";
 import { Coordinator } from "../coordinator/coordinator.js";
-import type { WorkflowRunResult } from "../types/workflow.js";
+import type { CoordinatorTurnResult } from "../types/workflow.js";
 
 export interface ReplCoordinatorLike {
   start(): Promise<void>;
-  submitUserTask(text: string): Promise<WorkflowRunResult>;
+  submitUserInput(text: string): Promise<CoordinatorTurnResult>;
   getStatus(): Record<string, unknown>;
   getSessions(): unknown;
   getLastHandoff(): Promise<unknown>;
@@ -74,11 +74,11 @@ export async function runReplLoop(
         const command = parseReplCommand(input);
 
         switch (command.type) {
-          case "task": {
+          case "user_turn": {
             if (!command.text) {
               break;
             }
-            const result = await coordinator.submitUserTask(command.text);
+            const result = await coordinator.submitUserInput(command.text);
             io.stdout.write(`${result.userResponse}\n`);
             break;
           }

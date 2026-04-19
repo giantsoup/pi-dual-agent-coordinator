@@ -3,15 +3,18 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
 import {
   completionRecordSchema,
+  executionPlanEnvelopeSchema,
   finalDecisionSchema,
   handoffEnvelopeSchema
 } from "./handoff-envelope-schema.js";
 import type {
   CompletionRecord,
+  ExecutionPlanEnvelope,
   FinalDecisionRecord,
   HandoffEnvelope
 } from "../types/handoff.js";
 
+export const EXECUTE_BLOCK_TYPE = "pi-execute";
 export const HANDOFF_BLOCK_TYPE = "pi-handoff";
 export const COMPLETION_BLOCK_TYPE = "pi-completion";
 export const FINAL_BLOCK_TYPE = "pi-final";
@@ -40,6 +43,16 @@ export function parseHandoffEnvelope(message: AgentMessage): HandoffEnvelope | u
   return handoffEnvelopeSchema.parse(JSON.parse(block));
 }
 
+export function parseExecutionPlanEnvelope(
+  message: AgentMessage
+): ExecutionPlanEnvelope | undefined {
+  const block = extractMachineBlock(extractAssistantText(message), EXECUTE_BLOCK_TYPE);
+  if (!block) {
+    return undefined;
+  }
+  return executionPlanEnvelopeSchema.parse(JSON.parse(block));
+}
+
 export function parseCompletionRecord(message: AgentMessage): CompletionRecord | undefined {
   const block = extractMachineBlock(extractAssistantText(message), COMPLETION_BLOCK_TYPE);
   if (!block) {
@@ -59,6 +72,16 @@ export function parseFinalDecisionRecord(message: AgentMessage): FinalDecisionRe
 export function maybeParseHandoffEnvelope(message: AgentMessage): HandoffEnvelope | undefined {
   try {
     return parseHandoffEnvelope(message);
+  } catch {
+    return undefined;
+  }
+}
+
+export function maybeParseExecutionPlanEnvelope(
+  message: AgentMessage
+): ExecutionPlanEnvelope | undefined {
+  try {
+    return parseExecutionPlanEnvelope(message);
   } catch {
     return undefined;
   }

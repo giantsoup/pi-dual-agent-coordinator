@@ -26,6 +26,8 @@ export function renderHandoffMessage(envelope: HandoffEnvelope): string {
     "",
     ...renderList("Relevant paths:", envelope.relevantPaths),
     "",
+    ...renderList("Execution plan:", envelope.executionPlan),
+    "",
     ...renderList("Review notes:", envelope.reviewNotes),
     "",
     ...renderList("Constraints:", envelope.constraints),

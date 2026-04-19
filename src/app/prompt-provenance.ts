@@ -1,4 +1,6 @@
 export type PromptProvenance =
+  | "planning_user"
+  | "planning_repair"
   | "user_task"
   | "coordinator_handoff"
   | "coordinator_review"
