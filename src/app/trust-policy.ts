@@ -4,14 +4,23 @@ export const LOAD_PROJECT_RESOURCES_BY_DEFAULT = true;
 
 const HANDOFF_FENCE = "```pi-handoff";
 const COMPLETION_FENCE = "```pi-completion";
+const FINAL_FENCE = "```pi-final";
+
 const HANDOFF_EXAMPLE = [
   HANDOFF_FENCE,
-  '{"schemaVersion":1,"handoffId":"handoff-123","objective":"Implement the requested change.","summary":"Agent B must make the edit and verify it.","acceptanceCriteria":["Tests pass"],"relevantPaths":["src/index.ts"]}',
+  '{"schemaVersion":1,"workflowId":"workflow-123","handoffId":"handoff-123","iteration":1,"objective":"Implement the requested change.","summary":"Agent B must edit the files and verify the result.","acceptanceCriteria":["Tests pass"],"relevantPaths":["src/index.ts"],"reviewNotes":["Fix the failing edge case."]}',
   "```"
 ].join("\n");
+
+const FINAL_EXAMPLE = [
+  FINAL_FENCE,
+  '{"schemaVersion":1,"workflowId":"workflow-123","iteration":1,"decision":"approved","summary":"The task is complete.","userResponse":"Implemented the requested change and verified it.","changedPaths":["src/index.ts"]}',
+  "```"
+].join("\n");
+
 const COMPLETION_EXAMPLE = [
   COMPLETION_FENCE,
-  '{"schemaVersion":1,"handoffId":"handoff-123","summary":"Implemented the requested change and verified the result.","changedPaths":["src/index.ts"]}',
+  '{"schemaVersion":1,"workflowId":"workflow-123","handoffId":"handoff-123","iteration":1,"summary":"Implemented the requested change and verified the result.","changedPaths":["src/index.ts"],"verification":["npm test"]}',
   "```"
 ].join("\n");
 
@@ -19,13 +28,17 @@ export function buildRolePromptAppendix(role: Role): string[] {
   if (role === "A") {
     return [
       "You are Agent A in a dual-agent coordinator workflow.",
-      "You are planning-focused and must not claim to have modified files.",
-      "You only have read-only tools. Inspect, plan, and decide whether Agent B needs an execution handoff.",
-      `When execution should be delegated, end your assistant turn with exactly one ${HANDOFF_FENCE} JSON block and close it with triple backticks.`,
-      "The handoff JSON must include: schemaVersion, handoffId, objective, summary, acceptanceCriteria, and relevantPaths.",
+      "You are planning-focused, read-only, and the final sign-off owner.",
+      "You must not claim to have modified files.",
+      `End every relevant assistant turn with exactly one ${HANDOFF_FENCE} or exactly one ${FINAL_FENCE} JSON block and close it with triple backticks.`,
+      "Use `pi-handoff` when Agent B needs to execute work. Use `pi-final` when the workflow can terminate.",
+      "A `pi-handoff` block must include: schemaVersion, workflowId, handoffId, iteration, objective, summary, acceptanceCriteria, and relevantPaths.",
+      "A `pi-final` block must include: schemaVersion, workflowId, iteration, decision, summary, userResponse, and changedPaths.",
+      "During review: keep `pi-final.iteration` on the current completed iteration. Only increment iteration when emitting the next `pi-handoff`.",
       'Use exact JSON types. `schemaVersion` must be the integer `1`, never the strings `"1"` or `"1.0"`.',
-      `Example:\n${HANDOFF_EXAMPLE}`,
-      "Do not emit multiple handoff blocks in one turn."
+      `Example handoff:\n${HANDOFF_EXAMPLE}`,
+      `Example final:\n${FINAL_EXAMPLE}`,
+      "Do not emit multiple machine blocks in one turn."
     ];
   }
 
@@ -33,10 +46,10 @@ export function buildRolePromptAppendix(role: Role): string[] {
     "You are Agent B in a dual-agent coordinator workflow.",
     "You are the write-authoritative execution agent.",
     "You will receive coordinator-authored handoff prompts, not raw Agent A messages.",
-    `When you finish a coordinator handoff, end your assistant turn with exactly one ${COMPLETION_FENCE} JSON block and close it with triple backticks.`,
-    "The completion JSON must include: schemaVersion, handoffId, summary, and changedPaths.",
+    `End every coordinator handoff turn with exactly one ${COMPLETION_FENCE} JSON block and close it with triple backticks.`,
+    "A `pi-completion` block must include: schemaVersion, workflowId, handoffId, iteration, summary, and changedPaths.",
     'Use exact JSON types. `schemaVersion` must be the integer `1`, never the strings `"1"` or `"1.0"`.',
-    `Example:\n${COMPLETION_EXAMPLE}`,
+    `Example completion:\n${COMPLETION_EXAMPLE}`,
     "Keep the completion block stable and machine-readable."
   ];
 }

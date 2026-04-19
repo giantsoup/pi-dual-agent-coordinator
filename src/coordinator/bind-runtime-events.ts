@@ -1,39 +1,33 @@
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
-import type { HandoffOrchestrator } from "./handoff-orchestrator.js";
 import { normalizeEvent, normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
-import type { Role } from "../types/role.js";
 import { CorrelationState } from "../telemetry/correlation.js";
 import { TelemetryLogger } from "../telemetry/logger.js";
 import { Metrics } from "../telemetry/metrics.js";
 import type { RoleRuntimeBinding } from "../runtime/create-role-runtime.js";
-import type { HandoffState } from "../types/handoff.js";
+import type { Role } from "../types/role.js";
 
-export interface RuntimeEventBridgeCallbacks {
-  getRequestId(role: Role): string | undefined;
-  getHandoffState(): HandoffState;
-  setHandoffState(state: HandoffState): void;
-  onPrepared?(summary: string): void;
-  onCompleted?(summary: string): void;
+interface TurnWaiter {
+  resolve(message: AgentMessage): void;
+  reject(error: Error): void;
 }
 
 export class RuntimeEventBridge {
   private readonly subscriptions = new Map<Role, () => void>();
   private readonly correlation = new CorrelationState();
+  private readonly requestIds = new Map<Role, string>();
   private readonly pending = new Set<Promise<void>>();
+  private readonly bufferedTurnEnds = new Map<string, AgentMessage[]>();
+  private readonly turnWaiters = new Map<string, TurnWaiter[]>();
   private lastError: Error | undefined;
 
   public constructor(
     private readonly logger: TelemetryLogger,
-    private readonly metrics: Metrics,
-    private readonly orchestrator: HandoffOrchestrator,
-    private readonly callbacks: RuntimeEventBridgeCallbacks
+    private readonly metrics: Metrics
   ) {}
 
-  public async bind(
-    binding: RoleRuntimeBinding,
-    otherBindingProvider: (role: Role) => RoleRuntimeBinding | undefined
-  ): Promise<void> {
+  public async bind(binding: RoleRuntimeBinding): Promise<void> {
     this.subscriptions.get(binding.role)?.();
     await binding.rebind();
 
@@ -47,7 +41,7 @@ export class RuntimeEventBridge {
     );
 
     const unsubscribe = binding.session.subscribe((event) => {
-      const pending = this.handleEvent(binding, event, otherBindingProvider)
+      const pending = this.handleEvent(binding, event)
         .catch((error: unknown) => {
           this.lastError =
             error instanceof Error ? error : new Error(String(error));
@@ -57,13 +51,38 @@ export class RuntimeEventBridge {
         });
       this.pending.add(pending);
     });
+
     this.subscriptions.set(binding.role, unsubscribe);
+  }
+
+  public setRequestId(role: Role, requestId: string | undefined): void {
+    if (requestId) {
+      this.requestIds.set(role, requestId);
+      return;
+    }
+    this.requestIds.delete(role);
+  }
+
+  public async promptAndWaitForTurnEnd(
+    binding: RoleRuntimeBinding,
+    text: string,
+    options?: {
+      streamingBehavior?: "steer" | "followUp";
+      preflightResult?: (success: boolean) => void;
+    }
+  ): Promise<AgentMessage> {
+    const sessionKey = this.sessionKey(binding);
+    this.bufferedTurnEnds.set(sessionKey, []);
+    const turnEndPromise = this.awaitNextTurnEnd(sessionKey);
+    await binding.session.prompt(text, options);
+    return turnEndPromise;
   }
 
   public async waitForIdle(): Promise<void> {
     while (this.pending.size > 0) {
       await Promise.all([...this.pending]);
     }
+
     if (this.lastError) {
       const error = this.lastError;
       this.lastError = undefined;
@@ -76,15 +95,22 @@ export class RuntimeEventBridge {
       unsubscribe();
     }
     this.subscriptions.clear();
+
+    for (const waiters of this.turnWaiters.values()) {
+      for (const waiter of waiters) {
+        waiter.reject(new Error("Runtime event bridge disposed"));
+      }
+    }
+    this.turnWaiters.clear();
+    this.bufferedTurnEnds.clear();
   }
 
   private async handleEvent(
     binding: RoleRuntimeBinding,
-    event: AgentSessionEvent,
-    otherBindingProvider: (role: Role) => RoleRuntimeBinding | undefined
+    event: AgentSessionEvent
   ): Promise<void> {
-    const requestId = this.callbacks.getRequestId(binding.role);
-    const sessionKey = `${binding.role}:${binding.sessionId}`;
+    const requestId = this.requestIds.get(binding.role);
+    const sessionKey = this.sessionKey(binding);
     this.correlation.setRequestId(sessionKey, requestId);
 
     const telemetry = normalizeEvent({
@@ -103,53 +129,38 @@ export class RuntimeEventBridge {
       return;
     }
 
-    if (binding.role === "A") {
-      const bindingB = otherBindingProvider("B");
-      if (!bindingB) {
-        return;
-      }
-
-      const result = await this.orchestrator.handleAgentATurnEnd({
-        bindingA: binding,
-        bindingB,
-        message: event.message,
-        requestId,
-        state: this.callbacks.getHandoffState(),
-        onStateChange: (state) => {
-          this.callbacks.setHandoffState(
-            selectNewerState(this.callbacks.getHandoffState(), state)
-          );
-        }
-      });
-      this.callbacks.setHandoffState(
-        selectNewerState(this.callbacks.getHandoffState(), result.state)
-      );
-      if (
-        result.prepared &&
-        this.callbacks.getHandoffState().lastCompleted?.handoffId !== result.prepared.handoffId
-      ) {
-        this.callbacks.onPrepared?.(`Prepared handoff ${result.prepared.handoffId}`);
+    const queue = this.turnWaiters.get(sessionKey);
+    if (queue && queue.length > 0) {
+      queue.shift()?.resolve(event.message);
+      if (queue.length === 0) {
+        this.turnWaiters.delete(sessionKey);
       }
       return;
     }
 
-    const result = await this.orchestrator.handleAgentBTurnEnd({
-      binding,
-      message: event.message,
-      requestId,
-      state: this.callbacks.getHandoffState()
-    });
-    this.callbacks.setHandoffState(
-      selectNewerState(this.callbacks.getHandoffState(), result.state)
-    );
-    if (result.completed?.completion) {
-      this.callbacks.onCompleted?.(
-        `Completed ${result.completed.handoffId}: ${result.completed.completion.summary}`
-      );
-    }
+    const buffered = this.bufferedTurnEnds.get(sessionKey) ?? [];
+    buffered.push(event.message);
+    this.bufferedTurnEnds.set(sessionKey, buffered);
   }
-}
 
-function selectNewerState(current: HandoffState, candidate: HandoffState): HandoffState {
-  return candidate.records.length >= current.records.length ? candidate : current;
+  private awaitNextTurnEnd(sessionKey: string): Promise<AgentMessage> {
+    const buffered = this.bufferedTurnEnds.get(sessionKey);
+    if (buffered && buffered.length > 0) {
+      const message = buffered.shift();
+      this.bufferedTurnEnds.set(sessionKey, buffered);
+      if (message) {
+        return Promise.resolve(message);
+      }
+    }
+
+    return new Promise<AgentMessage>((resolve, reject) => {
+      const waiters = this.turnWaiters.get(sessionKey) ?? [];
+      waiters.push({ resolve, reject });
+      this.turnWaiters.set(sessionKey, waiters);
+    });
+  }
+
+  private sessionKey(binding: RoleRuntimeBinding): string {
+    return `${binding.role}:${binding.sessionId}`;
+  }
 }

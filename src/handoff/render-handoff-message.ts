@@ -1,27 +1,37 @@
 import type { HandoffEnvelope } from "../types/handoff.js";
 
-export function renderHandoffMessage(envelope: HandoffEnvelope): string {
-  const acceptanceCriteria = envelope.acceptanceCriteria
-    .map((criterion, index) => `${index + 1}. ${criterion}`)
-    .join("\n");
-  const relevantPaths = envelope.relevantPaths.map((item) => `- ${item}`).join("\n");
-  const constraints =
-    envelope.constraints && envelope.constraints.length > 0
-      ? `\nConstraints:\n${envelope.constraints.map((item) => `- ${item}`).join("\n")}`
-      : "";
+function renderList(title: string, values: string[] | undefined): string[] {
+  if (!values || values.length === 0) {
+    return [];
+  }
 
+  return [title, ...values.map((value) => `- ${value}`)];
+}
+
+export function renderHandoffMessage(envelope: HandoffEnvelope): string {
   return [
     "Coordinator handoff for Agent B.",
+    "Use your write-authoritative tools to execute the request.",
+    "Do not assume access to any raw Agent A text beyond this rendered handoff.",
+    "",
+    `Workflow ID: ${envelope.workflowId}`,
     `Handoff ID: ${envelope.handoffId}`,
+    `Iteration: ${envelope.iteration}`,
     `Objective: ${envelope.objective}`,
-    `Summary: ${envelope.summary}`,
-    "Acceptance criteria:",
-    acceptanceCriteria,
-    "Relevant paths:",
-    relevantPaths,
-    constraints,
-    "Execute the work and finish your stable turn with one ```pi-completion JSON block."
+    "",
+    "Execution summary:",
+    envelope.summary,
+    "",
+    ...renderList("Acceptance criteria:", envelope.acceptanceCriteria),
+    "",
+    ...renderList("Relevant paths:", envelope.relevantPaths),
+    "",
+    ...renderList("Review notes:", envelope.reviewNotes),
+    "",
+    ...renderList("Constraints:", envelope.constraints),
+    "",
+    `End your assistant turn with exactly one \`\`\`pi-completion\`\`\` JSON block for workflow ${envelope.workflowId}, handoff ${envelope.handoffId}, iteration ${envelope.iteration}.`
   ]
-    .filter(Boolean)
+    .filter((line, index, lines) => !(line === "" && lines[index - 1] === ""))
     .join("\n");
 }

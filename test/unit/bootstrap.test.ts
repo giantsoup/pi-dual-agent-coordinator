@@ -11,9 +11,7 @@ class FakeReadline implements ReplReadlineLike {
   public closeCalls = 0;
   private index = 0;
 
-  public constructor(
-    private readonly responses: Array<string | Error>
-  ) {}
+  public constructor(private readonly responses: Array<string | Error>) {}
 
   public async question(_prompt: string): Promise<string> {
     const response = this.responses[this.index++];
@@ -36,7 +34,15 @@ function createCoordinator(): ReplCoordinatorLike & {
   return {
     async start() {},
     async submitUserTask(text: string) {
-      return `submitted:${text}`;
+      return {
+        workflowId: "wf-1",
+        status: "completed",
+        iterations: 1,
+        userResponse: `submitted:${text}`,
+        finalSummary: `submitted:${text}`,
+        changedPaths: [],
+        requestId: "req-1"
+      };
     },
     getStatus() {
       return { ok: true };
@@ -45,7 +51,7 @@ function createCoordinator(): ReplCoordinatorLike & {
       return [];
     },
     async getLastHandoff() {
-      return { state: { records: [] } };
+      return { state: { workflows: {}, records: [] } };
     },
     async replaceRuntime() {},
     async dispose() {
@@ -62,18 +68,24 @@ describe("bootstrap repl", () => {
     const closed = Object.assign(new Error("readline was closed"), {
       code: "ERR_USE_AFTER_CLOSE"
     });
-    const rl = new FakeReadline(["/status", closed]);
+    const rl = new FakeReadline(["/status", "ship it", closed]);
     const coordinator = createCoordinator();
     const writes: string[] = [];
 
     await expect(
       runReplLoop(coordinator, rl, {
-        stdout: { write: (chunk: string) => { writes.push(chunk); return true; } },
+        stdout: {
+          write: (chunk: string) => {
+            writes.push(chunk);
+            return true;
+          }
+        },
         stderr: { write: (_chunk: string) => true }
       })
     ).resolves.toBeUndefined();
 
     expect(writes.join("")).toContain('"ok": true');
+    expect(writes.join("")).toContain("submitted:ship it");
     expect(coordinator.disposeCalls).toBe(1);
     expect(rl.closeCalls).toBe(1);
   });

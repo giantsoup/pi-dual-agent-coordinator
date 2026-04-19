@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseReplCommand } from "../../src/app/cli.js";
+import { parseCliArgs, parseReplCommand } from "../../src/app/cli.js";
 
 describe("repl commands", () => {
   it("parses status", () => {
@@ -26,5 +26,9 @@ describe("repl commands", () => {
 
   it("parses quit", () => {
     expect(parseReplCommand("/quit")).toEqual({ type: "quit" });
+  });
+
+  it("parses max review rounds from CLI args", () => {
+    expect(parseCliArgs(["repl", ".", "--max-review-rounds", "5"]).maxReviewRounds).toBe(5);
   });
 });

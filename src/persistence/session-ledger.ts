@@ -15,6 +15,10 @@ export class SessionLedger {
     return (await this.loadAll()).filter((record) => record.handoffId === id);
   }
 
+  public async listByWorkflowId(id: string): Promise<HandoffRecord[]> {
+    return (await this.loadAll()).filter((record) => record.workflowId === id);
+  }
+
   public async latest(): Promise<HandoffRecord | undefined> {
     const records = await this.loadAll();
     return records.at(-1);
@@ -52,7 +56,7 @@ function parseLedgerRecords(content: string): HandoffRecord[] {
       }
 
       throw new Error(
-        `Invalid handoff ledger entry at line ${index + 1}: ${error instanceof Error ? error.message : String(error)}`
+        `Invalid workflow ledger entry at line ${index + 1}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

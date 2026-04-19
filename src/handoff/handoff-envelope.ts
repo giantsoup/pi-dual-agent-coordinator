@@ -1,11 +1,20 @@
 import type { AssistantMessage, TextContent } from "@mariozechner/pi-ai";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
-import { completionRecordSchema, handoffEnvelopeSchema } from "./handoff-envelope-schema.js";
-import type { CompletionRecord, HandoffEnvelope } from "../types/handoff.js";
+import {
+  completionRecordSchema,
+  finalDecisionSchema,
+  handoffEnvelopeSchema
+} from "./handoff-envelope-schema.js";
+import type {
+  CompletionRecord,
+  FinalDecisionRecord,
+  HandoffEnvelope
+} from "../types/handoff.js";
 
 export const HANDOFF_BLOCK_TYPE = "pi-handoff";
 export const COMPLETION_BLOCK_TYPE = "pi-completion";
+export const FINAL_BLOCK_TYPE = "pi-final";
 
 export function extractAssistantText(message: AgentMessage): string {
   if (!isAssistantMessage(message)) {
@@ -39,6 +48,14 @@ export function parseCompletionRecord(message: AgentMessage): CompletionRecord |
   return completionRecordSchema.parse(JSON.parse(block));
 }
 
+export function parseFinalDecisionRecord(message: AgentMessage): FinalDecisionRecord | undefined {
+  const block = extractMachineBlock(extractAssistantText(message), FINAL_BLOCK_TYPE);
+  if (!block) {
+    return undefined;
+  }
+  return finalDecisionSchema.parse(JSON.parse(block));
+}
+
 export function maybeParseHandoffEnvelope(message: AgentMessage): HandoffEnvelope | undefined {
   try {
     return parseHandoffEnvelope(message);
@@ -50,6 +67,14 @@ export function maybeParseHandoffEnvelope(message: AgentMessage): HandoffEnvelop
 export function maybeParseCompletionRecord(message: AgentMessage): CompletionRecord | undefined {
   try {
     return parseCompletionRecord(message);
+  } catch {
+    return undefined;
+  }
+}
+
+export function maybeParseFinalDecisionRecord(message: AgentMessage): FinalDecisionRecord | undefined {
+  try {
+    return parseFinalDecisionRecord(message);
   } catch {
     return undefined;
   }

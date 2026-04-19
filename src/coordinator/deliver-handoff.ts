@@ -2,15 +2,17 @@ import { withPromptProvenance } from "../app/prompt-provenance.js";
 import { renderHandoffMessage } from "../handoff/render-handoff-message.js";
 import type { HandoffRecord } from "../types/handoff.js";
 import type { RoleRuntimeBinding } from "../runtime/create-role-runtime.js";
+import type { RuntimeEventBridge } from "./bind-runtime-events.js";
 
 export async function deliverHandoff(options: {
   prepared: HandoffRecord;
   binding: RoleRuntimeBinding;
+  bridge: RuntimeEventBridge;
 }): Promise<{
   delivered: HandoffRecord;
-  promptPromise: Promise<void>;
+  message: Awaited<ReturnType<RuntimeEventBridge["promptAndWaitForTurnEnd"]>>;
 }> {
-  if (!options.prepared.envelope) {
+  if (!options.prepared.envelope || !options.prepared.handoffId) {
     throw new Error("Cannot deliver a handoff without an envelope");
   }
 
@@ -26,14 +28,17 @@ export async function deliverHandoff(options: {
     );
   }, 5_000);
 
-  const promptPromise = options.binding.session
-    .prompt(
+  const messagePromise = options.bridge
+    .promptAndWaitForTurnEnd(
+      options.binding,
       withPromptProvenance(
         "coordinator_handoff",
         renderHandoffMessage(options.prepared.envelope),
         {
           requestId: options.prepared.requestId,
+          workflowId: options.prepared.workflowId,
           handoffId: options.prepared.handoffId,
+          iteration: options.prepared.iteration,
           sessionRole: options.binding.role
         }
       ),
@@ -66,6 +71,6 @@ export async function deliverHandoff(options: {
       sessionFile: options.binding.sessionFile,
       timestamp: new Date().toISOString()
     },
-    promptPromise
+    message: await messagePromise
   };
 }

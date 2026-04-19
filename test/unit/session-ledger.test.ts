@@ -14,8 +14,8 @@ describe("session ledger", () => {
     writeFileSync(
       ledgerPath,
       [
-        '{"handoffId":"h-1","status":"prepared","role":"A","sessionId":"a-1","timestamp":"2026-04-18T00:00:00.000Z"}',
-        '{"handoffId":"h-1"'
+        '{"workflowId":"wf-1","handoffId":"h-1","iteration":1,"status":"prepared","role":"A","sessionId":"a-1","timestamp":"2026-04-18T00:00:00.000Z"}',
+        '{"workflowId":"wf-1"'
       ].join("\n"),
       "utf8"
     );
@@ -23,7 +23,7 @@ describe("session ledger", () => {
     const records = await new SessionLedger(ledgerPath).loadAll();
 
     expect(records).toHaveLength(1);
-    expect(records[0]?.handoffId).toBe("h-1");
+    expect(records[0]?.workflowId).toBe("wf-1");
   });
 
   it("fails on malformed non-terminal records", async () => {
@@ -33,14 +33,14 @@ describe("session ledger", () => {
     writeFileSync(
       ledgerPath,
       [
-        '{"handoffId":"h-1"',
-        '{"handoffId":"h-1","status":"prepared","role":"A","sessionId":"a-1","timestamp":"2026-04-18T00:00:00.000Z"}'
+        '{"workflowId":"wf-1"',
+        '{"workflowId":"wf-1","handoffId":"h-1","iteration":1,"status":"prepared","role":"A","sessionId":"a-1","timestamp":"2026-04-18T00:00:00.000Z"}'
       ].join("\n"),
       "utf8"
     );
 
     await expect(new SessionLedger(ledgerPath).loadAll()).rejects.toThrow(
-      "Invalid handoff ledger entry at line 1"
+      "Invalid workflow ledger entry at line 1"
     );
   });
 });

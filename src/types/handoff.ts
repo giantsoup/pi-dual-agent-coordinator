@@ -1,14 +1,27 @@
 import type { Role } from "./role.js";
 
-export type HandoffStatus = "prepared" | "delivered" | "acked" | "completed" | "superseded";
+export type HandoffStatus =
+  | "prepared"
+  | "delivered"
+  | "completed"
+  | "finalized"
+  | "blocked"
+  | "capped"
+  | "repair_requested"
+  | "superseded";
+
+export type HandoffRecordActor = Role | "coordinator";
 
 export interface HandoffEnvelope {
   schemaVersion: 1;
+  workflowId: string;
   handoffId: string;
+  iteration: number;
   objective: string;
   summary: string;
   acceptanceCriteria: string[];
   relevantPaths: string[];
+  reviewNotes?: string[] | undefined;
   constraints?: string[] | undefined;
   requestId?: string | undefined;
   originatingTurnIndex?: number | undefined;
@@ -16,31 +29,41 @@ export interface HandoffEnvelope {
 
 export interface CompletionRecord {
   schemaVersion: 1;
+  workflowId: string;
   handoffId: string;
+  iteration: number;
   summary: string;
   changedPaths: string[];
   verification?: string[] | undefined;
+  openQuestions?: string[] | undefined;
   requestId?: string | undefined;
   originatingTurnIndex?: number | undefined;
 }
 
+export interface FinalDecisionRecord {
+  schemaVersion: 1;
+  workflowId: string;
+  iteration: number;
+  decision: "approved" | "blocked";
+  summary: string;
+  userResponse: string;
+  changedPaths: string[];
+  followUps?: string[] | undefined;
+  requestId?: string | undefined;
+}
+
 export interface HandoffRecord {
-  handoffId: string;
+  workflowId: string;
+  handoffId?: string | undefined;
+  iteration: number;
   status: HandoffStatus;
-  role: Role;
+  role: HandoffRecordActor;
   requestId?: string | undefined;
   sessionId: string;
   sessionFile?: string | undefined;
   timestamp: string;
   envelope?: HandoffEnvelope | undefined;
   completion?: CompletionRecord | undefined;
+  finalDecision?: FinalDecisionRecord | undefined;
   details?: Record<string, unknown> | undefined;
-}
-
-export interface HandoffState {
-  activeHandoffId?: string | undefined;
-  lastPrepared?: HandoffRecord | undefined;
-  lastDelivered?: HandoffRecord | undefined;
-  lastCompleted?: HandoffRecord | undefined;
-  records: HandoffRecord[];
 }

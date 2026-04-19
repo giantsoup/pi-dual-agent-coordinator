@@ -22,14 +22,15 @@ The coordinator is the only component allowed to observe both Pi runtimes, persi
 - Coordinator-owned state lives under the dual-agent session root and is append-only where practical.
 - Handoff ledger state must be reconstructable after restart without coordinator memory.
 
-## Handoff Boundary
+## Workflow Boundary
 
-- Handoffs are recognized only at stable Pi boundaries, specifically `turn_end`.
-- The coordinator parses structured handoff/completion blocks from those stable assistant messages.
-- Raw model text is never forwarded directly from A to B; the coordinator renders a deterministic handoff prompt for B.
+- Workflow machine blocks are recognized only at stable Pi boundaries, specifically `turn_end`.
+- Agent A may emit either `pi-handoff` or `pi-final`.
+- Agent B may emit only `pi-completion`.
+- Raw model text is never forwarded directly between runtimes. The coordinator renders deterministic handoff, review, repair, and cap-control prompts.
 
-## V1 Scope
+## Current Scope
 
 - Plain readline REPL only.
-- Happy-path task -> A plan -> validated handoff -> B execution -> structured completion.
-- Recovery, replacement, logging, and duplicate suppression are part of the initial ship surface because they materially affect correctness.
+- Automatic capped workflow loop: task -> A plan/final -> B execution -> A review -> ... -> A final.
+- Recovery, replacement, logging, repair prompts, and append-only workflow replay are part of the ship surface because they materially affect correctness.

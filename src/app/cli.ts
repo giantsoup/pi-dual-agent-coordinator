@@ -16,6 +16,7 @@ export interface ReplCliOptions {
   modelB?: string;
   thinkingA?: ReplThinkingLevel;
   thinkingB?: ReplThinkingLevel;
+  maxReviewRounds: number;
 }
 
 export type ParsedReplCommand =
@@ -33,7 +34,7 @@ export function parseCliArgs(argv: string[], baseCwd = process.cwd()): ReplCliOp
   const [command, maybeCwd, ...rest] = argv;
 
   if (command !== "repl") {
-    throw new Error("Usage: pi-dual repl [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--agent-dir PATH] [--session-root PATH] [--no-session] [--json-logs] [--verbose]");
+    throw new Error("Usage: pi-dual repl [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--no-session] [--json-logs] [--verbose]");
   }
 
   const options: ReplCliOptions = {
@@ -41,7 +42,8 @@ export function parseCliArgs(argv: string[], baseCwd = process.cwd()): ReplCliOp
     cwd: maybeCwd && !maybeCwd.startsWith("--") ? resolve(baseCwd, maybeCwd) : baseCwd,
     sessionMode: "persistent",
     jsonLogs: false,
-    verbose: false
+    verbose: false,
+    maxReviewRounds: 3
   };
 
   const args = maybeCwd && !maybeCwd.startsWith("--") ? rest : [maybeCwd, ...rest].filter(Boolean) as string[];
@@ -64,6 +66,9 @@ export function parseCliArgs(argv: string[], baseCwd = process.cwd()): ReplCliOp
         break;
       case "--thinking-b":
         options.thinkingB = parseThinking(arg, requireValue(arg, args[++i]));
+        break;
+      case "--max-review-rounds":
+        options.maxReviewRounds = parsePositiveInt(arg, requireValue(arg, args[++i]));
         break;
       case "--agent-dir":
         options.agentDir = resolve(baseCwd, requireValue(arg, args[++i]));
@@ -136,6 +141,14 @@ function parseThinking(flag: string, value: string): ReplThinkingLevel {
     throw new Error(`Invalid value for ${flag}: ${value}`);
   }
   return value as ReplThinkingLevel;
+}
+
+function parsePositiveInt(flag: string, value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid value for ${flag}: ${value}`);
+  }
+  return parsed;
 }
 
 function isRole(value: string): boolean {

@@ -17,25 +17,48 @@ describe("restart recovery", () => {
     const ledger = new SessionLedger(join(root, "handoffs.jsonl"));
     const records: HandoffRecord[] = [
       {
+        workflowId: "wf-1",
         handoffId: "h-1",
+        iteration: 1,
         status: "prepared",
         role: "A",
         sessionId: "a-1",
         timestamp: new Date().toISOString()
       },
       {
+        workflowId: "wf-1",
         handoffId: "h-1",
+        iteration: 1,
         status: "delivered",
         role: "B",
         sessionId: "b-1",
         timestamp: new Date().toISOString()
       },
       {
+        workflowId: "wf-1",
         handoffId: "h-1",
+        iteration: 1,
         status: "completed",
         role: "B",
         sessionId: "b-1",
         timestamp: new Date().toISOString()
+      },
+      {
+        workflowId: "wf-1",
+        iteration: 1,
+        status: "finalized",
+        role: "A",
+        sessionId: "a-1",
+        timestamp: new Date().toISOString(),
+        finalDecision: {
+          schemaVersion: 1,
+          workflowId: "wf-1",
+          iteration: 1,
+          decision: "approved",
+          summary: "Done",
+          userResponse: "Done",
+          changedPaths: ["src/index.ts"]
+        }
       }
     ];
     for (const record of records) {
