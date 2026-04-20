@@ -107,6 +107,78 @@ describe("activity summary", () => {
     expect(activity.get("A")).toBe("finished reading src/a.ts");
     expect(activity.get("B")).toBe('grepping "needle" in src');
   });
+
+  it("renders direct MCP tools with an explicit MCP label", () => {
+    const update = deriveActivityUpdate(
+      createEvent("pi.tool_execution_start", "A", {
+        toolName: "search-docs",
+        toolArgs: { queries: ["routing"] }
+      }),
+      {
+        ...createStatus(),
+        mcp: {
+          enabled: true,
+          configSources: [],
+          roleA: {
+            role: "A",
+            enabled: true,
+            servers: [
+              {
+                name: "laravel-boost",
+                connected: true,
+                transport: "stdio",
+                directTools: ["search-docs"]
+              }
+            ]
+          },
+          roleB: {
+            role: "B",
+            enabled: true,
+            servers: []
+          }
+        }
+      }
+    );
+
+    expect(renderActivityText(update?.snapshot!)).toBe(
+      "MCP tool running: laravel-boost/search-docs"
+    );
+  });
+
+  it("renders proxy MCP tool activity with action details", () => {
+    const update = deriveActivityUpdate(
+      createEvent("pi.tool_execution_start", "B", {
+        toolName: "mcp",
+        toolArgs: {
+          action: "call_tool",
+          tool: "laravel-boost/search-docs"
+        }
+      }),
+      {
+        ...createStatus(),
+        activeRole: "B",
+        activeRoleLabel: "Agent B",
+        mcp: {
+          enabled: true,
+          configSources: [],
+          roleA: {
+            role: "A",
+            enabled: true,
+            servers: []
+          },
+          roleB: {
+            role: "B",
+            enabled: true,
+            servers: []
+          }
+        }
+      }
+    );
+
+    expect(renderActivityText(update?.snapshot!)).toBe(
+      "MCP tool running: mcp call_tool laravel-boost/search-docs"
+    );
+  });
 });
 
 function createStatus(): CoordinatorStatusSnapshot {

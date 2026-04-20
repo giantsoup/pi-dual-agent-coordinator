@@ -52,6 +52,52 @@ describe("repl progress renderer", () => {
     );
   });
 
+  it("renders MCP tool progress with an explicit MCP prefix", () => {
+    const statusRef = {
+      current: {
+        ...createStatus(),
+        mcp: {
+          enabled: true,
+          configSources: [],
+          roleA: {
+            role: "A" as const,
+            enabled: true,
+            servers: [
+              {
+                name: "laravel-boost",
+                connected: true,
+                transport: "stdio" as const,
+                directTools: ["search-docs"]
+              }
+            ]
+          },
+          roleB: {
+            role: "B" as const,
+            enabled: true,
+            servers: []
+          }
+        }
+      }
+    };
+    const { renderer, stderrWrites } = createRenderer(statusRef);
+
+    renderer.handleEvent(
+      createEvent("pi.tool_execution_start", "A", {
+        toolName: "search-docs",
+        toolArgs: { queries: ["routing"] }
+      })
+    );
+    renderer.handleEvent(
+      createEvent("pi.tool_execution_end", "A", {
+        toolName: "search-docs"
+      })
+    );
+
+    const progress = stderrWrites.join("");
+    expect(progress).toContain("  MCP tool running: laravel-boost/search-docs");
+    expect(progress).toContain("  finished MCP tool: laravel-boost/search-docs");
+  });
+
   it("emits a fresh header when phase, role, or model display changes", () => {
     const statusRef = { current: createStatus() };
     const { renderer, stderrWrites } = createRenderer(statusRef);

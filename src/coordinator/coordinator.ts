@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
+import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
   deriveActivityUpdate,
   renderActivityText,
@@ -38,6 +39,8 @@ import {
   maybeParseExecutionPlanEnvelope,
   maybeParsePlanProposalEnvelope
 } from "../handoff/handoff-envelope.js";
+import { loadResolvedMcpConfig } from "../mcp/config-loader.js";
+import type { ResolvedMcpConfig } from "../mcp/types.js";
 import type { HandoffRecord } from "../types/handoff.js";
 import type { Role } from "../types/role.js";
 import type { NormalizedTelemetryEvent } from "../types/telemetry.js";
@@ -63,6 +66,8 @@ export interface CoordinatorOptions {
   thinkingA?: SupportedThinkingLevel;
   thinkingB?: SupportedThinkingLevel;
   maxReviewRounds?: number;
+  mcpEnabled?: boolean;
+  mcpConfigPaths?: string[];
   createRoleRuntime?: typeof createRoleRuntime;
   stdout?: NodeJS.WriteStream;
   stderr?: NodeJS.WriteStream;
@@ -78,6 +83,13 @@ export class Coordinator {
   private readonly workflowOrchestrator: WorkflowOrchestrator;
   private readonly runtimeFactory: typeof createRoleRuntime;
   private readonly eventBridge: RuntimeEventBridge;
+  private resolvedMcpConfig: ResolvedMcpConfig = {
+    enabled: false,
+    projectRoot: "",
+    cacheFile: "",
+    configSources: [],
+    servers: []
+  };
   private workflowState: WorkflowState = createEmptyHandoffState();
   private lastSummary: string | undefined;
   private pendingPlan: PendingExecutionPlanSnapshot | undefined;
@@ -123,6 +135,12 @@ export class Coordinator {
 
   public async start(): Promise<void> {
     this.workflowState = await this.recoveryLoader.load();
+    this.resolvedMcpConfig = await loadResolvedMcpConfig({
+      cwd: this.options.cwd,
+      agentDir: this.options.agentDir ?? getAgentDir(),
+      enabled: this.options.mcpEnabled ?? false,
+      explicitConfigPaths: this.options.mcpConfigPaths
+    });
     const bindingA = await this.runtimeFactory({
       role: "A",
       cwd: this.options.cwd,
@@ -130,7 +148,8 @@ export class Coordinator {
       sessionRoot: this.sessionRoot,
       modelOverride: this.options.modelA,
       thinkingOverride: this.options.thinkingA,
-      sessionMode: this.options.sessionMode
+      sessionMode: this.options.sessionMode,
+      mcp: this.resolvedMcpConfig
     });
     const bindingB = await this.runtimeFactory({
       role: "B",
@@ -139,7 +158,8 @@ export class Coordinator {
       sessionRoot: this.sessionRoot,
       modelOverride: this.options.modelB,
       thinkingOverride: this.options.thinkingB,
-      sessionMode: this.options.sessionMode
+      sessionMode: this.options.sessionMode,
+      mcp: this.resolvedMcpConfig
     });
     this.registry.set(bindingA);
     this.registry.set(bindingB);
@@ -371,6 +391,22 @@ export class Coordinator {
       repairCount: workflow?.repairCount ?? 0,
       maxReviewRounds: this.options.maxReviewRounds ?? 3,
       runtimes: list,
+      mcp: {
+        enabled: this.resolvedMcpConfig.enabled,
+        configSources: [...this.resolvedMcpConfig.configSources],
+        roleA:
+          this.registry.get("A")?.getMcpStatus?.() ?? {
+            role: "A",
+            enabled: this.resolvedMcpConfig.enabled,
+            servers: []
+          },
+        roleB:
+          this.registry.get("B")?.getMcpStatus?.() ?? {
+            role: "B",
+            enabled: this.resolvedMcpConfig.enabled,
+            servers: []
+          }
+      },
       metrics: this.metrics.snapshot()
     };
   }

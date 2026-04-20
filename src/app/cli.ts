@@ -17,6 +17,8 @@ export interface ReplCliOptions {
   thinkingA?: ReplThinkingLevel;
   thinkingB?: ReplThinkingLevel;
   maxReviewRounds: number;
+  mcpEnabled?: boolean;
+  mcpConfigPaths?: string[];
 }
 
 export type ParsedReplCommand =
@@ -40,7 +42,7 @@ export function parseCliArgs(
   const [command, maybeCwd, ...rest] = argv;
 
   if (command !== "repl") {
-    throw new Error("Usage: pi-dual repl [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--no-session] [--json-logs] [--verbose]");
+    throw new Error("Usage: pi-dual repl [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--json-logs] [--verbose]");
   }
 
   const options: ReplCliOptions = {
@@ -49,7 +51,9 @@ export function parseCliArgs(
     sessionMode: "persistent",
     jsonLogs: false,
     verbose: false,
-    maxReviewRounds: 3
+    maxReviewRounds: 3,
+    mcpEnabled: true,
+    mcpConfigPaths: []
   };
 
   const args = maybeCwd && !maybeCwd.startsWith("--") ? rest : [maybeCwd, ...rest].filter(Boolean) as string[];
@@ -90,6 +94,12 @@ export function parseCliArgs(
         break;
       case "--verbose":
         options.verbose = true;
+        break;
+      case "--no-mcp":
+        options.mcpEnabled = false;
+        break;
+      case "--mcp-config":
+        (options.mcpConfigPaths ??= []).push(resolve(baseCwd, requireValue(arg, args[++i])));
         break;
       default:
         throw new Error(`Unknown argument: ${arg}`);

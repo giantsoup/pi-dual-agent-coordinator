@@ -4,6 +4,7 @@ import type {
   PendingExecutionPlanSnapshot,
   WorkflowRunStatus
 } from "./workflow.js";
+import type { CoordinatorMcpStatusSnapshot } from "../mcp/types.js";
 
 export type CoordinatorUiPhase = "planning" | "execution" | "review" | "repair";
 
@@ -54,5 +55,6 @@ export interface CoordinatorStatusSnapshot {
   repairCount: number;
   maxReviewRounds: number;
   runtimes: RuntimeStatusSnapshot[];
+  mcp?: CoordinatorMcpStatusSnapshot;
   metrics: Record<string, number>;
 }

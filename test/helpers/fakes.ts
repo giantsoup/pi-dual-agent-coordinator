@@ -8,6 +8,7 @@ import type {
   RuntimeLike,
   SessionLike
 } from "../../src/runtime/create-role-runtime.js";
+import type { RoleMcpStatusSnapshot } from "../../src/mcp/types.js";
 import type { Role } from "../../src/types/role.js";
 
 export class FakeSession implements SessionLike {
@@ -100,7 +101,11 @@ export class FakeRuntime implements RuntimeLike {
   }
 }
 
-export function createFakeBinding(role: Role, runtime: FakeRuntime): RoleRuntimeBinding {
+export function createFakeBinding(
+  role: Role,
+  runtime: FakeRuntime,
+  mcpStatus?: RoleMcpStatusSnapshot
+): RoleRuntimeBinding {
   return {
     role,
     runtime,
@@ -114,6 +119,13 @@ export function createFakeBinding(role: Role, runtime: FakeRuntime): RoleRuntime
       return runtime.session.sessionFile;
     },
     cwd: runtime.cwd,
+    getMcpStatus() {
+      return mcpStatus ?? {
+        role,
+        enabled: false,
+        servers: []
+      };
+    },
     async rebind() {
       this.cwd = runtime.cwd;
       await runtime.session.bindExtensions?.({});

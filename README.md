@@ -206,6 +206,8 @@ Useful flags:
 - `--max-review-rounds N`
 - `--agent-dir PATH`
 - `--session-root PATH`
+- `--mcp-config PATH` repeatable; adds explicit MCP config files
+- `--no-mcp`
 - `--no-session`
 - `--json-logs`
 - `--verbose`
@@ -213,6 +215,7 @@ Useful flags:
 Defaults:
 
 - `--max-review-rounds` defaults to `3`
+- MCP is enabled for the CLI by default unless `--no-mcp` is passed
 - Agent A defaults to `high` thinking if not overridden
 - Agent B defaults to `medium` thinking if not overridden
 
@@ -221,6 +224,73 @@ Quick smoke test without persisted sessions:
 ```bash
 node dist/src/index.js repl . --no-session
 ```
+
+## MCP support
+
+MCP is implemented as a first-party Pi extension inside each role runtime. The coordinator does not bolt MCP on as a separate tool layer; it resolves config once, then gives Agent A and Agent B their own isolated MCP extension instances and client pools.
+
+Discovery order when MCP is enabled:
+
+- global: `<agentDir>/mcp.json`
+- project: `<cwd>/.mcp.json`
+- explicit: each `--mcp-config PATH` in the order provided
+
+Later sources override earlier ones by server name. `.codex/config.toml` is intentionally ignored.
+
+Standard `.mcp.json` files work directly, including Laravel Boost-style configs:
+
+```json
+{
+  "mcpServers": {
+    "laravel-boost": {
+      "command": "php",
+      "args": ["artisan", "boost:mcp"]
+    },
+    "herd": {
+      "command": "php",
+      "args": ["herd-mcp.phar"],
+      "env": {
+        "SITE_PATH": "/absolute/project/path"
+      }
+    }
+  }
+}
+```
+
+App-specific behavior goes under `x-pi-dual`:
+
+```json
+{
+  "mcpServers": {
+    "laravel-boost": {
+      "command": "php",
+      "args": ["artisan", "boost:mcp"],
+      "x-pi-dual": {
+        "directTools": true,
+        "lifecycle": "lazy",
+        "idleTimeoutMinutes": 10,
+        "roles": {
+          "A": {
+            "allowTools": ["search-docs"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Exposure model:
+
+- A generic `mcp` proxy tool is always registered when MCP is enabled.
+- Selected MCP tools can also be registered directly as Pi tools.
+- `laravel-boost` defaults to direct tool registration so Boost guidance can keep using names like `search-docs`, `database-schema`, `browser-logs`, and `get-absolute-url`.
+
+Role behavior:
+
+- Agent A can search and inspect all MCP tools, resources, and prompts, but can only call read-only tools plus explicit allowlists. Destructive tools are always blocked.
+- Agent B gets the full configured MCP tool surface unless a server config excludes something explicitly.
+- Direct-tool servers marked `required` fail runtime startup immediately if they cannot initialize, instead of silently starting without those tools.
 
 ## REPL behavior
 
@@ -244,7 +314,7 @@ node dist/src/index.js repl . --no-session
 Useful REPL commands:
 
 - `/help` shows the phase legend, automatic mode semantics, slash commands, runtime/session commands, and key hints.
-- `/status` shows the active workflow id, iteration, workflow status, active phase/role/model, pending plan state, next-step hint, current activity and reason fields, runtime bindings, last completion summary, and repair count.
+- `/status` shows the active workflow id, iteration, workflow status, active phase/role/model, pending plan state, next-step hint, current activity and reason fields, runtime bindings, last completion summary, repair count, and MCP state.
 - `/approve` starts execution from the current pending plan.
 - `/discard` clears the current pending plan if one exists.
 - `/sessions` shows the active session metadata for roles `A` and `B`, including model display and thinking level.
@@ -258,6 +328,13 @@ Output separation:
 - Progress and runtime chatter are written to `stderr`; grouped progress headers do not change the final `stdout` response format or slash-command JSON output.
 - Final user-facing assistant responses remain on `stdout`.
 - ANSI styling is only used when running in a TTY.
+
+`/status` includes an `mcp` section with:
+
+- `enabled`
+- `configSources`
+- `roleA` and `roleB`
+- per-server `connected`, `transport`, `directTools`, `lastError`, and `lastMetadataSync`
 
 ## Workflow and recovery
 

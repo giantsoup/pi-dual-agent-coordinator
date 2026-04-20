@@ -162,6 +162,11 @@ export function summarizeToolActivity(
   }
 }
 
+interface McpToolSummary {
+  label: string;
+  target: string;
+}
+
 export function renderActivityText(snapshot: ActivitySnapshot): string {
   if (!snapshot.target) {
     return snapshot.label;
@@ -202,7 +207,8 @@ function buildToolUpdate(
   }
 
   const runtimeStatus = findRuntimeStatus(status, event.role);
-  const summary = summarizeToolActivity(toolName, event.details.toolArgs, status.cwd);
+  const mcpSummary = summarizeMcpToolActivity(toolName, event.details.toolArgs, status, event.role);
+  const summary = mcpSummary ?? summarizeToolActivity(toolName, event.details.toolArgs, status.cwd);
   const sanitizedArgs = sanitizeToolArgs(toolName, event.details.toolArgs, status.cwd);
   const reason = selectToolReason({
     phase: status.phase,
@@ -220,7 +226,13 @@ function buildToolUpdate(
       role: event.role,
       phase: status.phase,
       kind: status.phase === "repair" ? "repair" : "tool",
-      label: finished ? `finished ${summary.label}` : summary.label,
+      label: finished
+        ? mcpSummary
+          ? "finished MCP tool:"
+          : `finished ${summary.label}`
+        : mcpSummary
+          ? "MCP tool running:"
+          : summary.label,
       target,
       reason,
       toolName,
@@ -330,6 +342,50 @@ function deriveWorkflowUpdate(
     default:
       return undefined;
   }
+}
+
+function summarizeMcpToolActivity(
+  toolName: string,
+  args: unknown,
+  status: CoordinatorStatusSnapshot,
+  role: Role
+): McpToolSummary | undefined {
+  const roleMcp = role === "A" ? status.mcp?.roleA : status.mcp?.roleB;
+  if (!roleMcp?.enabled) {
+    return undefined;
+  }
+
+  if (toolName === "mcp") {
+    const source = isRecord(args) ? args : {};
+    const action = stringValue(source.action) ?? "call";
+    const canonicalTarget =
+      stringValue(source.tool) ??
+      stringValue(source.prompt) ??
+      stringValue(source.server) ??
+      stringValue(source.uri);
+    return {
+      label: "MCP tool running:",
+      target: canonicalTarget ? `mcp ${action} ${canonicalTarget}` : `mcp ${action}`
+    };
+  }
+
+  const server = roleMcp.servers.find((entry) => entry.directTools.includes(toolName));
+  if (!server) {
+    return undefined;
+  }
+
+  return {
+    label: "MCP tool running:",
+    target: formatDirectMcpToolTarget(server.name, toolName)
+  };
+}
+
+function formatDirectMcpToolTarget(serverName: string, toolName: string): string {
+  const prefixedName = `${serverName}__`;
+  if (toolName.startsWith(prefixedName)) {
+    return `${serverName}/${toolName.slice(prefixedName.length)}`;
+  }
+  return `${serverName}/${toolName}`;
 }
 
 function derivePlanningUpdate(

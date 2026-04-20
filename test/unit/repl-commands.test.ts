@@ -48,6 +48,24 @@ describe("repl commands", () => {
     expect(parseCliArgs(["repl", ".", "--max-review-rounds", "5"]).maxReviewRounds).toBe(5);
   });
 
+  it("parses no-mcp and repeated mcp-config flags from CLI args", () => {
+    const parsed = parseCliArgs([
+      "repl",
+      ".",
+      "--no-mcp",
+      "--mcp-config",
+      "./one.json",
+      "--mcp-config",
+      "./two.json"
+    ]);
+
+    expect(parsed.mcpEnabled).toBe(false);
+    expect(parsed.mcpConfigPaths).toEqual([
+      `${process.cwd()}/one.json`,
+      `${process.cwd()}/two.json`
+    ]);
+  });
+
   it("defaults cwd to INIT_CWD when no path is provided", () => {
     const previous = process.env.INIT_CWD;
     process.env.INIT_CWD = "/tmp/operator-project";

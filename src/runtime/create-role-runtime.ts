@@ -18,6 +18,8 @@ import {
   SettingsManager
 } from "@mariozechner/pi-coding-agent";
 
+import { createMcpExtension } from "../mcp/extension.js";
+import type { ResolvedMcpConfig, RoleMcpStatusSnapshot } from "../mcp/types.js";
 import { buildRolePromptAppendix, LOAD_PROJECT_RESOURCES_BY_DEFAULT } from "../app/trust-policy.js";
 import { createRoleTools } from "../tools/create-role-tools.js";
 import type { Role } from "../types/role.js";
@@ -63,6 +65,7 @@ export interface CreateRoleRuntimeOptions {
   sessionMode: "persistent" | "memory";
   loadProjectResources?: boolean | undefined;
   onMutation?: ((record: { toolName: string; canonicalPath: string }) => void) | undefined;
+  mcp?: ResolvedMcpConfig | undefined;
 }
 
 export interface RoleRuntimeBinding {
@@ -72,6 +75,7 @@ export interface RoleRuntimeBinding {
   readonly sessionId: string;
   readonly sessionFile?: string | undefined;
   cwd: string;
+  getMcpStatus?(): RoleMcpStatusSnapshot;
   rebind(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -82,7 +86,9 @@ class RoleRuntimeBindingImpl implements RoleRuntimeBinding {
   public constructor(
     public readonly role: Role,
     public readonly runtime: RuntimeLike,
-    cwd: string
+    cwd: string,
+    private readonly getMcpStatusSnapshot?: (() => RoleMcpStatusSnapshot) | undefined,
+    private readonly disposeMcpRuntime?: (() => Promise<void>) | undefined
   ) {
     this.cwd = cwd;
   }
@@ -109,6 +115,17 @@ class RoleRuntimeBindingImpl implements RoleRuntimeBinding {
   public async dispose(): Promise<void> {
     this.runtime.session.dispose();
     await this.runtime.dispose();
+    await this.disposeMcpRuntime?.();
+  }
+
+  public getMcpStatus(): RoleMcpStatusSnapshot {
+    return (
+      this.getMcpStatusSnapshot?.() ?? {
+        role: this.role,
+        enabled: false,
+        servers: []
+      }
+    );
   }
 }
 
@@ -129,6 +146,7 @@ export async function createRoleRuntime(
     sessionRoot: options.sessionRoot,
     sessionMode: options.sessionMode
   });
+  const mcpRuntime = options.mcp ? createMcpExtension({ role: options.role, config: options.mcp }) : undefined;
 
   const runtime = await createAgentSessionRuntime(
     async ({ cwd: runtimeCwd, agentDir: runtimeAgentDir, sessionManager, sessionStartEvent }) => {
@@ -141,6 +159,7 @@ export async function createRoleRuntime(
         settingsManager,
         resourceLoaderOptions: {
           noContextFiles: !loadProjectResources,
+          extensionFactories: mcpRuntime ? [mcpRuntime.extensionFactory] : [],
           appendSystemPromptOverride: (base) => [
             ...base,
             ...buildRolePromptAppendix(options.role)
@@ -175,7 +194,13 @@ export async function createRoleRuntime(
     }
   );
 
-  const binding = new RoleRuntimeBindingImpl(options.role, runtime as unknown as AgentSessionRuntime, cwd);
+  const binding = new RoleRuntimeBindingImpl(
+    options.role,
+    runtime as unknown as AgentSessionRuntime,
+    cwd,
+    mcpRuntime?.getStatus,
+    mcpRuntime?.dispose
+  );
   await binding.rebind();
   return binding;
 }
