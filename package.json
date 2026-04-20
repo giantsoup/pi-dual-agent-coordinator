@@ -37,7 +37,6 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.check.json",
-    "ci": "npm run check && npm test",
     "doctor": "node ./dist/src/index.js doctor",
     "repl": "node ./dist/src/index.js repl",
     "prepare": "npm run build",

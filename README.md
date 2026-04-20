@@ -257,12 +257,6 @@ npm test
 npm run build
 ```
 
-For the same verification used in CI:
-
-```bash
-npm run ci
-```
-
 ## Additional docs
 
 - [docs/review-loop.md](./docs/review-loop.md): workflow lifecycle, machine block schemas, provider compatibility notes, and troubleshooting
