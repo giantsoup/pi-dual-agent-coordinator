@@ -1,6 +1,7 @@
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
+import { extractAssistantText } from "../handoff/handoff-envelope.js";
 import { normalizeEvent, normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
 import { CorrelationState } from "../telemetry/correlation.js";
 import { TelemetryLogger } from "../telemetry/logger.js";
@@ -14,6 +15,24 @@ interface TurnWaiter {
   reject(error: Error): void;
 }
 
+export type RuntimeUiBridgeEvent =
+  | {
+      type: "assistant_text_delta";
+      role: Role;
+      sessionId: string;
+      sessionFile?: string | undefined;
+      timestamp: string;
+      delta: string;
+    }
+  | {
+      type: "assistant_turn_committed";
+      role: Role;
+      sessionId: string;
+      sessionFile?: string | undefined;
+      timestamp: string;
+      text: string;
+    };
+
 const MACHINE_BLOCK_PSEUDO_TOOLS = new Set([
   "pi-plan",
   "pi-execute",
@@ -24,6 +43,7 @@ const MACHINE_BLOCK_PSEUDO_TOOLS = new Set([
 
 export class RuntimeEventBridge {
   private readonly subscriptions = new Map<Role, () => void>();
+  private readonly uiListeners = new Set<(event: RuntimeUiBridgeEvent) => void>();
   private readonly correlation = new CorrelationState();
   private readonly requestIds = new Map<Role, string>();
   private readonly pending = new Set<Promise<void>>();
@@ -73,6 +93,13 @@ export class RuntimeEventBridge {
     this.requestIds.delete(role);
   }
 
+  public subscribeUiEvents(listener: (event: RuntimeUiBridgeEvent) => void): () => void {
+    this.uiListeners.add(listener);
+    return () => {
+      this.uiListeners.delete(listener);
+    };
+  }
+
   public async promptAndWaitForTurnEnd(
     binding: RoleRuntimeBinding,
     text: string,
@@ -106,6 +133,7 @@ export class RuntimeEventBridge {
       unsubscribe();
     }
     this.subscriptions.clear();
+    this.uiListeners.clear();
 
     for (const waiters of this.turnWaiters.values()) {
       for (const waiter of waiters) {
@@ -147,6 +175,8 @@ export class RuntimeEventBridge {
     this.logger.log(telemetry);
     this.metrics.observe(telemetry);
 
+    this.maybeEmitUiEvent(binding, event);
+
     if (
       event.type === "tool_execution_start" &&
       MACHINE_BLOCK_PSEUDO_TOOLS.has(event.toolName)
@@ -172,6 +202,45 @@ export class RuntimeEventBridge {
     const buffered = this.bufferedTurnEnds.get(sessionKey) ?? [];
     buffered.push(event.message);
     this.bufferedTurnEnds.set(sessionKey, buffered);
+  }
+
+  private maybeEmitUiEvent(
+    binding: RoleRuntimeBinding,
+    event: AgentSessionEvent
+  ): void {
+    if (
+      event.type === "message_update" &&
+      event.assistantMessageEvent.type === "text_delta"
+    ) {
+      this.emitUiEvent({
+        type: "assistant_text_delta",
+        role: binding.role,
+        sessionId: binding.sessionId,
+        sessionFile: binding.sessionFile,
+        timestamp: new Date().toISOString(),
+        delta: event.assistantMessageEvent.delta
+      });
+      return;
+    }
+
+    if (event.type !== "turn_end") {
+      return;
+    }
+
+    this.emitUiEvent({
+      type: "assistant_turn_committed",
+      role: binding.role,
+      sessionId: binding.sessionId,
+      sessionFile: binding.sessionFile,
+      timestamp: new Date().toISOString(),
+      text: event.message.role === "assistant" ? extractAssistantText(event.message) : ""
+    });
+  }
+
+  private emitUiEvent(event: RuntimeUiBridgeEvent): void {
+    for (const listener of this.uiListeners) {
+      listener(event);
+    }
   }
 
   private awaitNextTurnEnd(sessionKey: string): Promise<AgentMessage> {

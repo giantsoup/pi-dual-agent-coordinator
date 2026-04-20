@@ -11,7 +11,10 @@ import {
 import { withPromptProvenance } from "../app/prompt-provenance.js";
 import { createRequestId } from "../telemetry/correlation.js";
 import { normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
-import { RuntimeEventBridge } from "./bind-runtime-events.js";
+import {
+  RuntimeEventBridge,
+  type RuntimeUiBridgeEvent
+} from "./bind-runtime-events.js";
 import { createEmptyHandoffState } from "./handoff-state-machine.js";
 import { WorkflowOrchestrator, createWorkflowHandoffEnvelope } from "./workflow-orchestrator.js";
 import {
@@ -417,6 +420,12 @@ export class Coordinator {
 
   public subscribeEvents(listener: (event: NormalizedTelemetryEvent) => void): () => void {
     return this.logger.subscribe(listener);
+  }
+
+  public subscribeRuntimeUiEvents(
+    listener: (event: RuntimeUiBridgeEvent) => void
+  ): () => void {
+    return this.eventBridge.subscribeUiEvents(listener);
   }
 
   public async getWorkflowStatus(): Promise<{

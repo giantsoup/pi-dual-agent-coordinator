@@ -8,7 +8,7 @@ This project runs two isolated Pi runtimes under one coordinator:
 - Agent B is the execution model and the only agent allowed to make changes.
 - The coordinator handles the handoff loop, review cap, and workflow persistence.
 
-This repo is meant to be usable by people who want a practical local agentic tool, not just by people who want to study the code. The setup below assumes you already know how to run your preferred local model app if you want a local Agent B.
+This repo is meant to be usable by people who want a practical local agentic tool, not just by people who want to study the code. The recommended onboarding path is the built-in `setup` wizard. If you want a local Agent B, you still need to point Pi at your local model app yourself.
 
 ## Quick start
 
@@ -17,12 +17,15 @@ This repo is meant to be usable by people who want a practical local agentic too
 - Node.js `>=20.6.0`
 - npm
 - A working Pi-compatible environment
-- An OpenAI model for Agent A
+- Either:
+  - ChatGPT Plus/Pro with Codex subscription access
+  - OpenAI Platform API access with an API key
 - Optional: a local OpenAI-compatible model endpoint for Agent B
 
 Examples in this README use:
 
-- Agent A: `openai/gpt-5.4`
+- Agent A subscription preset: `openai-codex/gpt-5.4`
+- Agent A API preset: `openai/gpt-5.4`
 - Agent B: `local-qwen/qwen3-coder-next`
 
 ### 2. Download and install
@@ -37,47 +40,42 @@ npm install
 
 If you use `nvm`, the repo includes [.nvmrc](./.nvmrc).
 
-### 3. Create your Pi config files
+### 3. Run the guided setup wizard
 
 Pi uses its standard agent directory. On macOS and Linux that is usually `~/.pi/agent/`.
 
-If you are unsure which folder your machine is using, run `npm run doctor -- . --no-mcp` once. It prints the exact Pi agent directory path for your system.
-
-On macOS and Linux, you can create the folder and copy the example files like this:
+Run the wizard from this repo:
 
 ```bash
-mkdir -p ~/.pi/agent
-cp examples/pi-agent/auth.json.example ~/.pi/agent/auth.json
-cp examples/pi-agent/models.lm-studio.json ~/.pi/agent/models.json
+npm run setup -- .
 ```
 
-Use [examples/pi-agent/models.ollama.json](./examples/pi-agent/models.ollama.json) instead if your local model app exposes an Ollama-style OpenAI-compatible endpoint.
+The wizard walks you through Agent A auth and saves a default model for future runs.
 
-On Windows, create the same files manually in the Pi agent directory printed by `doctor`.
+It offers two first-class Agent A paths:
 
-### 4. Fill in the config
+- `openai-codex`: ChatGPT Plus/Pro subscription login in the browser
+- `openai`: OpenAI Platform API key setup
 
-`auth.json`
+What the wizard writes:
 
-- If you already export `OPENAI_API_KEY` in your shell, leave the example as-is.
-- If you prefer a literal key, replace `OPENAI_API_KEY` with your actual key.
+- Pi credentials stay in Pi's standard `auth.json`
+- Coordinator-owned defaults go in `~/.pi/dual-agent-coordinator/config.json`
 
-Example:
+If the browser does not open during ChatGPT subscription login, the terminal also prints the URL and lets you paste the redirect URL or code back manually.
 
-```json
-{
-  "openai": {
-    "type": "api_key",
-    "key": "OPENAI_API_KEY"
-  }
-}
+If you later want to switch Agent A from subscription to API key, or back again, run:
+
+```bash
+npm run auth -- .
 ```
 
-`models.json`
+### 4. Optional: configure a local or custom Agent B
 
-- Set the correct `baseUrl` for your local model app.
-- Set the correct local model `id`.
-- Keep provider compatibility flags in `models.json`, not in coordinator code.
+If you want Agent B on a local OpenAI-compatible model endpoint, add a Pi `models.json` file. Starter templates live here:
+
+- [examples/pi-agent/models.lm-studio.json](./examples/pi-agent/models.lm-studio.json)
+- [examples/pi-agent/models.ollama.json](./examples/pi-agent/models.ollama.json)
 
 Before you run the coordinator, verify the exact model id returned by your local server:
 
@@ -89,17 +87,31 @@ If your local app uses a different port or URL, use that instead.
 
 ### 5. Run the setup check
 
-This validates Node.js, the Pi config files, the model ids you plan to use, and any MCP config files:
+This validates Node.js, your Pi auth state, your saved coordinator defaults, optional model ids you plan to use, and any MCP config files:
+
+```bash
+npm run doctor -- .
+```
+
+If you want to force explicit models for one run, you still can:
 
 ```bash
 npm run doctor -- . \
-  --model-a openai/gpt-5.4 \
+  --model-a openai-codex/gpt-5.4 \
   --model-b local-qwen/qwen3-coder-next
 ```
 
-If something is missing, `doctor` tells you exactly what to fix.
+If something is missing, `doctor` tells you exactly what to fix and which command to run next.
 
 ### 6. Start the coordinator
+
+```bash
+npm run repl -- .
+```
+
+The saved Agent A default from `setup` is used automatically when `--model-a` is omitted.
+
+If you want to override either model explicitly for one run:
 
 ```bash
 npm run repl -- . \
@@ -108,12 +120,6 @@ npm run repl -- . \
   --thinking-a high \
   --thinking-b off \
   --max-review-rounds 3
-```
-
-For a quick smoke test without persisted sessions:
-
-```bash
-npm run repl -- . --no-session --model-a openai/gpt-5.4 --model-b local-qwen/qwen3-coder-next
 ```
 
 ### 7. Optional: add a `pdual` shell shortcut
@@ -136,10 +142,7 @@ pdual() {
 
   (
     cd /absolute/path/to/pi-dual-agent-coordinator || return 1
-    npm run repl -- "$project" \
-      --model-a openai/gpt-5.4 \
-      --model-b local-qwen/qwen3-coder-next \
-      "$@"
+    npm run repl -- "$project" "$@"
   )
 }
 ```
@@ -163,8 +166,10 @@ Replace `/absolute/path/to/pi-dual-agent-coordinator` with the location where yo
 ## Everyday commands
 
 - `npm start -- --help`: show top-level CLI help
-- `npm run doctor -- . --model-a ... --model-b ...`: validate setup
-- `npm run repl -- . --model-a ... --model-b ...`: start the REPL
+- `npm run setup -- .`: guided first-run auth and defaults
+- `npm run auth -- .`: switch or repair Agent A auth/defaults
+- `npm run doctor -- .`: validate setup with saved defaults
+- `npm run repl -- .`: start the REPL with saved defaults
 - `npm test`: run the test suite
 - `npm run check`: run the TypeScript checker
 
@@ -241,7 +246,11 @@ Example project config:
 
 ## Troubleshooting
 
-- `doctor` fails on `auth.json`: copy [examples/pi-agent/auth.json.example](./examples/pi-agent/auth.json.example) to `~/.pi/agent/auth.json`.
+- Browser did not open during ChatGPT login: rerun `npm run auth -- .`, then open the printed URL manually.
+- OAuth callback failed: rerun `npm run auth -- .` and paste the redirect URL or code into the terminal when prompted.
+- You want to switch from ChatGPT subscription to API key, or back again: run `npm run auth -- .`.
+- You already have both `openai` and `openai-codex` configured: that is fine. The saved coordinator default decides which one `pi-dual repl` uses when `--model-a` is omitted.
+- `doctor` fails on `auth.json`: the recommended fix is `npm run setup -- .` or `npm run auth -- .`. Use [examples/pi-agent/auth.json.example](./examples/pi-agent/auth.json.example) only if you want the advanced manual path.
 - `doctor` fails on `models.json`: copy one of the model templates from [examples/pi-agent](./examples/pi-agent/) and update the URL and model id.
 - Agent B fails immediately: confirm the local provider URL and model id from `/v1/models`.
 - Local model ignores reasoning settings: set `supportsReasoningEffort: false` in `models.json`.

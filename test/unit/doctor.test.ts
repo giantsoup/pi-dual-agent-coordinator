@@ -1,8 +1,9 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mkdtempSync } from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { inspectRuntimeSetup, renderSetupReport } from "../../src/app/doctor.js";
 
@@ -11,8 +12,20 @@ function createTempRoot(): string {
 }
 
 describe("setup doctor", () => {
-  it("reports a ready setup when required Pi files exist", async () => {
+  const previousHome = process.env.PI_DUAL_COORDINATOR_HOME;
+
+  afterEach(() => {
+    delete process.env.OPENAI_API_KEY;
+    if (previousHome === undefined) {
+      delete process.env.PI_DUAL_COORDINATOR_HOME;
+    } else {
+      process.env.PI_DUAL_COORDINATOR_HOME = previousHome;
+    }
+  });
+
+  it("reports a ready setup when valid API auth and models exist", async () => {
     const root = createTempRoot();
+    process.env.PI_DUAL_COORDINATOR_HOME = root;
     const projectDir = join(root, "project");
     const agentDir = join(root, "agent");
     mkdirSync(projectDir, { recursive: true });
@@ -23,7 +36,7 @@ describe("setup doctor", () => {
       JSON.stringify({
         openai: {
           type: "api_key",
-          key: "OPENAI_API_KEY"
+          key: "sk-test-123"
         }
       })
     );
@@ -73,17 +86,30 @@ describe("setup doctor", () => {
     expect(report.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "Agent A model", status: "pass" }),
+        expect.objectContaining({ name: "Agent A auth", status: "pass" }),
         expect.objectContaining({ name: "Agent B model", status: "pass" })
       ])
     );
   });
 
-  it("reports missing auth and models files as failures", async () => {
+  it("fails with setup guidance when a saved openai-codex default lacks OAuth auth", async () => {
     const root = createTempRoot();
+    process.env.PI_DUAL_COORDINATOR_HOME = root;
     const projectDir = join(root, "project");
     const agentDir = join(root, "agent");
     mkdirSync(projectDir, { recursive: true });
     mkdirSync(agentDir, { recursive: true });
+    mkdirSync(join(root, "dual-agent-coordinator"), { recursive: true });
+
+    writeFileSync(
+      join(root, "dual-agent-coordinator", "config.json"),
+      JSON.stringify({
+        version: 1,
+        defaults: {
+          modelA: "openai-codex/gpt-5.4"
+        }
+      })
+    );
 
     const report = await inspectRuntimeSetup({
       cwd: projectDir,
@@ -94,8 +120,102 @@ describe("setup doctor", () => {
     expect(report.ok).toBe(false);
     expect(report.checks).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "Pi auth file", status: "fail" }),
-        expect.objectContaining({ name: "Pi models file", status: "fail" })
+        expect.objectContaining({ name: "Agent A model", status: "pass" }),
+        expect.objectContaining({
+          name: "Agent A auth",
+          status: "fail",
+          detail: expect.stringContaining("browser window will open for ChatGPT login")
+        })
+      ])
+    );
+  });
+
+  it("fails with setup guidance when openai auth is missing", async () => {
+    const root = createTempRoot();
+    process.env.PI_DUAL_COORDINATOR_HOME = root;
+    const projectDir = join(root, "project");
+    const agentDir = join(root, "agent");
+    mkdirSync(projectDir, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+
+    const report = await inspectRuntimeSetup({
+      cwd: projectDir,
+      agentDir,
+      modelA: "openai/gpt-5.4",
+      mcpEnabled: false
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "Agent A auth",
+          status: "fail",
+          detail: expect.stringContaining("Run `pi-dual setup`")
+        })
+      ])
+    );
+  });
+
+  it("passes when valid subscription auth exists", async () => {
+    const root = createTempRoot();
+    process.env.PI_DUAL_COORDINATOR_HOME = root;
+    const projectDir = join(root, "project");
+    const agentDir = join(root, "agent");
+    mkdirSync(projectDir, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+
+    writeFileSync(
+      join(agentDir, "auth.json"),
+      JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: "token",
+          refresh: "refresh",
+          expires: Date.now() + 60_000,
+          accountId: "acct_123"
+        }
+      })
+    );
+
+    const report = await inspectRuntimeSetup({
+      cwd: projectDir,
+      agentDir,
+      modelA: "openai-codex/gpt-5.4",
+      mcpEnabled: false
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Agent A auth", status: "pass" })
+      ])
+    );
+  });
+
+  it("warns instead of crashing when the coordinator config is invalid", async () => {
+    const root = createTempRoot();
+    process.env.PI_DUAL_COORDINATOR_HOME = root;
+    const projectDir = join(root, "project");
+    const agentDir = join(root, "agent");
+    mkdirSync(projectDir, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(join(root, "dual-agent-coordinator"), { recursive: true });
+
+    writeFileSync(join(root, "dual-agent-coordinator", "config.json"), "{not-json", "utf8");
+
+    const report = await inspectRuntimeSetup({
+      cwd: projectDir,
+      agentDir,
+      mcpEnabled: false
+    });
+
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "Coordinator config",
+          status: "warn"
+        })
       ])
     );
   });

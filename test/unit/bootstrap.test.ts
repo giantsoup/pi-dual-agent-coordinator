@@ -10,6 +10,9 @@ import {
 } from "../../src/app/bootstrap.js";
 import type { CoordinatorStatusSnapshot } from "../../src/types/status.js";
 import type { NormalizedTelemetryEvent } from "../../src/types/telemetry.js";
+import type { InteractiveCoordinatorService } from "../../src/app/interactive/service.js";
+import type { InteractiveUiState, UiAction, UiEvent } from "../../src/types/ui.js";
+import type { Terminal } from "@mariozechner/pi-tui";
 
 class FakeReadline implements ReplReadlineLike {
   public closeCalls = 0;
@@ -166,6 +169,78 @@ function createUi(writes?: string[]): ReplUiLike {
   };
 }
 
+function createService(
+  state: InteractiveUiState
+): InteractiveCoordinatorService & {
+  readonly startCalls: number;
+  readonly disposeCalls: number;
+} {
+  const stateListeners = new Set<(state: InteractiveUiState) => void>();
+  const uiListeners = new Set<(event: UiEvent) => void>();
+  let startCalls = 0;
+  let disposeCalls = 0;
+
+  return {
+    async start() {
+      startCalls += 1;
+    },
+    async dispose() {
+      disposeCalls += 1;
+    },
+    async dispatch(_action: UiAction) {},
+    getState() {
+      return state;
+    },
+    subscribeState(listener: (nextState: InteractiveUiState) => void) {
+      stateListeners.add(listener);
+      listener(state);
+      return () => {
+        stateListeners.delete(listener);
+      };
+    },
+    subscribeUiEvents(listener: (event: UiEvent) => void) {
+      uiListeners.add(listener);
+      return () => {
+        uiListeners.delete(listener);
+      };
+    },
+    get startCalls() {
+      return startCalls;
+    },
+    get disposeCalls() {
+      return disposeCalls;
+    }
+  };
+}
+
+function createTerminal(): Terminal & { started: boolean } {
+  return {
+    started: false,
+    start() {
+      this.started = true;
+    },
+    stop() {},
+    async drainInput() {},
+    write(_data: string) {},
+    get columns() {
+      return 120;
+    },
+    get rows() {
+      return 40;
+    },
+    get kittyProtocolActive() {
+      return false;
+    },
+    moveBy(_lines: number) {},
+    hideCursor() {},
+    showCursor() {},
+    clearLine() {},
+    clearFromCursor() {},
+    clearScreen() {},
+    setTitle(_title: string) {}
+  };
+}
+
 describe("bootstrap repl", () => {
   it("prints the startup banner before the first prompt", async () => {
     const rl = new FakeReadline(["/quit"]);
@@ -303,5 +378,41 @@ describe("bootstrap repl", () => {
       )
     ).toBe(true);
     expect(isReplTerminationError(new Error("boom"))).toBe(false);
+  });
+
+  it("selects the TUI path by default on TTY when --plain is not set", async () => {
+    const service = createService({
+      status: createStatusSnapshot(),
+      conversation: [],
+      activity: { runtimes: {} },
+      modal: { kind: "none" },
+      commandPalette: { open: false },
+      notifications: [],
+      shouldExit: true
+    });
+    const terminal = createTerminal();
+
+    await expect(
+      bootstrapRepl(
+        {
+          command: "repl",
+          cwd: "/tmp/project",
+          sessionMode: "memory",
+          jsonLogs: false,
+          verbose: false,
+          maxReviewRounds: 3
+        },
+        {
+          createService: () => service,
+          createTerminal: () => terminal,
+          stdout: { write: (_chunk: string) => true },
+          isTTY: true
+        }
+      )
+    ).resolves.toBeUndefined();
+
+    expect(terminal.started).toBe(true);
+    expect(service.startCalls).toBe(1);
+    expect(service.disposeCalls).toBe(1);
   });
 });

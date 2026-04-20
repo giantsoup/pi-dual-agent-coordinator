@@ -4,7 +4,13 @@ import {
   renderReasonText,
   type ActivitySnapshot
 } from "./activity-summary.js";
+import {
+  INTERACTIVE_COMMAND_HINT,
+  INTERACTIVE_PLAIN_KEY_HINT,
+  INTERACTIVE_RUNTIME_HINT
+} from "./interactive/compat.js";
 import type { NormalizedTelemetryEvent } from "../types/telemetry.js";
+import type { UiEvent } from "../types/ui.js";
 import type {
   CoordinatorStatusSnapshot,
   CoordinatorUiPhase,
@@ -47,6 +53,22 @@ export class ReplProgressRenderer {
     if (lines.length === 0) {
       return;
     }
+    this.progressSinceLastResponse = true;
+    for (const line of lines) {
+      this.options.stderr.write(`${line}\n`);
+    }
+  }
+
+  public handleUiEvent(event: UiEvent): void {
+    if (event.type !== "activity_changed") {
+      return;
+    }
+
+    const lines = this.renderActivitySnapshot(event.state.status, event.activity.active);
+    if (lines.length === 0) {
+      return;
+    }
+
     this.progressSinceLastResponse = true;
     for (const line of lines) {
       this.options.stderr.write(`${line}\n`);
@@ -99,6 +121,47 @@ export class ReplProgressRenderer {
       this.lastActivityLine = undefined;
       this.lastReasonLine = undefined;
       lines.push(this.lastContextLine);
+    }
+
+    const activityLine = this.renderSnapshotLine(snapshot);
+    if (activityLine !== this.lastActivityLine) {
+      this.lastActivityLine = activityLine;
+      lines.push(activityLine);
+    }
+
+    const reasonText = renderReasonText(snapshot);
+    if (reasonText) {
+      const reasonLine = `  reason: ${reasonText}`;
+      if (reasonLine !== this.lastReasonLine) {
+        this.lastReasonLine = reasonLine;
+        lines.push(reasonLine);
+      }
+    }
+
+    return lines;
+  }
+
+  private renderActivitySnapshot(
+    status: CoordinatorStatusSnapshot,
+    snapshot?: ActivitySnapshot | undefined
+  ): string[] {
+    if (!snapshot) {
+      this.resetProgressBurst();
+      return [];
+    }
+
+    const role = snapshot.role === "coordinator" ? status.activeRole : snapshot.role;
+    const modelDisplay = resolveModelDisplayFromStatus(status, role);
+    const contextKey = `${labelPhase(snapshot.phase)}\u0000${role}\u0000${modelDisplay}`;
+    const contextLine = `${labelPhase(snapshot.phase)} · Agent ${role} · ${modelDisplay}`;
+    const lines: string[] = [];
+
+    if (contextKey !== this.lastContextKey) {
+      this.lastContextKey = contextKey;
+      this.lastContextLine = contextLine;
+      this.lastActivityLine = undefined;
+      this.lastReasonLine = undefined;
+      lines.push(contextLine);
     }
 
     const activityLine = this.renderSnapshotLine(snapshot);
@@ -200,8 +263,8 @@ export function buildStartupBanner(status: CoordinatorStatusSnapshot, isTTY: boo
     "Review = coordinator is driving Agent A",
     "Agent A can now propose a pending plan that waits for /approve",
     "Modes switch automatically",
-    "Commands: /help /status /approve /discard /sessions /handoff /new A|B /switch A|B /quit",
-    "Keys: Enter submit | Ctrl+C exit",
+    `Commands: ${INTERACTIVE_COMMAND_HINT}`,
+    `Keys: ${INTERACTIVE_PLAIN_KEY_HINT}`,
     ""
   ].join("\n");
 }
@@ -220,9 +283,9 @@ export function buildHelpText(isTTY: boolean): string {
     "Repair: the coordinator is issuing a correction prompt to the active agent.",
     "If Agent A proposes a pending plan, run /approve to start execution or /discard to clear it.",
     "Modes switch automatically.",
-    "Commands: /help /status /approve /discard /sessions /handoff /new A|B /switch A|B /quit",
-    "Runtime/session commands: /new creates a fresh role session, /switch rebinds a role to an existing session file.",
-    "Keys: Enter submit, Ctrl+C exit.",
+    `Commands: ${INTERACTIVE_COMMAND_HINT}`,
+    `Runtime/session commands: ${INTERACTIVE_RUNTIME_HINT}`,
+    `Keys: ${INTERACTIVE_PLAIN_KEY_HINT}.`,
     ""
   ].join("\n");
 }
@@ -242,6 +305,13 @@ function resolveModelDisplay(
     return event.details.modelDisplay;
   }
 
+  return findRuntime(status, role)?.modelDisplay ?? status.activeModelDisplay;
+}
+
+function resolveModelDisplayFromStatus(
+  status: CoordinatorStatusSnapshot,
+  role: Role
+): string {
   return findRuntime(status, role)?.modelDisplay ?? status.activeModelDisplay;
 }
 

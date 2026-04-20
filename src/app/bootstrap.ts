@@ -1,41 +1,20 @@
-import { createInterface } from "node:readline/promises";
-import { stdin, stdout, stderr } from "node:process";
+import type { Terminal } from "@mariozechner/pi-tui";
 
-import { parseReplCommand, type ReplCliOptions } from "./cli.js";
-import { ReplProgressRenderer } from "./repl-progress.js";
-import { Coordinator } from "../coordinator/coordinator.js";
-import type { CoordinatorStatusSnapshot } from "../types/status.js";
-import type { NormalizedTelemetryEvent } from "../types/telemetry.js";
-import type { CoordinatorTurnResult, PendingExecutionPlanSnapshot } from "../types/workflow.js";
+import { parseReplCommand } from "./cli.js";
+import type { ReplCliOptions } from "./cli.js";
+import {
+  bootstrapPlainRepl,
+  isReplTerminationError,
+  type LegacyCoordinatorLike,
+  type PlainReplDependencies,
+  type ReplReadlineLike
+} from "./plain-repl.js";
+import { renderPendingPlan } from "./interactive/presentation.js";
+import { bootstrapTuiRepl, type BootstrapTuiDependencies } from "./tui/bootstrap.js";
+import type { CoordinatorTurnResult } from "../types/workflow.js";
 
-export interface ReplCoordinatorLike {
-  start(): Promise<void>;
-  submitUserInput(text: string): Promise<CoordinatorTurnResult>;
-  approvePendingPlan(): Promise<CoordinatorTurnResult>;
-  discardPendingPlan(): void;
-  getStatus(): CoordinatorStatusSnapshot;
-  getSessions(): unknown;
-  getLastHandoff(): Promise<unknown>;
-  subscribeEvents(listener: (event: NormalizedTelemetryEvent) => void): () => void;
-  replaceRuntime(
-    role: "A" | "B",
-    action: { type: "new"; role: "A" | "B" } | { type: "switch"; role: "A" | "B"; sessionPath: string }
-  ): Promise<void>;
-  dispose(): Promise<void>;
-}
-
-export interface ReplReadlineLike {
-  question(prompt: string): Promise<string>;
-  close(): void;
-}
-
-export interface BootstrapReplDependencies {
-  createCoordinator?(options: ReplCliOptions): ReplCoordinatorLike;
-  createReadline?(): ReplReadlineLike;
-  stdout?: Pick<NodeJS.WriteStream, "write">;
-  stderr?: Pick<NodeJS.WriteStream, "write">;
-  isTTY?: boolean;
-}
+export type { LegacyCoordinatorLike as ReplCoordinatorLike, ReplReadlineLike };
+export { bootstrapPlainRepl, isReplTerminationError };
 
 export interface ReplUiLike {
   renderHelp(): void;
@@ -43,45 +22,45 @@ export interface ReplUiLike {
   beforeTextOutput(): void;
 }
 
+export interface BootstrapReplDependencies
+  extends PlainReplDependencies,
+    BootstrapTuiDependencies {
+  isTTY?: boolean;
+  createTerminal?(): Terminal;
+}
+
 export async function bootstrapRepl(
   options: ReplCliOptions,
   dependencies: BootstrapReplDependencies = {}
 ): Promise<void> {
-  const coordinator =
-    dependencies.createCoordinator?.(options) ?? new Coordinator(options);
-  await coordinator.start();
-  const output = dependencies.stdout ?? stdout;
-  const errorOutput = dependencies.stderr ?? stderr;
-  const ui = new ReplProgressRenderer({
-    stdout: output,
-    stderr: errorOutput,
-    isTTY:
-      dependencies.isTTY ??
-      Boolean("isTTY" in (errorOutput as object) && (errorOutput as NodeJS.WriteStream).isTTY),
-    getStatus: () => coordinator.getStatus()
-  });
-  ui.renderStartupBanner();
-  const unsubscribe = coordinator.subscribeEvents((event) => {
-    ui.handleEvent(event);
-  });
+  const useTui =
+    !options.plainUi &&
+    (dependencies.isTTY ?? Boolean(process.stdin.isTTY && process.stdout.isTTY));
 
-  const rl = dependencies.createReadline?.() ?? createInterface({
-    input: stdin,
-    output: stdout
-  });
-
-  try {
-    await runReplLoop(coordinator, rl, {
-      stdout: output,
-      stderr: errorOutput
-    }, ui);
-  } finally {
-    unsubscribe();
+  if (useTui) {
+    await bootstrapTuiRepl(options, {
+      ...(dependencies.createService ? { createService: dependencies.createService } : {}),
+      ...(dependencies.createTerminal
+        ? { createTerminal: dependencies.createTerminal }
+        : {})
+    });
+    return;
   }
+
+  await bootstrapPlainRepl(options, {
+    ...(dependencies.createCoordinator
+      ? { createCoordinator: dependencies.createCoordinator }
+      : {}),
+    ...(dependencies.createService ? { createService: dependencies.createService } : {}),
+    ...(dependencies.createReadline ? { createReadline: dependencies.createReadline } : {}),
+    ...(dependencies.stdout ? { stdout: dependencies.stdout } : {}),
+    ...(dependencies.stderr ? { stderr: dependencies.stderr } : {}),
+    ...(dependencies.isTTY !== undefined ? { isTTY: dependencies.isTTY } : {})
+  });
 }
 
 export async function runReplLoop(
-  coordinator: ReplCoordinatorLike,
+  coordinator: LegacyCoordinatorLike,
   rl: ReplReadlineLike,
   io: {
     stdout: Pick<NodeJS.WriteStream, "write">;
@@ -185,42 +164,4 @@ export function renderTurnResult(result: CoordinatorTurnResult): string {
   }
   sections.push(renderPendingPlan(result.pendingPlan, result.nextActionHint));
   return `${sections.join("\n\n")}\n`;
-}
-
-function renderPendingPlan(
-  pendingPlan: PendingExecutionPlanSnapshot,
-  nextActionHint?: string
-): string {
-  const lines = [
-    "Plan Ready · Agent A",
-    `Objective: ${pendingPlan.objective}`,
-    `Summary: ${pendingPlan.summary}`,
-    "Acceptance Criteria:",
-    ...pendingPlan.acceptanceCriteria.map((item) => `- ${item}`),
-    "Relevant Paths:",
-    ...pendingPlan.relevantPaths.map((item) => `- ${item}`),
-    "Execution Steps:",
-    ...pendingPlan.executionPlan.map((item) => `- ${item}`)
-  ];
-
-  if (pendingPlan.constraints?.length) {
-    lines.push("Constraints:");
-    lines.push(...pendingPlan.constraints.map((item) => `- ${item}`));
-  }
-
-  lines.push(`Next: ${nextActionHint ?? "Run /approve to start coordinated execution with Agent B."}`);
-  return lines.join("\n");
-}
-
-export function isReplTerminationError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const code = "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-  return (
-    code === "ERR_USE_AFTER_CLOSE" ||
-    error.name === "AbortError" ||
-    error.message.includes("readline was closed")
-  );
 }

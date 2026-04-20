@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCliArgs, parseReplCommand } from "../../src/app/cli.js";
+import { formatCliHelp, parseCliArgs, parseReplCommand } from "../../src/app/cli.js";
 
 describe("repl commands", () => {
   it("parses non-slash input as a planning user turn", () => {
@@ -73,6 +73,24 @@ describe("repl commands", () => {
     });
   });
 
+  it("parses the plain UI flag from CLI args", () => {
+    const parsed = parseCliArgs(["repl", ".", "--plain"]);
+    expect(parsed).toMatchObject({
+      command: "repl",
+      plainUi: true
+    });
+  });
+
+  it("parses portal arguments", () => {
+    const parsed = parseCliArgs(["portal", ".", "--port", "4317", "--no-session"]);
+    expect(parsed).toMatchObject({
+      command: "portal",
+      cwd: process.cwd(),
+      port: 4317,
+      sessionMode: "memory"
+    });
+  });
+
   it("defaults cwd to INIT_CWD when no path is provided", () => {
     const previous = process.env.INIT_CWD;
     process.env.INIT_CWD = "/tmp/operator-project";
@@ -101,6 +119,18 @@ describe("repl commands", () => {
     });
   });
 
+  it("parses setup and auth arguments", () => {
+    expect(parseCliArgs(["setup"])).toMatchObject({
+      command: "setup",
+      cwd: process.cwd()
+    });
+    expect(parseCliArgs(["auth", ".", "--agent-dir", "./tmp-agent"])).toMatchObject({
+      command: "auth",
+      cwd: process.cwd(),
+      agentDir: `${process.cwd()}/tmp-agent`
+    });
+  });
+
   it("parses top-level help and version commands", () => {
     expect(parseCliArgs(["help", "repl"])).toEqual({
       command: "help",
@@ -116,5 +146,29 @@ describe("repl commands", () => {
       command: "help",
       topic: "repl"
     });
+  });
+
+  it("treats portal --help as help output", () => {
+    expect(parseCliArgs(["portal", "--help"])).toEqual({
+      command: "help",
+      topic: "portal"
+    });
+  });
+
+  it("includes setup and auth in general help", () => {
+    const help = formatCliHelp("general");
+    expect(help).toContain("setup     Guided first-run setup for auth and defaults");
+    expect(help).toContain("auth      Change or repair Agent A auth/defaults");
+    expect(help).toContain("portal    Start the localhost browser portal");
+  });
+
+  it("includes the plain flag in repl help", () => {
+    expect(formatCliHelp("repl")).toContain("--plain");
+  });
+
+  it("includes the port flag in portal help", () => {
+    const help = formatCliHelp("portal");
+    expect(help).toContain("--port PORT");
+    expect(help).toContain("localhost port");
   });
 });

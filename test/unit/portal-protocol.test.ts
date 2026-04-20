@@ -1,0 +1,144 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  INTERACTIVE_PORTAL_PROTOCOL_VERSION,
+  createPortalActionResponseDto,
+  createPortalBootstrapConfigDto,
+  createPortalStateSnapshotDto,
+  createPortalStreamEventDto,
+  parsePortalActionRequestDto
+} from "../../src/app/portal/protocol.js";
+import type { InteractiveUiState } from "../../src/types/ui.js";
+
+describe("portal protocol serialization", () => {
+  it("serializes a state snapshot as a detached DTO", () => {
+    const state = createState();
+    const dto = createPortalStateSnapshotDto(state, {
+      controllerId: "controller-1",
+      locked: true
+    });
+
+    expect(dto.protocolVersion).toBe(INTERACTIVE_PORTAL_PROTOCOL_VERSION);
+    expect(dto.state).not.toBe(state);
+    dto.state.notifications[0]!.message = "changed";
+    expect(state.notifications[0]!.message).toBe("Plan available");
+  });
+
+  it("serializes action responses and stream events without leaking references", () => {
+    const state = createState();
+    const response = createPortalActionResponseDto({
+      accepted: true,
+      state,
+      controller: {
+        controllerId: "controller-1",
+        locked: true
+      }
+    });
+    const event = createPortalStreamEventDto(
+      {
+        type: "notification_raised",
+        state,
+        notification: state.notifications[0]!
+      },
+      {
+        controllerId: "controller-1",
+        locked: true
+      }
+    );
+
+    expect(response.state).not.toBe(state);
+    expect(event.event.state).not.toBe(state);
+    event.event.state.status.cwd = "/tmp/changed";
+    expect(state.status.cwd).toBe("/tmp/project");
+  });
+
+  it("creates bootstrap config and validates incoming action DTOs", () => {
+    const bootstrap = createPortalBootstrapConfigDto({
+      authToken: "secret-token",
+      controllerId: "controller-1"
+    });
+    const parsed = parsePortalActionRequestDto({
+      controllerId: "controller-1",
+      action: {
+        type: "replace_runtime",
+        role: "A",
+        mode: "switch",
+        sessionPath: "/tmp/a.jsonl"
+      }
+    });
+
+    expect(bootstrap).toEqual({
+      protocolVersion: INTERACTIVE_PORTAL_PROTOCOL_VERSION,
+      authToken: "secret-token",
+      controllerId: "controller-1"
+    });
+    expect(parsed).toEqual({
+      controllerId: "controller-1",
+      action: {
+        type: "replace_runtime",
+        role: "A",
+        mode: "switch",
+        sessionPath: "/tmp/a.jsonl"
+      }
+    });
+  });
+
+  it("rejects malformed action DTOs", () => {
+    expect(() =>
+      parsePortalActionRequestDto({
+        controllerId: "controller-1",
+        action: {
+          type: "replace_runtime",
+          role: "C",
+          mode: "new"
+        }
+      })
+    ).toThrow("action.role");
+  });
+});
+
+function createState(): InteractiveUiState {
+  return {
+    status: {
+      cwd: "/tmp/project",
+      conversationMode: "planning",
+      phase: "planning",
+      phaseLabel: "Planning",
+      activeRole: "A",
+      activeRoleLabel: "Agent A",
+      activeModelDisplay: "GPT-5.4",
+      sessionRoot: "/tmp/sessions",
+      repairCount: 0,
+      maxReviewRounds: 3,
+      runtimes: [],
+      metrics: {}
+    },
+    conversation: [],
+    activity: {
+      runtimes: {}
+    },
+    modal: { kind: "none" },
+    commandPalette: {
+      open: false
+    },
+    notifications: [
+      {
+        id: "notice-1",
+        level: "info",
+        scope: "workflow",
+        code: "plan.ready",
+        message: "Plan available",
+        createdAt: "2026-04-20T00:00:00.000Z"
+      }
+    ],
+    notification: {
+      id: "notice-1",
+      level: "info",
+      scope: "workflow",
+      code: "plan.ready",
+      message: "Plan available",
+      createdAt: "2026-04-20T00:00:00.000Z"
+    },
+    shouldExit: false
+  };
+}

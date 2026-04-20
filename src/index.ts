@@ -3,8 +3,14 @@
 import { readFile } from "node:fs/promises";
 
 import { formatCliHelp, parseCliArgs } from "./app/cli.js";
+import {
+  applyCoordinatorDefaultsToCliOptions,
+  loadCoordinatorConfig
+} from "./app/coordinator-config.js";
 import { assertRuntimeSetupReady, runDoctor } from "./app/doctor.js";
 import { bootstrapRepl } from "./app/bootstrap.js";
+import { bootstrapPortal } from "./app/portal/bootstrap.js";
+import { runAuthWizard, runSetupWizard } from "./app/setup.js";
 
 async function main(): Promise<void> {
   const options = parseCliArgs(process.argv.slice(2));
@@ -16,13 +22,35 @@ async function main(): Promise<void> {
     case "version":
       process.stdout.write(`${await readPackageVersion()}\n`);
       return;
+    case "setup":
+      process.exitCode = await runSetupWizard(options);
+      return;
+    case "auth":
+      process.exitCode = await runAuthWizard(options);
+      return;
     case "doctor":
       process.exitCode = await runDoctor(options);
       return;
-    case "repl":
-      await assertRuntimeSetupReady(options);
-      await bootstrapRepl(options);
+    case "repl": {
+      const loadedConfig = await loadCoordinatorConfig();
+      const resolvedOptions = applyCoordinatorDefaultsToCliOptions(
+        options,
+        loadedConfig.config
+      );
+      await assertRuntimeSetupReady(resolvedOptions);
+      await bootstrapRepl(resolvedOptions);
       return;
+    }
+    case "portal": {
+      const loadedConfig = await loadCoordinatorConfig();
+      const resolvedOptions = applyCoordinatorDefaultsToCliOptions(
+        options,
+        loadedConfig.config
+      );
+      await assertRuntimeSetupReady(resolvedOptions);
+      await bootstrapPortal(resolvedOptions);
+      return;
+    }
   }
 }
 
