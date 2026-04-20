@@ -23,30 +23,11 @@ describe("repl progress renderer", () => {
     expect(buildHelpText(false)).toContain("/help /status /approve /discard /sessions /handoff /new A|B /switch A|B /quit");
   });
 
-  it("prints one thinking line for repeated deltas and emits tool/workflow progress", () => {
-    const stderrWrites: string[] = [];
-    const stdoutWrites: string[] = [];
-    let status = createStatus();
-    const renderer = new ReplProgressRenderer({
-      stdout: {
-        write: (chunk: string) => {
-          stdoutWrites.push(chunk);
-          return true;
-        }
-      },
-      stderr: {
-        write: (chunk: string) => {
-          stderrWrites.push(chunk);
-          return true;
-        }
-      },
-      isTTY: false,
-      getStatus: () => status
-    });
+  it("groups same-context progress under one header and compacts reason lines", () => {
+    const { renderer, stderrWrites } = createRenderer();
 
     renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "text_delta" }));
     renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "thinking_delta" }));
-    renderer.handleEvent(createEvent("planning.plan_ready", "A"));
     renderer.handleEvent(
       createEvent("pi.tool_execution_start", "A", {
         toolName: "read",
@@ -54,35 +35,54 @@ describe("repl progress renderer", () => {
       })
     );
     renderer.handleEvent(createEvent("pi.tool_execution_end", "A", { toolName: "read" }));
-    renderer.handleEvent(createEvent("pi.turn_end", "A"));
+    const progress = stderrWrites.join("");
 
-    status = {
-      ...status,
+    expect(
+      progress.match(/Planning · Agent A · GPT-5.4 \(openai\/gpt-5.4\)/g)
+    ).toHaveLength(1);
+    expect(
+      progress.match(
+        /  reason: inspecting the codebase before deciding whether execution is necessary/g
+      )
+    ).toHaveLength(1);
+    expect(progress).toContain("  reading src/app/repl-progress.ts");
+    expect(progress).toContain("  finished reading src/app/repl-progress.ts");
+    expect(progress).toContain(
+      "  reason: reading the relevant files before proposing a concrete change"
+    );
+  });
+
+  it("emits a fresh header when phase, role, or model display changes", () => {
+    const statusRef = { current: createStatus() };
+    const { renderer, stderrWrites } = createRenderer(statusRef);
+
+    renderer.handleEvent(createEvent("planning.plan_ready", "A"));
+
+    statusRef.current = {
+      ...statusRef.current,
       phase: "execution",
       phaseLabel: "Execution",
+      currentIteration: 1
+    };
+    renderer.handleEvent(
+      createEvent("workflow.iteration_prepared", "A", {
+        iteration: 1,
+        modelDisplayA: "GPT-5.4 (openai/gpt-5.4)"
+      })
+    );
+
+    statusRef.current = {
+      ...statusRef.current,
+      phase: "repair",
+      phaseLabel: "Repair",
       activeRole: "B",
       activeRoleLabel: "Agent B",
       activeModelName: "Qwen3 Coder Next",
       activeModelProvider: "local-qwen",
       activeModelId: "qwen3-coder-next",
       activeModelCanonical: "local-qwen/qwen3-coder-next",
-      activeModelDisplay: "Qwen3 Coder Next (local-qwen/qwen3-coder-next)",
-      currentIteration: 1,
-      runtimes: [
-        status.runtimes[0]!,
-        {
-          ...status.runtimes[1]!,
-          currentActivity: "reading src/app/repl-progress.ts",
-          currentTarget: "src/app/repl-progress.ts"
-        }
-      ]
+      activeModelDisplay: "Qwen3 Coder Next (local-qwen/qwen3-coder-next)"
     };
-    renderer.handleEvent(
-      createEvent("workflow.iteration_prepared", "A", {
-        iteration: 1,
-        modelDisplayB: "Qwen3 Coder Next (local-qwen/qwen3-coder-next)"
-      })
-    );
     renderer.handleEvent(
       createEvent("workflow.repair_requested", "B", {
         iteration: 1,
@@ -90,48 +90,106 @@ describe("repl progress renderer", () => {
         modelDisplayB: "Qwen3 Coder Next (local-qwen/qwen3-coder-next)"
       })
     );
+
+    statusRef.current = {
+      ...statusRef.current,
+      phase: "execution",
+      phaseLabel: "Execution",
+      activeRole: "B",
+      activeRoleLabel: "Agent B",
+      activeModelName: "Qwen3 Coder Next v2",
+      activeModelProvider: "local-qwen",
+      activeModelId: "qwen3-coder-next-v2",
+      activeModelCanonical: "local-qwen/qwen3-coder-next-v2",
+      activeModelDisplay: "Qwen3 Coder Next v2 (local-qwen/qwen3-coder-next-v2)",
+      runtimes: [
+        statusRef.current.runtimes[0]!,
+        {
+          ...statusRef.current.runtimes[1]!,
+          modelName: "Qwen3 Coder Next v2",
+          modelId: "qwen3-coder-next-v2",
+          modelCanonical: "local-qwen/qwen3-coder-next-v2",
+          modelDisplay: "Qwen3 Coder Next v2 (local-qwen/qwen3-coder-next-v2)"
+        }
+      ]
+    };
     renderer.handleEvent(
-      createEvent("workflow.finalized", "A", {
-        decision: "approved",
-        modelDisplayA: "GPT-5.4 (openai/gpt-5.4)"
+      createEvent("pi.message_update", "B", {
+        assistantEventType: "thinking_delta",
+        modelDisplay: "Qwen3 Coder Next v2 (local-qwen/qwen3-coder-next-v2)"
       })
     );
+
+    expect(stderrWrites).toEqual([
+      "Planning · Agent A · GPT-5.4 (openai/gpt-5.4)\n",
+      "  prepared a plan for approval\n",
+      "  reason: the plan is ready for operator approval before starting Agent B\n",
+      "Execution · Agent A · GPT-5.4 (openai/gpt-5.4)\n",
+      "  prepared iteration 1 for Agent B\n",
+      "  reason: sending the next handoff to Agent B\n",
+      "Repair · Agent B · Qwen3 Coder Next (local-qwen/qwen3-coder-next)\n",
+      "  requesting repair from Agent B\n",
+      "  reason: requesting a repair because the expected machine block was missing or invalid\n",
+      "Execution · Agent B · Qwen3 Coder Next v2 (local-qwen/qwen3-coder-next-v2)\n",
+      "  gathering local context\n",
+      "  reason: gathering local context before making changes\n"
+    ]);
+  });
+
+  it("resets the current burst after text output and clear boundaries", () => {
+    const statusRef = { current: createStatus() };
+    const { renderer, stderrWrites, stdoutWrites } = createRenderer(statusRef);
+
+    renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "thinking_delta" }));
     renderer.beforeTextOutput();
+    renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "thinking_delta" }));
+    renderer.handleEvent(createEvent("pi.turn_end", "A"));
+    renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "thinking_delta" }));
+    renderer.beforeTextOutput();
+    renderer.handleEvent(createEvent("planning.plan_ready", "A"));
+    renderer.handleEvent(createEvent("pi.turn_end", "A"));
+    renderer.handleEvent(createEvent("planning.plan_ready", "A"));
 
     const progress = stderrWrites.join("");
     expect(
-      progress.match(
-        /reason: inspecting the codebase before deciding whether execution is necessary/g
-      )
-    ).toHaveLength(1);
-    expect(progress).toContain(
-      "Planning · Agent A · GPT-5.4 (openai/gpt-5.4) prepared a plan for approval"
-    );
-    expect(progress).toContain(
-      "Planning · Agent A · GPT-5.4 (openai/gpt-5.4) reason: the plan is ready for operator approval before starting Agent B"
-    );
-    expect(progress).toContain(
-      "Planning · Agent A · GPT-5.4 (openai/gpt-5.4) reading src/app/repl-progress.ts"
-    );
-    expect(progress).toContain(
-      "Planning · Agent A · GPT-5.4 (openai/gpt-5.4) finished reading src/app/repl-progress.ts"
-    );
-    expect(progress).toContain(
-      "Planning · Agent A · GPT-5.4 (openai/gpt-5.4) reason: reading the relevant files before proposing a concrete change"
-    );
-    expect(progress).toContain(
-      "Execution · Agent A · GPT-5.4 (openai/gpt-5.4) prepared iteration 1 for Agent B"
-    );
-    expect(progress).toContain(
-      "Repair · Agent B · Qwen3 Coder Next (local-qwen/qwen3-coder-next) requesting repair from Agent B"
-    );
-    expect(progress).toContain(
-      "Repair · Agent B · Qwen3 Coder Next (local-qwen/qwen3-coder-next) reason: requesting a repair because the expected machine block was missing or invalid"
-    );
-    expect(progress).toContain("Execution · Agent A · GPT-5.4 (openai/gpt-5.4) approved the workflow");
-    expect(stdoutWrites.join("")).toBe("\n");
+      progress.match(/Planning · Agent A · GPT-5.4 \(openai\/gpt-5.4\)/g)
+    ).toHaveLength(5);
+    expect(
+      progress.match(/  prepared a plan for approval/g)
+    ).toHaveLength(2);
+    expect(stdoutWrites.join("")).toBe("\n\n");
   });
 });
+
+function createRenderer(
+  statusRef: { current: CoordinatorStatusSnapshot } = { current: createStatus() }
+): {
+  renderer: ReplProgressRenderer;
+  stderrWrites: string[];
+  stdoutWrites: string[];
+  statusRef: { current: CoordinatorStatusSnapshot };
+} {
+  const stderrWrites: string[] = [];
+  const stdoutWrites: string[] = [];
+  const renderer = new ReplProgressRenderer({
+    stdout: {
+      write: (chunk: string) => {
+        stdoutWrites.push(chunk);
+        return true;
+      }
+    },
+    stderr: {
+      write: (chunk: string) => {
+        stderrWrites.push(chunk);
+        return true;
+      }
+    },
+    isTTY: false,
+    getStatus: () => statusRef.current
+  });
+
+  return { renderer, stderrWrites, stdoutWrites, statusRef };
+}
 
 function createStatus(): CoordinatorStatusSnapshot {
   return {

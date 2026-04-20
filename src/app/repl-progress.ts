@@ -22,6 +22,8 @@ export interface ReplProgressRendererOptions {
 export class ReplProgressRenderer {
   private readonly runtimeActivity = new Map<Role, ActivitySnapshot>();
   private coordinatorActivity: ActivitySnapshot | undefined;
+  private lastContextKey: string | undefined;
+  private lastContextLine: string | undefined;
   private lastActivityLine: string | undefined;
   private lastReasonLine: string | undefined;
   private progressSinceLastResponse = false;
@@ -55,9 +57,8 @@ export class ReplProgressRenderer {
     if (this.progressSinceLastResponse) {
       this.options.stdout.write("\n");
     }
+    this.resetProgressBurst();
     this.progressSinceLastResponse = false;
-    this.lastActivityLine = undefined;
-    this.lastReasonLine = undefined;
   }
 
   private renderEvent(event: NormalizedTelemetryEvent): string[] {
@@ -72,6 +73,9 @@ export class ReplProgressRenderer {
         this.coordinatorActivity = undefined;
       } else {
         this.runtimeActivity.delete(update.role);
+      }
+      if (this.isActiveContextRole(update.role)) {
+        this.resetProgressBurst();
       }
       return [];
     }
@@ -88,7 +92,16 @@ export class ReplProgressRenderer {
     }
 
     const lines: string[] = [];
-    const activityLine = this.renderSnapshotLine(event, snapshot);
+    const context = this.getContext(event, snapshot);
+    if (context.key !== this.lastContextKey) {
+      this.lastContextKey = context.key;
+      this.lastContextLine = context.line;
+      this.lastActivityLine = undefined;
+      this.lastReasonLine = undefined;
+      lines.push(this.lastContextLine);
+    }
+
+    const activityLine = this.renderSnapshotLine(snapshot);
     if (activityLine !== this.lastActivityLine) {
       this.lastActivityLine = activityLine;
       lines.push(activityLine);
@@ -96,7 +109,7 @@ export class ReplProgressRenderer {
 
     const reasonText = renderReasonText(snapshot);
     if (reasonText) {
-      const reasonLine = `${this.renderPrefix(event, snapshot.role === "coordinator" ? event.role : snapshot.role, snapshot.phase)} reason: ${reasonText}`;
+      const reasonLine = `  reason: ${reasonText}`;
       if (reasonLine !== this.lastReasonLine) {
         this.lastReasonLine = reasonLine;
         lines.push(reasonLine);
@@ -107,22 +120,36 @@ export class ReplProgressRenderer {
   }
 
   private renderSnapshotLine(
-    event: NormalizedTelemetryEvent,
     snapshot: ActivitySnapshot
   ): string {
-    const role = snapshot.role === "coordinator" ? event.role : snapshot.role;
-    return `${this.renderPrefix(event, role, snapshot.phase)} ${renderActivityText(snapshot)}`;
+    return `  ${renderActivityText(snapshot)}`;
   }
 
-  private renderPrefix(
+  private getContext(
     event: NormalizedTelemetryEvent,
-    role: Role,
-    phase: CoordinatorUiPhase
-  ): string {
-    const phaseLabel = labelPhase(phase);
-    const roleLabel = `Agent ${role}`;
+    snapshot: ActivitySnapshot
+  ): { key: string; line: string } {
+    const role = snapshot.role === "coordinator" ? event.role : snapshot.role;
+    const phaseLabel = labelPhase(snapshot.phase);
     const modelDisplay = resolveModelDisplay(event, role, this.getStatusWithLocalActivity());
-    return `${phaseLabel} · ${roleLabel} · ${modelDisplay}`;
+    return {
+      key: `${phaseLabel}\u0000${role}\u0000${modelDisplay}`,
+      line: `${phaseLabel} · Agent ${role} · ${modelDisplay}`
+    };
+  }
+
+  private isActiveContextRole(role: Role | "coordinator"): boolean {
+    if (role === "coordinator") {
+      return false;
+    }
+    return this.lastContextKey?.split("\u0000")[1] === role;
+  }
+
+  private resetProgressBurst(): void {
+    this.lastContextKey = undefined;
+    this.lastContextLine = undefined;
+    this.lastActivityLine = undefined;
+    this.lastReasonLine = undefined;
   }
 
   private getStatusWithLocalActivity(): CoordinatorStatusSnapshot {

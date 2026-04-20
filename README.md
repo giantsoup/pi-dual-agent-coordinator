@@ -234,7 +234,7 @@ node dist/src/index.js repl . --no-session
 - When execution should start immediately, Agent A can still emit `pi-execute`; the coordinator creates a workflow, renders the first deterministic handoff for Agent B, and enters the review loop.
 - When the operator runs `/approve`, the coordinator promotes the current pending `pi-plan` into the same execution workflow path used by `pi-execute`.
 - During execution, Agent B emits `pi-completion`, and Agent A either finalizes with `pi-final` or issues the next `pi-handoff`.
-- The CLI shows hybrid live progress on `stderr` by default: phase changes, active role/model, concrete tool or workflow targets, and short reason lines without streaming every raw token.
+- The CLI shows hybrid live progress on `stderr` by default: when the visible phase, agent, or model changes it prints one full context header, then groups compact indented activity and `reason:` lines underneath until that context changes again.
 - Raw model thinking is intentionally not exposed. Operator-facing reason text is derived locally from observable events only.
 - After execution finishes, the conversation returns to planning mode and the printed final answer still comes from Agent A’s `pi-final.userResponse`.
 - One deterministic repair prompt is allowed for each malformed or missing machine block before the workflow is blocked.
@@ -255,7 +255,7 @@ Useful REPL commands:
 
 Output separation:
 
-- Progress and runtime chatter are written to `stderr`.
+- Progress and runtime chatter are written to `stderr`; grouped progress headers do not change the final `stdout` response format or slash-command JSON output.
 - Final user-facing assistant responses remain on `stdout`.
 - ANSI styling is only used when running in a TTY.
 
