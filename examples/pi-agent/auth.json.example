@@ -1,0 +1,6 @@
+{
+  "openai": {
+    "type": "api_key",
+    "key": "OPENAI_API_KEY"
+  }
+}

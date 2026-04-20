@@ -1,263 +1,222 @@
 # pi-dual-agent-coordinator
 
-Coordinator-driven multi-model workflow engine built on the Pi SDK.
+Coordinator-driven dual-agent workflow engine built on the Pi SDK.
 
-## What it does
+This project runs two isolated Pi runtimes under one coordinator:
 
-- Runs two isolated Pi runtimes under one coordinator.
-- Keeps Agent A read-only for planning, review, and final sign-off.
-- Keeps Agent B as the only write-authoritative execution model.
-- Executes one automatic capped workflow per REPL task:
-  `user -> A plan/final -> B execute -> A review -> ... -> A final`
-- Persists workflow records in an append-only ledger and reconstructs state after restart.
+- Agent A is the planner, reviewer, and final sign-off model.
+- Agent B is the execution model and the only agent allowed to make changes.
+- The coordinator handles the handoff loop, review cap, and workflow persistence.
 
-## Current scope
+This repo is meant to be usable by people who want a practical local agentic tool, not just by people who want to study the code. The setup below assumes you already know how to run your preferred local model app if you want a local Agent B.
 
-- REPL-only operator UX
-- Automatic review loop with a configurable round cap
-- Durable workflow replay and restart recovery
-- Runtime rebinding for Agent A and Agent B
+## Quick start
 
-## Requirements
+### 1. Requirements
 
 - Node.js `>=20.6.0`
-- A Pi-compatible agent environment
+- npm
+- A working Pi-compatible environment
 - An OpenAI model for Agent A
-- An OpenAI-compatible local model endpoint for Agent B if you want mixed-model execution
+- Optional: a local OpenAI-compatible model endpoint for Agent B
 
-## Install
+Examples in this README use:
+
+- Agent A: `openai/gpt-5.4`
+- Agent B: `local-qwen/qwen3-coder-next`
+
+### 2. Download and install
+
+Clone the repo or download it as a ZIP from GitHub, then open a terminal in the project folder and run:
 
 ```bash
 npm install
-npm run build
 ```
 
-The package exposes a `pi-dual` binary after build, but running `node dist/src/index.js` works the same way during development.
+`npm install` builds the project automatically. You do not need to run a separate build step for normal use.
 
-## Repository layout
+If you use `nvm`, the repo includes [.nvmrc](./.nvmrc).
 
-```text
-docs/
-  architecture-decisions.md
-  handoff-state-machine.md
-  implementation-backlog.md
-  review-loop.md
-src/
-  app/
-  coordinator/
-  handoff/
-  persistence/
-  runtime/
-  telemetry/
-  tools/
-  types/
-  workflow/
-test/
-  fixtures/
-  integration/
-  replay/
-  unit/
+### 3. Create your Pi config files
+
+Pi uses its standard agent directory. On macOS and Linux that is usually `~/.pi/agent/`.
+
+If you are unsure which folder your machine is using, run `npm run doctor -- . --no-mcp` once. It prints the exact Pi agent directory path for your system.
+
+On macOS and Linux, you can create the folder and copy the example files like this:
+
+```bash
+mkdir -p ~/.pi/agent
+cp examples/pi-agent/auth.json.example ~/.pi/agent/auth.json
+cp examples/pi-agent/models.lm-studio.json ~/.pi/agent/models.json
 ```
 
-## Model roles
+Use [examples/pi-agent/models.ollama.json](./examples/pi-agent/models.ollama.json) instead if your local model app exposes an Ollama-style OpenAI-compatible endpoint.
 
-- Agent A should be the stronger planning and review model.
-- Agent B should be the cheaper execution model.
-- Agent A owns termination and the final user-facing response.
-- Agent B never terminates the workflow directly.
+On Windows, create the same files manually in the Pi agent directory printed by `doctor`.
 
-This repository was built around the following practical setup:
+### 4. Fill in the config
 
-- Agent A: `openai/gpt-5.4`
-- Agent B: local `qwen3-coder-next` exposed through LM Studio or another OpenAI-compatible endpoint
+`auth.json`
 
-## Configure authentication
+- If you already export `OPENAI_API_KEY` in your shell, leave the example as-is.
+- If you prefer a literal key, replace `OPENAI_API_KEY` with your actual key.
 
-Pi reads auth from `~/.pi/agent/auth.json`.
-
-If your shell already exports `OPENAI_API_KEY`, point Pi at that environment variable:
+Example:
 
 ```json
 {
-  "openai": { "type": "api_key", "key": "OPENAI_API_KEY" }
-}
-```
-
-If you prefer to store a literal key in the auth file, use:
-
-```json
-{
-  "openai": { "type": "api_key", "key": "sk-..." }
-}
-```
-
-## Configure models
-
-Pi reads model/provider definitions from `~/.pi/agent/models.json`.
-
-### LM Studio example
-
-If LM Studio is serving an OpenAI-compatible API on `http://127.0.0.1:1234/v1`, use:
-
-```json
-{
-  "providers": {
-    "local-qwen": {
-      "baseUrl": "http://127.0.0.1:1234/v1",
-      "api": "openai-completions",
-      "apiKey": "lm-studio",
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
-      },
-      "models": [
-        {
-          "id": "qwen3-coder-next",
-          "name": "Qwen3 Coder Next (LM Studio)",
-          "reasoning": false,
-          "input": ["text"],
-          "contextWindow": 128000,
-          "maxTokens": 16384,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
-        }
-      ]
-    }
+  "openai": {
+    "type": "api_key",
+    "key": "OPENAI_API_KEY"
   }
 }
 ```
 
-Verify the exact local model id before running the coordinator:
+`models.json`
+
+- Set the correct `baseUrl` for your local model app.
+- Set the correct local model `id`.
+- Keep provider compatibility flags in `models.json`, not in coordinator code.
+
+Before you run the coordinator, verify the exact model id returned by your local server:
 
 ```bash
 curl http://127.0.0.1:1234/v1/models
 ```
 
-If the server returns a different id, update both `models.json` and `--model-b` to use that exact id.
+If your local app uses a different port or URL, use that instead.
 
-### Ollama-style example
+### 5. Run the setup check
 
-If your local server exposes an OpenAI-compatible endpoint on `http://localhost:11434/v1`, the same shape works with a different base URL and API key placeholder:
+This validates Node.js, the Pi config files, the model ids you plan to use, and any MCP config files:
 
-```json
-{
-  "providers": {
-    "local-qwen": {
-      "baseUrl": "http://localhost:11434/v1",
-      "api": "openai-completions",
-      "apiKey": "ollama",
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
-      },
-      "models": [
-        {
-          "id": "qwen3-coder-next",
-          "name": "Qwen3 Coder Next (Local)",
-          "reasoning": false,
-          "input": ["text"],
-          "contextWindow": 128000,
-          "maxTokens": 16384,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
-        }
-      ]
-    }
+```bash
+npm run doctor -- . \
+  --model-a openai/gpt-5.4 \
+  --model-b local-qwen/qwen3-coder-next
+```
+
+If something is missing, `doctor` tells you exactly what to fix.
+
+### 6. Start the coordinator
+
+```bash
+npm run repl -- . \
+  --model-a openai/gpt-5.4 \
+  --model-b local-qwen/qwen3-coder-next \
+  --thinking-a high \
+  --thinking-b off \
+  --max-review-rounds 3
+```
+
+For a quick smoke test without persisted sessions:
+
+```bash
+npm run repl -- . --no-session --model-a openai/gpt-5.4 --model-b local-qwen/qwen3-coder-next
+```
+
+### 7. Optional: add a `pdual` shell shortcut
+
+If you want the same convenience wrapper used in the local development setup for this repo, add a function like this to your `~/.zshrc`:
+
+```bash
+pdual() {
+  local project_input="$PWD"
+  if [[ $# -gt 0 && "$1" != -* ]]; then
+    project_input="$1"
+    shift
+  fi
+
+  local project
+  project="$(cd "$project_input" 2>/dev/null && pwd -P)" || {
+    echo "pdual: project path not found: $project_input" >&2
+    return 1
   }
+
+  (
+    cd /absolute/path/to/pi-dual-agent-coordinator || return 1
+    npm run repl -- "$project" \
+      --model-a openai/gpt-5.4 \
+      --model-b local-qwen/qwen3-coder-next \
+      "$@"
+  )
 }
 ```
 
-Provider quirks belong in `models.json`, not in coordinator logic. Common compatibility flags include:
-
-- `supportsDeveloperRole: false`
-- `supportsReasoningEffort: false`
-- `supportsStrictMode: false`
-- `maxTokensField: "max_tokens"`
-- `thinkingFormat: "qwen"` or `"qwen-chat-template"`
-
-## Run the REPL
-
-Recommended mixed-model command:
+Then reload your shell:
 
 ```bash
-node dist/src/index.js repl ~/Sites/print-for-me \
-  --model-a openai/gpt-5.4 \
-  --model-b local-qwen/qwen3-coder-next \
-  --thinking-a high \
-  --thinking-b off \
-  --max-review-rounds 3
+source ~/.zshrc
 ```
 
-Equivalent binary form:
+Examples:
 
 ```bash
-pi-dual repl ~/Sites/print-for-me \
-  --model-a openai/gpt-5.4 \
-  --model-b local-qwen/qwen3-coder-next \
-  --thinking-a high \
-  --thinking-b off \
-  --max-review-rounds 3
+pdual
+pdual ~/Sites/my-project
+pdual ~/Sites/my-project --thinking-b off --max-review-rounds 3
 ```
 
-Useful flags:
+Replace `/absolute/path/to/pi-dual-agent-coordinator` with the location where you downloaded this repo, and adjust `--model-a` / `--model-b` if you use different models.
 
-- `--model-a MODEL`
-- `--model-b MODEL`
-- `--thinking-a off|low|medium|high`
-- `--thinking-b off|low|medium|high`
-- `--max-review-rounds N`
-- `--agent-dir PATH`
-- `--session-root PATH`
-- `--mcp-config PATH` repeatable; adds explicit MCP config files
-- `--no-mcp`
-- `--no-session`
-- `--json-logs`
-- `--verbose`
+## Everyday commands
 
-Defaults:
+- `npm start -- --help`: show top-level CLI help
+- `npm run doctor -- . --model-a ... --model-b ...`: validate setup
+- `npm run repl -- . --model-a ... --model-b ...`: start the REPL
+- `npm test`: run the test suite
+- `npm run check`: run the TypeScript checker
 
-- `--max-review-rounds` defaults to `3`
-- MCP is enabled for the CLI by default unless `--no-mcp` is passed
-- Agent A defaults to `high` thinking if not overridden
-- Agent B defaults to `medium` thinking if not overridden
+The local binary is also available as `pi-dual` after install, so `npx pi-dual --help` works too.
 
-Quick smoke test without persisted sessions:
+## REPL basics
 
-```bash
-node dist/src/index.js repl . --no-session
-```
+Inside the REPL:
+
+- Plain text talks to Agent A in planning mode.
+- If Agent A proposes a pending plan, run `/approve` to start execution.
+- Agent B performs the execution work automatically.
+- Agent A reviews the result and either finalizes or sends another handoff.
+
+Useful slash commands:
+
+- `/help`
+- `/status`
+- `/approve`
+- `/discard`
+- `/sessions`
+- `/handoff`
+- `/new A`
+- `/new B`
+- `/switch A <session-path>`
+- `/switch B <session-path>`
+- `/quit`
+
+## Config examples
+
+Starter templates live here:
+
+- [examples/pi-agent/auth.json.example](./examples/pi-agent/auth.json.example)
+- [examples/pi-agent/models.lm-studio.json](./examples/pi-agent/models.lm-studio.json)
+- [examples/pi-agent/models.ollama.json](./examples/pi-agent/models.ollama.json)
+- [examples/project/.mcp.json.example](./examples/project/.mcp.json.example)
 
 ## MCP support
 
-MCP is implemented as a first-party Pi extension inside each role runtime. The coordinator does not bolt MCP on as a separate tool layer; it resolves config once, then gives Agent A and Agent B their own isolated MCP extension instances and client pools.
+MCP is enabled by default.
 
-Discovery order when MCP is enabled:
+Discovery order:
 
-- global: `<agentDir>/mcp.json`
-- project: `<cwd>/.mcp.json`
-- explicit: each `--mcp-config PATH` in the order provided
+1. `<agentDir>/mcp.json`
+2. `<cwd>/.mcp.json`
+3. each `--mcp-config PATH` in the order provided
 
-Later sources override earlier ones by server name. `.codex/config.toml` is intentionally ignored.
+Later sources override earlier ones by server name.
 
-Standard `.mcp.json` files work directly, including Laravel Boost-style configs:
+Standard `.mcp.json` files work directly. App-specific coordinator settings belong under `x-pi-dual`.
 
-```json
-{
-  "mcpServers": {
-    "laravel-boost": {
-      "command": "php",
-      "args": ["artisan", "boost:mcp"]
-    },
-    "herd": {
-      "command": "php",
-      "args": ["herd-mcp.phar"],
-      "env": {
-        "SITE_PATH": "/absolute/project/path"
-      }
-    }
-  }
-}
-```
-
-App-specific behavior goes under `x-pi-dual`:
+Example project config:
 
 ```json
 {
@@ -280,83 +239,15 @@ App-specific behavior goes under `x-pi-dual`:
 }
 ```
 
-Exposure model:
+## Troubleshooting
 
-- A generic `mcp` proxy tool is always registered when MCP is enabled.
-- Selected MCP tools can also be registered directly as Pi tools.
-- `laravel-boost` defaults to direct tool registration so Boost guidance can keep using names like `search-docs`, `database-schema`, `browser-logs`, and `get-absolute-url`.
-
-Role behavior:
-
-- Agent A can search and inspect all MCP tools, resources, and prompts, but can only call read-only tools plus explicit allowlists. Destructive tools are always blocked.
-- Agent B gets the full configured MCP tool surface unless a server config excludes something explicitly.
-- Direct-tool servers marked `required` fail runtime startup immediately if they cannot initialize, instead of silently starting without those tools.
-
-## REPL behavior
-
-- REPL startup prints a banner with the project path, current phase, active operator-facing role, both model displays, command hints, and key hints.
-- The prompt is dynamic and shows the current idle phase and active model display.
-- REPL input starts in planning mode with Agent A.
-- Planning-only turns return immediately; turns that start execution block until the workflow reaches a terminal Agent A decision.
-- Agent A may answer in plain prose for one or more planning turns without starting execution.
-- When Agent A has a concrete plan but execution has not been approved yet, it can emit `pi-plan`; the coordinator stores that as a runtime-only pending plan, prints a structured "Plan Ready" view, exposes the draft through `/status`, and waits for `/approve`.
-- While a pending plan exists, a new planning turn replaces it; `/discard` clears it explicitly.
-- When execution should start immediately, Agent A can still emit `pi-execute`; the coordinator creates a workflow, renders the first deterministic handoff for Agent B, and enters the review loop.
-- When the operator runs `/approve`, the coordinator promotes the current pending `pi-plan` into the same execution workflow path used by `pi-execute`.
-- During execution, Agent B emits `pi-completion`, and Agent A either finalizes with `pi-final` or issues the next `pi-handoff`.
-- The CLI shows hybrid live progress on `stderr` by default: when the visible phase, agent, or model changes it prints one full context header, then groups compact indented activity and `reason:` lines underneath until that context changes again.
-- Raw model thinking is intentionally not exposed. Operator-facing reason text is derived locally from observable events only.
-- After execution finishes, the conversation returns to planning mode and the printed final answer still comes from Agent A’s `pi-final.userResponse`.
-- One deterministic repair prompt is allowed for each malformed or missing machine block before the workflow is blocked.
-- If Agent A still requests more execution work after the round cap, the coordinator forces a terminal blocked finalization path.
-- Modes switch automatically. There is no manual mode toggle.
-
-Useful REPL commands:
-
-- `/help` shows the phase legend, automatic mode semantics, slash commands, runtime/session commands, and key hints.
-- `/status` shows the active workflow id, iteration, workflow status, active phase/role/model, pending plan state, next-step hint, current activity and reason fields, runtime bindings, last completion summary, repair count, and MCP state.
-- `/approve` starts execution from the current pending plan.
-- `/discard` clears the current pending plan if one exists.
-- `/sessions` shows the active session metadata for roles `A` and `B`, including model display and thinking level.
-- `/handoff` shows workflow-level state plus the latest persisted records.
-- `/new A` or `/new B` creates a fresh session for one role.
-- `/switch A <session-path>` or `/switch B <session-path>` rebinds a role to an existing session file.
-- `/quit` exits cleanly.
-
-Output separation:
-
-- Progress and runtime chatter are written to `stderr`; grouped progress headers do not change the final `stdout` response format or slash-command JSON output.
-- Final user-facing assistant responses remain on `stdout`.
-- ANSI styling is only used when running in a TTY.
-
-`/status` includes an `mcp` section with:
-
-- `enabled`
-- `configSources`
-- `roleA` and `roleB`
-- per-server `connected`, `transport`, `directTools`, `lastError`, and `lastMetadataSync`
-
-## Workflow and recovery
-
-Each execution start becomes a workflow with a stable `workflowId`. Planning-only turns stay outside the workflow ledger. Pending plans created from `pi-plan` are runtime-only draft state and are not recovered after restart. Each Agent B execution round has its own `iteration`.
-
-The append-only ledger records workflow progress using these categories:
-
-- `prepared`
-- `delivered`
-- `completed`
-- `finalized`
-- `blocked`
-- `capped`
-- `repair_requested`
-- `superseded`
-
-Recovery replays the ledger in order and reconstructs the latest workflow snapshot. A truncated final JSONL line is ignored during replay.
-
-Operationally important recovery behavior:
-
-- If restart recovery leaves a workflow active, the coordinator refuses to start a new task until that workflow is cleared.
-- Rebinding either runtime with `/new` or `/switch` supersedes the active workflow and records that invalidation durably.
+- `doctor` fails on `auth.json`: copy [examples/pi-agent/auth.json.example](./examples/pi-agent/auth.json.example) to `~/.pi/agent/auth.json`.
+- `doctor` fails on `models.json`: copy one of the model templates from [examples/pi-agent](./examples/pi-agent/) and update the URL and model id.
+- Agent B fails immediately: confirm the local provider URL and model id from `/v1/models`.
+- Local model ignores reasoning settings: set `supportsReasoningEffort: false` in `models.json`.
+- Local model mishandles developer messages: set `supportsDeveloperRole: false` in `models.json`.
+- A recovered workflow blocks a new task: finish it or supersede it by rebinding Agent A or Agent B with `/new` or `/switch`.
+- You want to disable MCP for one run: add `--no-mcp`.
 
 ## Development
 
@@ -366,16 +257,10 @@ npm test
 npm run build
 ```
 
-## Troubleshooting
-
-- Agent B fails immediately: verify the local provider base URL and model id returned by `/v1/models`.
-- Local model ignores reasoning settings: set `supportsReasoningEffort: false` in `models.json`.
-- Local model mishandles developer messages: set `supportsDeveloperRole: false`.
-- Workflow blocks after malformed machine output: inspect the latest `/handoff` state and confirm the model is returning exactly one fenced machine block at `turn_end`.
-- A recovered workflow prevents a new task: either finish that workflow or explicitly supersede it by rebinding Agent A or Agent B.
-
-## Additional documentation
+## Additional docs
 
 - [docs/review-loop.md](./docs/review-loop.md): workflow lifecycle, machine block schemas, provider compatibility notes, and troubleshooting
 - [docs/handoff-state-machine.md](./docs/handoff-state-machine.md): workflow state transitions and replay behavior
 - [docs/architecture-decisions.md](./docs/architecture-decisions.md): design rationale and system boundaries
+- [docs/security-model.md](./docs/security-model.md): role separation and trust boundaries
+- [docs/implementation-backlog.md](./docs/implementation-backlog.md): future work

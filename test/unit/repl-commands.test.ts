@@ -45,7 +45,11 @@ describe("repl commands", () => {
   });
 
   it("parses max review rounds from CLI args", () => {
-    expect(parseCliArgs(["repl", ".", "--max-review-rounds", "5"]).maxReviewRounds).toBe(5);
+    const parsed = parseCliArgs(["repl", ".", "--max-review-rounds", "5"]);
+    expect(parsed).toMatchObject({
+      command: "repl",
+      maxReviewRounds: 5
+    });
   });
 
   it("parses no-mcp and repeated mcp-config flags from CLI args", () => {
@@ -59,11 +63,14 @@ describe("repl commands", () => {
       "./two.json"
     ]);
 
-    expect(parsed.mcpEnabled).toBe(false);
-    expect(parsed.mcpConfigPaths).toEqual([
-      `${process.cwd()}/one.json`,
-      `${process.cwd()}/two.json`
-    ]);
+    expect(parsed).toMatchObject({
+      command: "repl",
+      mcpEnabled: false,
+      mcpConfigPaths: [
+        `${process.cwd()}/one.json`,
+        `${process.cwd()}/two.json`
+      ]
+    });
   });
 
   it("defaults cwd to INIT_CWD when no path is provided", () => {
@@ -71,7 +78,10 @@ describe("repl commands", () => {
     process.env.INIT_CWD = "/tmp/operator-project";
 
     try {
-      expect(parseCliArgs(["repl"]).cwd).toBe("/tmp/operator-project");
+      expect(parseCliArgs(["repl"])).toMatchObject({
+        command: "repl",
+        cwd: "/tmp/operator-project"
+      });
     } finally {
       if (previous === undefined) {
         delete process.env.INIT_CWD;
@@ -79,5 +89,32 @@ describe("repl commands", () => {
         process.env.INIT_CWD = previous;
       }
     }
+  });
+
+  it("parses doctor arguments", () => {
+    expect(
+      parseCliArgs(["doctor", ".", "--model-b", "local-qwen/qwen3-coder-next"])
+    ).toMatchObject({
+      command: "doctor",
+      cwd: process.cwd(),
+      modelB: "local-qwen/qwen3-coder-next"
+    });
+  });
+
+  it("parses top-level help and version commands", () => {
+    expect(parseCliArgs(["help", "repl"])).toEqual({
+      command: "help",
+      topic: "repl"
+    });
+    expect(parseCliArgs(["--version"])).toEqual({
+      command: "version"
+    });
+  });
+
+  it("treats repl --help as help output", () => {
+    expect(parseCliArgs(["repl", "--help"])).toEqual({
+      command: "help",
+      topic: "repl"
+    });
   });
 });

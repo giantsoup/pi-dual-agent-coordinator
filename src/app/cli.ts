@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { Role } from "../types/role.js";
 
 export type ReplThinkingLevel = "off" | "low" | "medium" | "high";
+export type HelpTopic = "general" | "repl" | "doctor";
 
 export interface ReplCliOptions {
   command: "repl";
@@ -21,6 +22,31 @@ export interface ReplCliOptions {
   mcpConfigPaths?: string[];
 }
 
+export interface DoctorCliOptions {
+  command: "doctor";
+  cwd: string;
+  agentDir?: string;
+  modelA?: string;
+  modelB?: string;
+  mcpEnabled?: boolean;
+  mcpConfigPaths?: string[];
+}
+
+export interface HelpCliOptions {
+  command: "help";
+  topic: HelpTopic;
+}
+
+export interface VersionCliOptions {
+  command: "version";
+}
+
+export type CliOptions =
+  | ReplCliOptions
+  | DoctorCliOptions
+  | HelpCliOptions
+  | VersionCliOptions;
+
 export type ParsedReplCommand =
   | { type: "user_turn"; text: string }
   | { type: "help" }
@@ -34,17 +60,103 @@ export type ParsedReplCommand =
   | { type: "quit" };
 
 const VALID_THINKING = new Set<ReplThinkingLevel>(["off", "low", "medium", "high"]);
+const HELP_FLAGS = new Set(["--help", "-h"]);
+const VERSION_FLAGS = new Set(["--version", "-v"]);
 
 export function parseCliArgs(
   argv: string[],
   baseCwd = process.env.INIT_CWD ? resolve(process.env.INIT_CWD) : process.cwd()
-): ReplCliOptions {
-  const [command, maybeCwd, ...rest] = argv;
+): CliOptions {
+  const [command, ...rest] = argv;
 
-  if (command !== "repl") {
-    throw new Error("Usage: pi-dual repl [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--json-logs] [--verbose]");
+  if (!command || HELP_FLAGS.has(command) || command === "help") {
+    return {
+      command: "help",
+      topic: parseHelpTopic(rest[0])
+    };
   }
 
+  if (VERSION_FLAGS.has(command) || command === "version") {
+    return { command: "version" };
+  }
+
+  if (command === "repl") {
+    if (rest.some((arg) => isHelpFlag(arg))) {
+      return { command: "help", topic: "repl" };
+    }
+    return parseReplOptions(rest, baseCwd);
+  }
+
+  if (command === "doctor") {
+    if (rest.some((arg) => isHelpFlag(arg))) {
+      return { command: "help", topic: "doctor" };
+    }
+    return parseDoctorOptions(rest, baseCwd);
+  }
+
+  throw new Error(formatCliHelp("general"));
+}
+
+export function formatCliHelp(topic: HelpTopic = "general"): string {
+  if (topic === "repl") {
+    return [
+      "Usage:",
+      "  pi-dual repl [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--json-logs] [--verbose]",
+      "",
+      "Examples:",
+      "  pi-dual repl . --model-a openai/gpt-5.4 --model-b local-qwen/qwen3-coder-next",
+      "  npm run repl -- . --no-session",
+      "",
+      "Flags:",
+      "  --model-a MODEL",
+      "  --model-b MODEL",
+      "  --thinking-a off|low|medium|high",
+      "  --thinking-b off|low|medium|high",
+      "  --max-review-rounds N",
+      "  --agent-dir PATH",
+      "  --session-root PATH",
+      "  --mcp-config PATH   repeatable",
+      "  --no-mcp",
+      "  --no-session",
+      "  --json-logs",
+      "  --verbose",
+      ""
+    ].join("\n");
+  }
+
+  if (topic === "doctor") {
+    return [
+      "Usage:",
+      "  pi-dual doctor [cwd] [--model-a MODEL] [--model-b MODEL] [--agent-dir PATH] [--mcp-config PATH]... [--no-mcp]",
+      "",
+      "Examples:",
+      "  pi-dual doctor . --model-a openai/gpt-5.4 --model-b local-qwen/qwen3-coder-next",
+      "  npm run doctor -- . --model-b local-qwen/qwen3-coder-next",
+      "",
+      "The doctor command validates Node.js, your Pi config files, model overrides, and any MCP config paths before you launch the REPL.",
+      ""
+    ].join("\n");
+  }
+
+  return [
+    "pi-dual coordinator",
+    "",
+    "Usage:",
+    "  pi-dual <command> [options]",
+    "",
+    "Commands:",
+    "  repl      Start the interactive coordinator REPL",
+    "  doctor    Check whether this machine is ready to run the coordinator",
+    "  help      Show help",
+    "  version   Show the installed version",
+    "",
+    "Run `pi-dual help repl` or `pi-dual help doctor` for command-specific help.",
+    ""
+  ].join("\n");
+}
+
+function parseReplOptions(argv: string[], baseCwd: string): ReplCliOptions {
+  const [maybeCwd, ...rest] = argv;
   const options: ReplCliOptions = {
     command: "repl",
     cwd: maybeCwd && !maybeCwd.startsWith("--") ? resolve(baseCwd, maybeCwd) : baseCwd,
@@ -56,7 +168,7 @@ export function parseCliArgs(
     mcpConfigPaths: []
   };
 
-  const args = maybeCwd && !maybeCwd.startsWith("--") ? rest : [maybeCwd, ...rest].filter(Boolean) as string[];
+  const args = normalizeArgs(maybeCwd, rest);
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -103,6 +215,47 @@ export function parseCliArgs(
         break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  return options;
+}
+
+function parseDoctorOptions(argv: string[], baseCwd: string): DoctorCliOptions {
+  const [maybeCwd, ...rest] = argv;
+  const options: DoctorCliOptions = {
+    command: "doctor",
+    cwd: maybeCwd && !maybeCwd.startsWith("--") ? resolve(baseCwd, maybeCwd) : baseCwd,
+    mcpEnabled: true,
+    mcpConfigPaths: []
+  };
+
+  const args = normalizeArgs(maybeCwd, rest);
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg) {
+      continue;
+    }
+
+    switch (arg) {
+      case "--model-a":
+        options.modelA = requireValue(arg, args[++i]);
+        break;
+      case "--model-b":
+        options.modelB = requireValue(arg, args[++i]);
+        break;
+      case "--agent-dir":
+        options.agentDir = resolve(baseCwd, requireValue(arg, args[++i]));
+        break;
+      case "--no-mcp":
+        options.mcpEnabled = false;
+        break;
+      case "--mcp-config":
+        (options.mcpConfigPaths ??= []).push(resolve(baseCwd, requireValue(arg, args[++i])));
+        break;
+      default:
+        throw new Error(`Unknown argument: ${arg}\n\n${formatCliHelp("doctor")}`);
     }
   }
 
@@ -178,4 +331,21 @@ function parsePositiveInt(flag: string, value: string): number {
 
 function isRole(value: string): boolean {
   return value.toLowerCase() === "a" || value.toLowerCase() === "b";
+}
+
+function normalizeArgs(maybeCwd: string | undefined, rest: string[]): string[] {
+  return maybeCwd && !maybeCwd.startsWith("--")
+    ? rest
+    : ([maybeCwd, ...rest].filter(Boolean) as string[]);
+}
+
+function isHelpFlag(value: string | undefined): boolean {
+  return value !== undefined && HELP_FLAGS.has(value);
+}
+
+function parseHelpTopic(value: string | undefined): HelpTopic {
+  if (value === "repl" || value === "doctor") {
+    return value;
+  }
+  return "general";
 }

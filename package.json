@@ -1,8 +1,16 @@
 {
   "name": "pi-dual-agent-coordinator",
   "version": "0.1.0",
+  "description": "Coordinator-driven dual-agent workflow engine built on the Pi SDK",
   "private": true,
   "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "docs",
+    "examples",
+    ".nvmrc"
+  ],
   "bin": {
     "pi-dual": "./dist/src/index.js"
   },
@@ -10,9 +18,12 @@
     "node": ">=20.6.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc --noEmit -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.check.json",
+    "doctor": "node ./dist/src/index.js doctor",
     "repl": "node ./dist/src/index.js repl",
+    "prepare": "npm run build",
+    "start": "node ./dist/src/index.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
