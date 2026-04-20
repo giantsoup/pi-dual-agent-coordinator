@@ -257,10 +257,17 @@ npm test
 npm run build
 ```
 
+For the same verification used in CI:
+
+```bash
+npm run ci
+```
+
 ## Additional docs
 
 - [docs/review-loop.md](./docs/review-loop.md): workflow lifecycle, machine block schemas, provider compatibility notes, and troubleshooting
 - [docs/handoff-state-machine.md](./docs/handoff-state-machine.md): workflow state transitions and replay behavior
 - [docs/architecture-decisions.md](./docs/architecture-decisions.md): design rationale and system boundaries
+- [CONTRIBUTING.md](./CONTRIBUTING.md): local setup, validation, and pull request expectations
 - [docs/security-model.md](./docs/security-model.md): role separation and trust boundaries
 - [docs/implementation-backlog.md](./docs/implementation-backlog.md): future work
