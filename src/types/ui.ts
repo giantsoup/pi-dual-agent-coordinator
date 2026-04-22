@@ -44,10 +44,40 @@ export interface UiCommandPaletteState {
   open: boolean;
 }
 
+export interface UiRuntimeActivityTotals {
+  reads: number;
+  searches: number;
+  listings: number;
+  writes: number;
+  edits: number;
+  commands: number;
+  mcpCalls: number;
+  otherTools: number;
+}
+
+export interface UiRuntimeActivityHistoryItem {
+  id: string;
+  text: string;
+  detail?: string | undefined;
+  status: "active" | "completed" | "failed";
+  toolName?: string | undefined;
+  toolCallId?: string | undefined;
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface UiRuntimeActivityHistory {
+  sessionId: string;
+  totals: UiRuntimeActivityTotals;
+  recent: UiRuntimeActivityHistoryItem[];
+  updatedAt?: string | undefined;
+}
+
 export interface UiActivityState {
   active?: ActivitySnapshot | undefined;
   coordinator?: ActivitySnapshot | undefined;
   runtimes: Partial<Record<Role, ActivitySnapshot>>;
+  history: Partial<Record<Role, UiRuntimeActivityHistory>>;
 }
 
 interface UiConversationEntryBase {

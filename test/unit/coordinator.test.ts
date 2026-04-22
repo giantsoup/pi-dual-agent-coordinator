@@ -513,7 +513,7 @@ Proposed approach below.
     await coordinator.dispose();
   });
 
-  it("keeps conversation mode in planning while repairing a planning response", async () => {
+  it("keeps planning-turn repair inside the planning UI phase", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-dual-plan-repair-status-unit-"));
     const repairGate = createDeferred<void>();
 
@@ -556,15 +556,19 @@ Proposed approach below.
 
     await waitFor(
       () =>
-        coordinator.getStatus().phase === "repair" &&
+        coordinator.getStatus().phase === "planning" &&
+        coordinator.getStatus().coordinatorActivity ===
+          "repairing Agent A planning response" &&
         coordinator.getStatus().conversationMode === "planning"
     );
 
     const duringRepair = coordinator.getStatus();
-    expect(duringRepair.phase).toBe("repair");
+    expect(duringRepair.phase).toBe("planning");
     expect(duringRepair.conversationMode).toBe("planning");
     expect(duringRepair.activeRole).toBe("A");
     expect(duringRepair.activeWorkflowId).toBeUndefined();
+    expect(duringRepair.coordinatorActivity).toBe("repairing Agent A planning response");
+    expect(duringRepair.coordinatorReason).toContain("planning mode only accepts");
 
     repairGate.resolve();
     const result = await pending;

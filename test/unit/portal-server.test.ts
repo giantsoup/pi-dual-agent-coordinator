@@ -98,12 +98,23 @@ describe("portal server", () => {
       `http://${portal.host}:${portal.port}/api/state?token=secret-token`
     );
     const root = await fetch(portal.launchUrl);
+    const css = await fetch(`http://${portal.host}:${portal.port}/assets/portal.css`);
+    const js = await fetch(`http://${portal.host}:${portal.port}/assets/portal.js`);
+    const rootHtml = await root.text();
 
     expect(healthz.status).toBe(200);
     expect(unauthorized.status).toBe(401);
     expect(authorized.status).toBe(200);
     expect(root.status).toBe(200);
-    expect(await root.text()).toContain("window.__PI_DUAL_PORTAL__");
+    expect(css.status).toBe(200);
+    expect(js.status).toBe(200);
+    expect(rootHtml).toContain("window.__PI_DUAL_PORTAL__");
+    expect(rootHtml).toContain('<div id="root"></div>');
+    expect(root.headers.get("content-security-policy")).toContain(
+      "style-src 'self' 'unsafe-inline'"
+    );
+    expect(css.headers.get("content-type")).toContain("text/css");
+    expect(js.headers.get("content-type")).toContain("text/javascript");
   });
 
   it("rejects non-loopback hosts and malformed action payloads", async () => {
@@ -208,6 +219,72 @@ describe("portal server", () => {
     });
   });
 
+  it("adds SSE event ids, replays buffered events, and rejects cross-origin posts", async () => {
+    const portal = await startInteractivePortalServer({
+      service: new FakeInteractiveService(),
+      authToken: "secret-token",
+      heartbeatMs: 50
+    });
+    servers.push(portal);
+
+    const controllerA = new AbortController();
+    abortControllers.push(controllerA);
+    const eventsA = await fetch(
+      `http://${portal.host}:${portal.port}/api/events?token=secret-token&controllerId=controller-a`,
+      {
+        signal: controllerA.signal
+      }
+    );
+    expect(eventsA.status).toBe(200);
+    const readerA = eventsA.body!.getReader();
+    const firstEvent = await readSseEvent(readerA);
+
+    const accepted = await postAction(portal, "controller-a", {
+      type: "submit_input",
+      input: "buffer this"
+    });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.lastEventId).toBeGreaterThanOrEqual(firstEvent.eventId);
+    const secondEvent = await readSseEvent(readerA);
+    expect(secondEvent.eventId).toBe(firstEvent.eventId + 1);
+    expect(secondEvent.sentAt).toEqual(expect.any(String));
+
+    const controllerB = new AbortController();
+    abortControllers.push(controllerB);
+    const replay = await fetch(
+      `http://${portal.host}:${portal.port}/api/events?token=secret-token&controllerId=controller-b`,
+      {
+        headers: {
+          "Last-Event-ID": String(firstEvent.eventId)
+        },
+        signal: controllerB.signal
+      }
+    );
+    expect(replay.status).toBe(200);
+    const replayEvent = await readSseEvent(replay.body!.getReader());
+    expect(replayEvent.eventId).toBe(secondEvent.eventId);
+    expect(replayEvent.event.type).toBe("state_changed");
+
+    const rejectedOrigin = await fetch(
+      `http://${portal.host}:${portal.port}/api/actions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer secret-token",
+          "content-type": "application/json",
+          origin: "http://evil.invalid"
+        },
+        body: JSON.stringify({
+          controllerId: "controller-a",
+          action: {
+            type: "quit"
+          }
+        })
+      }
+    );
+    expect(rejectedOrigin.status).toBe(403);
+  });
+
   it("fails cleanly when the chosen port is already in use", async () => {
     const first = await startInteractivePortalServer({
       service: new FakeInteractiveService(),
@@ -254,6 +331,40 @@ async function fetchJson(url: string): Promise<any> {
   return response.json();
 }
 
+async function readSseEvent(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs = 1_500
+): Promise<any> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const { done, value } = await Promise.race([
+      reader.read(),
+      new Promise<{ done: false; value: Uint8Array }>((resolve) =>
+        setTimeout(() => resolve({ done: false, value: new Uint8Array() }), 20)
+      )
+    ]);
+    if (done) {
+      throw new Error("SSE stream closed before an event was received.");
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const dataLine = frame
+        .split("\n")
+        .find((line) => line.startsWith("data: "));
+      if (dataLine) {
+        return JSON.parse(dataLine.slice("data: ".length));
+      }
+    }
+  }
+
+  throw new Error("Timed out waiting for SSE event.");
+}
+
 async function waitFor(
   predicate: () => Promise<boolean>,
   timeoutMs = 1_500
@@ -286,7 +397,8 @@ function createState(): InteractiveUiState {
     },
     conversation: [],
     activity: {
-      runtimes: {}
+      runtimes: {},
+      history: {}
     },
     modal: { kind: "none" },
     commandPalette: {

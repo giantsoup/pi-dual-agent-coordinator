@@ -79,7 +79,8 @@ function createState(): InteractiveUiState {
     },
     conversation: [],
     activity: {
-      runtimes: {}
+      runtimes: {},
+      history: {}
     },
     modal: { kind: "none" },
     commandPalette: {

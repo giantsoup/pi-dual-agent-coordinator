@@ -16,9 +16,10 @@ describe("portal protocol serialization", () => {
     const dto = createPortalStateSnapshotDto(state, {
       controllerId: "controller-1",
       locked: true
-    });
+    }, 12);
 
     expect(dto.protocolVersion).toBe(INTERACTIVE_PORTAL_PROTOCOL_VERSION);
+    expect(dto.lastEventId).toBe(12);
     expect(dto.state).not.toBe(state);
     dto.state.notifications[0]!.message = "changed";
     expect(state.notifications[0]!.message).toBe("Plan available");
@@ -32,7 +33,8 @@ describe("portal protocol serialization", () => {
       controller: {
         controllerId: "controller-1",
         locked: true
-      }
+      },
+      lastEventId: 13
     });
     const event = createPortalStreamEventDto(
       {
@@ -43,9 +45,15 @@ describe("portal protocol serialization", () => {
       {
         controllerId: "controller-1",
         locked: true
-      }
+      },
+      14,
+      "2026-04-20T00:00:00.000Z"
     );
 
+    expect(response.protocolVersion).toBe(INTERACTIVE_PORTAL_PROTOCOL_VERSION);
+    expect(response.lastEventId).toBe(13);
+    expect(event.eventId).toBe(14);
+    expect(event.sentAt).toBe("2026-04-20T00:00:00.000Z");
     expect(response.state).not.toBe(state);
     expect(event.event.state).not.toBe(state);
     event.event.state.status.cwd = "/tmp/changed";
@@ -115,7 +123,8 @@ function createState(): InteractiveUiState {
     },
     conversation: [],
     activity: {
-      runtimes: {}
+      runtimes: {},
+      history: {}
     },
     modal: { kind: "none" },
     commandPalette: {

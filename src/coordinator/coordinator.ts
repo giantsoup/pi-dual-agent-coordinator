@@ -528,23 +528,35 @@ export class Coordinator {
       return first;
     }
 
-    this.setUiState("repair", "A");
-    const repairedResponse = await this.eventBridge.promptAndWaitForTurnEnd(
-      options.bindingA,
-      withPromptProvenance(
-        "planning_repair",
-        renderPlanningRepairMessage(first.reason),
-        {
-          requestId: options.requestId,
-          sessionRole: "A"
-        }
-      )
-    );
-    const repaired = resolvePlanningTurn(repairedResponse);
-    if (repaired.kind === "invalid_machine_block") {
-      throw new Error(`Agent A planning response remained invalid after repair: ${repaired.reason}`);
+    this.coordinatorActivity = {
+      role: "coordinator",
+      phase: "planning",
+      kind: "repair",
+      label: "repairing Agent A planning response",
+      reason: first.reason,
+      startedAt: new Date().toISOString()
+    };
+
+    try {
+      const repairedResponse = await this.eventBridge.promptAndWaitForTurnEnd(
+        options.bindingA,
+        withPromptProvenance(
+          "planning_repair",
+          renderPlanningRepairMessage(first.reason),
+          {
+            requestId: options.requestId,
+            sessionRole: "A"
+          }
+        )
+      );
+      const repaired = resolvePlanningTurn(repairedResponse);
+      if (repaired.kind === "invalid_machine_block") {
+        throw new Error(`Agent A planning response remained invalid after repair: ${repaired.reason}`);
+      }
+      return repaired;
+    } finally {
+      this.coordinatorActivity = undefined;
     }
-    return repaired;
   }
 
   private async executeApprovedPlan(options: {
@@ -614,7 +626,11 @@ export class Coordinator {
 
   private getConversationMode(): ConversationMode {
     const activeWorkflow = this.getActiveWorkflow();
-    return activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)
+    if (activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)) {
+      return "executing";
+    }
+
+    return this.uiState.phase === "execution" || this.uiState.phase === "review"
       ? "executing"
       : "planning";
   }

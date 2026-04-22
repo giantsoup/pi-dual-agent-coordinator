@@ -7,7 +7,7 @@ import {
 } from "node:http";
 
 import type { InteractiveCoordinatorService } from "../interactive/service.js";
-import { PORTAL_APP_CSS, PORTAL_APP_JS, renderPortalIndexHtml } from "./assets.js";
+import { loadPortalAssetBundle, renderPortalIndexHtml } from "./assets.js";
 import {
   createPortalActionResponseDto,
   createPortalBootstrapConfigDto,
@@ -22,6 +22,14 @@ interface SseClient {
   id: string;
   controllerId: string;
   response: ServerResponse;
+  heartbeat: NodeJS.Timeout;
+}
+
+interface ReplayEvent {
+  eventId: number;
+  sentAt: string;
+  event: UiEvent;
+  controller: PortalControllerLockSnapshot;
 }
 
 export interface StartPortalServerOptions {
@@ -29,6 +37,8 @@ export interface StartPortalServerOptions {
   host?: string;
   port?: number;
   authToken?: string;
+  heartbeatMs?: number;
+  replayBufferSize?: number;
   controllerIdFactory?(): string;
 }
 
@@ -53,10 +63,14 @@ export async function startInteractivePortalServer(
   const host = assertLoopbackHost(options.host ?? "127.0.0.1");
   const authToken = options.authToken ?? createPortalAuthToken();
   const controllerIdFactory = options.controllerIdFactory ?? randomUUID;
+  const heartbeatMs = options.heartbeatMs ?? 15_000;
+  const replayBufferSize = options.replayBufferSize ?? 500;
   const clients = new Map<string, SseClient>();
+  const replayBuffer: ReplayEvent[] = [];
   let controller: PortalControllerLockSnapshot = {
     locked: false
   };
+  let lastEventId = 0;
   let stopped = false;
 
   const server = createServer((request, response) => {
@@ -110,22 +124,24 @@ export async function startInteractivePortalServer(
     }
 
     if (method === "GET" && url.pathname === "/assets/portal.css") {
+      const assets = await loadPortalAssetBundle();
       response.writeHead(200, {
         "cache-control": "no-store",
         "content-type": "text/css; charset=utf-8",
         "x-content-type-options": "nosniff"
       });
-      response.end(PORTAL_APP_CSS);
+      response.end(assets.css);
       return;
     }
 
     if (method === "GET" && url.pathname === "/assets/portal.js") {
+      const assets = await loadPortalAssetBundle();
       response.writeHead(200, {
         "cache-control": "no-store",
         "content-type": "text/javascript; charset=utf-8",
         "x-content-type-options": "nosniff"
       });
-      response.end(PORTAL_APP_JS);
+      response.end(assets.js);
       return;
     }
 
@@ -145,7 +161,7 @@ export async function startInteractivePortalServer(
         "cache-control": "no-store",
         "content-type": "text/html; charset=utf-8",
         "content-security-policy":
-          `default-src 'self'; script-src 'self' 'nonce-${cspNonce}'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
+          `default-src 'self'; script-src 'self' 'nonce-${cspNonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
         "referrer-policy": "no-referrer",
         "x-content-type-options": "nosniff"
       });
@@ -157,7 +173,7 @@ export async function startInteractivePortalServer(
       writeJson(
         response,
         200,
-        createPortalStateSnapshotDto(options.service.getState(), controller)
+        createPortalStateSnapshotDto(options.service.getState(), controller, lastEventId)
       );
       return;
     }
@@ -169,20 +185,24 @@ export async function startInteractivePortalServer(
         return;
       }
 
-      const client: SseClient = {
-        id: randomUUID(),
-        controllerId,
-        response
-      };
-      clients.set(client.id, client);
-      attachSseCleanup(request, client);
-
       response.writeHead(200, {
         "cache-control": "no-store",
         connection: "keep-alive",
         "content-type": "text/event-stream; charset=utf-8",
         "x-content-type-options": "nosniff"
       });
+      response.write(": connected\n\n");
+
+      const client: SseClient = {
+        id: randomUUID(),
+        controllerId,
+        response,
+        heartbeat: setInterval(() => {
+          response.write(`: heartbeat ${new Date().toISOString()}\n\n`);
+        }, heartbeatMs)
+      };
+      clients.set(client.id, client);
+      attachSseCleanup(request, client);
 
       if (!controller.locked) {
         controller = {
@@ -191,19 +211,13 @@ export async function startInteractivePortalServer(
         };
         broadcastStateEcho();
       } else {
-        sendUiEvent(
-          response,
-          {
-            type: "state_changed",
-            state: options.service.getState()
-          },
-          controller
-        );
+        replayOrSendSnapshot(response, readLastEventId(request, url));
       }
       return;
     }
 
     if (method === "POST" && url.pathname === "/api/actions") {
+      validatePostOrigin(request, host);
       let body;
       try {
         body = parsePortalActionRequestDto(await readJsonBody(request));
@@ -221,6 +235,7 @@ export async function startInteractivePortalServer(
             accepted: false,
             state: options.service.getState(),
             controller,
+            lastEventId,
             error:
               "Open /api/events from this browser tab before sending actions so the controller lock can be tracked."
           })
@@ -236,6 +251,7 @@ export async function startInteractivePortalServer(
             accepted: false,
             state: options.service.getState(),
             controller,
+            lastEventId,
             error: "Another browser tab currently holds the controller lock."
           })
         );
@@ -257,7 +273,8 @@ export async function startInteractivePortalServer(
         createPortalActionResponseDto({
           accepted: true,
           state: options.service.getState(),
-          controller
+          controller,
+          lastEventId
         })
       );
       return;
@@ -273,6 +290,7 @@ export async function startInteractivePortalServer(
         return;
       }
       released = true;
+      clearInterval(client.heartbeat);
       clients.delete(client.id);
       if (
         controller.locked &&
@@ -291,8 +309,9 @@ export async function startInteractivePortalServer(
   }
 
   function broadcastUiEvent(event: UiEvent): void {
+    const replayEvent = appendReplayEvent(event, controller);
     for (const client of clients.values()) {
-      sendUiEvent(client.response, event, controller);
+      sendUiEvent(client.response, replayEvent);
     }
   }
 
@@ -311,6 +330,7 @@ export async function startInteractivePortalServer(
     unsubscribe();
 
     for (const client of clients.values()) {
+      clearInterval(client.heartbeat);
       client.response.end();
     }
     clients.clear();
@@ -325,14 +345,77 @@ export async function startInteractivePortalServer(
     launchUrl: `http://${host}:${address.port}/?token=${encodeURIComponent(authToken)}`,
     stop
   };
+
+  function appendReplayEvent(
+    event: UiEvent,
+    eventController: PortalControllerLockSnapshot
+  ): ReplayEvent {
+    const replayEvent: ReplayEvent = {
+      eventId: ++lastEventId,
+      sentAt: new Date().toISOString(),
+      event,
+      controller: {
+        ...eventController
+      }
+    };
+    replayBuffer.push(replayEvent);
+    while (replayBuffer.length > replayBufferSize) {
+      replayBuffer.shift();
+    }
+    return replayEvent;
+  }
+
+  function replayOrSendSnapshot(
+    response: ServerResponse,
+    clientLastEventId: number | undefined
+  ): void {
+    if (clientLastEventId === undefined || replayBuffer.length === 0) {
+      sendUiEvent(
+        response,
+        appendReplayEvent(
+          {
+            type: "state_changed",
+            state: options.service.getState()
+          },
+          controller
+        )
+      );
+      return;
+    }
+
+    const oldestEventId = replayBuffer[0]?.eventId;
+    if (oldestEventId !== undefined && clientLastEventId < oldestEventId - 1) {
+      sendUiEvent(
+        response,
+        appendReplayEvent(
+          {
+            type: "state_changed",
+            state: options.service.getState()
+          },
+          controller
+        )
+      );
+      return;
+    }
+
+    for (const replayEvent of replayBuffer) {
+      if (replayEvent.eventId > clientLastEventId) {
+        sendUiEvent(response, replayEvent);
+      }
+    }
+  }
 }
 
-function sendUiEvent(
-  response: ServerResponse,
-  event: UiEvent,
-  controller: PortalControllerLockSnapshot
-): void {
-  const payload = JSON.stringify(createPortalStreamEventDto(event, controller));
+function sendUiEvent(response: ServerResponse, replayEvent: ReplayEvent): void {
+  const payload = JSON.stringify(
+    createPortalStreamEventDto(
+      replayEvent.event,
+      replayEvent.controller,
+      replayEvent.eventId,
+      replayEvent.sentAt
+    )
+  );
+  response.write(`id: ${replayEvent.eventId}\n`);
   response.write(`data: ${payload}\n\n`);
 }
 
@@ -353,6 +436,44 @@ function hasValidAuthToken(
 function readControllerId(url: URL): string | undefined {
   const controllerId = url.searchParams.get("controllerId");
   return controllerId?.trim() ? controllerId : undefined;
+}
+
+function readLastEventId(request: IncomingMessage, url: URL): number | undefined {
+  const rawHeader = request.headers["last-event-id"];
+  const rawValue =
+    typeof rawHeader === "string"
+      ? rawHeader
+      : Array.isArray(rawHeader)
+        ? rawHeader[0]
+        : url.searchParams.get("lastEventId") ?? undefined;
+  if (!rawValue) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function validatePostOrigin(request: IncomingMessage, expectedHost: string): void {
+  const origin = request.headers.origin;
+  if (!origin) {
+    return;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new PortalHttpError(403, "Invalid request origin.");
+  }
+
+  const requestHost = request.headers.host;
+  if (!requestHost || parsed.host !== requestHost || parsed.protocol !== "http:") {
+    throw new PortalHttpError(403, "Invalid request origin.");
+  }
+
+  assertLoopbackHost(parsed.hostname === "[::1]" ? "::1" : parsed.hostname);
+  assertLoopbackHost(expectedHost);
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {

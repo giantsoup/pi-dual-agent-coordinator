@@ -15,6 +15,7 @@ export interface PortalControllerLockSnapshot {
 
 export interface PortalStateSnapshotDto {
   protocolVersion: typeof INTERACTIVE_PORTAL_PROTOCOL_VERSION;
+  lastEventId: number;
   state: InteractiveUiState;
   controller: PortalControllerLockSnapshot;
 }
@@ -25,6 +26,8 @@ export interface PortalActionRequestDto {
 }
 
 export interface PortalActionResponseDto {
+  protocolVersion: typeof INTERACTIVE_PORTAL_PROTOCOL_VERSION;
+  lastEventId: number;
   accepted: boolean;
   state: InteractiveUiState;
   error?: string | undefined;
@@ -33,6 +36,8 @@ export interface PortalActionResponseDto {
 
 export interface PortalStreamEventDto {
   protocolVersion: typeof INTERACTIVE_PORTAL_PROTOCOL_VERSION;
+  eventId: number;
+  sentAt: string;
   event: UiEvent;
   controller: PortalControllerLockSnapshot;
 }
@@ -66,10 +71,12 @@ export function serializePortalControllerLockSnapshot(
 
 export function createPortalStateSnapshotDto(
   state: InteractiveUiState,
-  controller: PortalControllerLockSnapshot
+  controller: PortalControllerLockSnapshot,
+  lastEventId: number
 ): PortalStateSnapshotDto {
   return {
     protocolVersion: INTERACTIVE_PORTAL_PROTOCOL_VERSION,
+    lastEventId,
     state: serializeInteractiveUiState(state),
     controller: serializePortalControllerLockSnapshot(controller)
   };
@@ -79,9 +86,12 @@ export function createPortalActionResponseDto(input: {
   accepted: boolean;
   state: InteractiveUiState;
   controller: PortalControllerLockSnapshot;
+  lastEventId: number;
   error?: string | undefined;
 }): PortalActionResponseDto {
   return {
+    protocolVersion: INTERACTIVE_PORTAL_PROTOCOL_VERSION,
+    lastEventId: input.lastEventId,
     accepted: input.accepted,
     state: serializeInteractiveUiState(input.state),
     controller: serializePortalControllerLockSnapshot(input.controller),
@@ -91,10 +101,14 @@ export function createPortalActionResponseDto(input: {
 
 export function createPortalStreamEventDto(
   event: UiEvent,
-  controller: PortalControllerLockSnapshot
+  controller: PortalControllerLockSnapshot,
+  eventId: number,
+  sentAt = new Date().toISOString()
 ): PortalStreamEventDto {
   return {
     protocolVersion: INTERACTIVE_PORTAL_PROTOCOL_VERSION,
+    eventId,
+    sentAt,
     event: serializeUiEvent(event),
     controller: serializePortalControllerLockSnapshot(controller)
   };

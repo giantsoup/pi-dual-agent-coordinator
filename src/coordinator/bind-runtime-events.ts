@@ -100,7 +100,7 @@ export class RuntimeEventBridge {
     };
   }
 
-  public async promptAndWaitForTurnEnd(
+  public promptAndWaitForTurnEnd(
     binding: RoleRuntimeBinding,
     text: string,
     options?: {
@@ -112,8 +112,13 @@ export class RuntimeEventBridge {
     this.bufferedTurnEnds.set(sessionKey, []);
     this.pseudoToolAttempts.delete(sessionKey);
     const turnEndPromise = this.awaitNextTurnEnd(sessionKey);
-    await binding.session.prompt(text, options);
-    return turnEndPromise;
+    void turnEndPromise.catch(() => undefined);
+    const pending = (async () => {
+      await binding.session.prompt(text, options);
+      return await turnEndPromise;
+    })();
+    void pending.catch(() => undefined);
+    return pending;
   }
 
   public async waitForIdle(): Promise<void> {

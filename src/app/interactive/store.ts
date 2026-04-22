@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
+import {
+  applyActivityHistoryEvent,
+  syncActivityHistoryWithStatus
+} from "../activity-history.js";
 import type { ActivitySnapshot, ActivityUpdate } from "../activity-summary.js";
+import type { NormalizedTelemetryEvent } from "../../types/telemetry.js";
 import type { CoordinatorStatusSnapshot } from "../../types/status.js";
 import type {
   InteractiveUiState,
@@ -37,6 +42,10 @@ interface StoreActionMap {
   apply_activity_update: {
     update: ActivityUpdate;
   };
+  apply_activity_history_event: {
+    event: NormalizedTelemetryEvent;
+    snapshot?: ActivitySnapshot | undefined;
+  };
   set_notification: {
     notification?: UiNotification | undefined;
   };
@@ -64,7 +73,8 @@ export function createInitialInteractiveUiState(
     status,
     conversation: [],
     activity: {
-      runtimes: {}
+      runtimes: {},
+      history: {}
     },
     pendingPlan: status.pendingPlan
       ? {
@@ -90,6 +100,7 @@ export function interactiveUiReducer(
       return {
         ...state,
         status: action.status,
+        activity: syncActivityHistoryWithStatus(state.activity, action.status),
         pendingPlan: action.status.pendingPlan
           ? {
               plan: action.status.pendingPlan,
@@ -149,6 +160,11 @@ export function interactiveUiReducer(
       return {
         ...state,
         activity: applyActivityUpdate(state.activity, action.update)
+      };
+    case "apply_activity_history_event":
+      return {
+        ...state,
+        activity: applyActivityHistoryEvent(state.activity, action.event, action.snapshot)
       };
     case "set_notification":
       return {

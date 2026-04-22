@@ -1,0 +1,180 @@
+.portal-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  min-height: 100vh;
+  width: min(1680px, 100vw);
+  margin: 0 auto;
+  padding: var(--space-3);
+}
+
+.app-header,
+.pane,
+.command-dock,
+.notice-banner {
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.app-header {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 68px;
+  padding: var(--space-3) var(--space-4);
+}
+
+.app-header__main {
+  min-width: 0;
+}
+
+.path-line {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.split-pane {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 29vw);
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.transcript-viewport {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3);
+}
+
+.inspector-pane {
+  min-height: 0;
+}
+
+.tabs {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.tabs-content {
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3);
+}
+
+.inspector-stack {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+}
+
+.command-dock {
+  display: grid;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.composer-grid {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+}
+
+.composer-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.composer-hints {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.plan-actions-band {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(18, 27, 36, 0.34);
+}
+
+.drawer-shell {
+  position: fixed;
+  inset: var(--space-3) var(--space-3) var(--space-3) auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(720px, calc(100vw - 24px));
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgba(18, 27, 36, 0.18);
+}
+
+.drawer-body {
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+@media (max-width: 1040px) {
+  .app-header {
+    grid-template-columns: 1fr;
+  }
+
+  .split-pane {
+    grid-template-columns: 1fr;
+  }
+
+  .inspector-pane {
+    min-height: 520px;
+  }
+}
+
+@media (max-width: 640px) {
+  .portal-shell {
+    padding: var(--space-2);
+  }
+
+  .app-header,
+  .section-header,
+  .command-dock {
+    align-items: stretch;
+  }
+
+  .section-header,
+  .composer-footer,
+  .runtime-row__head,
+  .mcp-server__head {
+    flex-direction: column;
+  }
+
+  .toolbar {
+    width: 100%;
+  }
+
+  .ui-button {
+    min-width: 0;
+  }
+}

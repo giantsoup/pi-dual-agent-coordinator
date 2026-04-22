@@ -384,7 +384,7 @@ describe("bootstrap repl", () => {
     const service = createService({
       status: createStatusSnapshot(),
       conversation: [],
-      activity: { runtimes: {} },
+      activity: { runtimes: {}, history: {} },
       modal: { kind: "none" },
       commandPalette: { open: false },
       notifications: [],

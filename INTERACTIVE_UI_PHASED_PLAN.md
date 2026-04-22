@@ -2,8 +2,10 @@
 
 ## Status
 - Created to preserve the implementation plan in repo history.
-- As of 2026-04-20, Phases 1-3 are implemented.
-- Remaining work is primarily Phase 4 and Phase 5.
+- As of 2026-04-20, Phases 1-5 are implemented.
+- Phase 5 ships the localhost React SPA on top of the shared interactive service and portal transport.
+- As of 2026-04-22, the portal frontend is a Vite + React + TypeScript SPA with Radix Dialog/Tooltip/Tabs primitives, lucide icons, flat operations-console styling, actor/status color tokens, MCP/runtime/metrics inspector panels, and Playwright smoke coverage.
+- The portal SSE protocol now includes event ids, timestamps, heartbeat comments, a bounded replay buffer, `Last-Event-ID` handling, client snapshot fallback on replay gaps, POST origin validation, and the existing single-controller mutation lock.
 
 ## Summary
 Refactor the current readline-driven `repl` into a headless interactive application core with a shared UI state/event contract, then build a production-grade `@mariozechner/pi-tui` interface on top of it. After that shared contract is stable, add a localhost-only web transport and a React SPA portal without rewriting coordinator logic.
@@ -206,6 +208,8 @@ Refactor the current readline-driven `repl` into a headless interactive applicat
 - The browser portal can perform the same operator workflows as the TUI.
 - TUI and web render from the same state/event model.
 - No duplicated orchestration logic exists in the frontend.
+- The production web UI is split into a portal client, session hook, internal component layer, feature panels, and token/layout/component CSS files under `ui/web/src`.
+- Browser QA is available through `npm run web:e2e`, which builds the Vite assets and runs Playwright against a mock portal protocol server.
 
 ## Test Plan
 - Unit:

@@ -102,6 +102,12 @@ class FakeCoordinator {
     this.disposeCalls += 1;
   }
 
+  public emitTelemetryEvent(event: NormalizedTelemetryEvent): void {
+    for (const listener of this.telemetryListeners) {
+      listener(event);
+    }
+  }
+
   public emitRuntimeUiEvent(event: RuntimeUiBridgeEvent): void {
     for (const listener of this.runtimeUiListeners) {
       listener(event);
@@ -218,6 +224,47 @@ describe("interactive coordinator service", () => {
     await service.dispose();
 
     expect(coordinator.disposeCalls).toBe(1);
+  });
+
+  it("rolls up runtime tool history from telemetry and preserves it after workflow finalization", async () => {
+    const coordinator = new FakeCoordinator();
+    const service = new HeadlessInteractiveCoordinatorService(coordinator);
+    await service.start();
+
+    coordinator.emitTelemetryEvent({
+      role: "A",
+      sessionId: "A-session-1",
+      eventType: "pi.tool_execution_start",
+      timestamp: "2026-04-20T00:00:00.000Z",
+      details: {
+        toolName: "read",
+        toolCallId: "tool-read-1"
+      }
+    });
+    coordinator.emitTelemetryEvent({
+      role: "A",
+      sessionId: "A-session-1",
+      eventType: "pi.tool_execution_end",
+      timestamp: "2026-04-20T00:00:01.000Z",
+      details: {
+        toolName: "read",
+        toolCallId: "tool-read-1",
+        isError: false
+      }
+    });
+    coordinator.emitTelemetryEvent({
+      role: "A",
+      sessionId: "A-session-1",
+      eventType: "workflow.finalized",
+      timestamp: "2026-04-20T00:00:02.000Z",
+      details: {}
+    });
+
+    expect(service.getState().activity.history.A?.totals.reads).toBe(1);
+    expect(service.getState().activity.history.A?.recent[0]?.status).toBe("completed");
+    expect(service.getState().activity.runtimes).toEqual({});
+
+    await service.dispose();
   });
 });
 

@@ -355,16 +355,31 @@ export class HeadlessInteractiveCoordinatorService
         type: "apply_activity_update",
         update
       });
+      this.updateState({
+        type: "apply_activity_history_event",
+        event,
+        snapshot: update.snapshot
+      });
       this.emitUiEvent({
         type: "activity_changed",
         state: this.state,
         activity: this.state.activity
       });
+    } else {
+      this.updateState({
+        type: "apply_activity_history_event",
+        event
+      });
     }
     if (WORKFLOW_TERMINAL_EVENTS.has(event.eventType)) {
       this.updateState({
         type: "replace_activity",
-        activity: { runtimes: {} }
+        activity: {
+          ...this.state.activity,
+          active: undefined,
+          coordinator: undefined,
+          runtimes: {}
+        }
       });
       this.emitUiEvent({
         type: "activity_changed",

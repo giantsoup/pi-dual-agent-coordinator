@@ -14,6 +14,7 @@ import {
   INTERACTIVE_COMMAND_HINT,
   INTERACTIVE_TUI_KEY_HINT
 } from "../interactive/compat.js";
+import { renderRuntimeActivitySummary } from "../activity-history.js";
 import type { InteractiveCoordinatorService } from "../interactive/service.js";
 import { renderConversationEntry, renderPendingPlan } from "../interactive/presentation.js";
 import type { InteractiveUiState, UiModalState } from "../../types/ui.js";
@@ -33,6 +34,9 @@ export interface CoordinatorTuiAppOptions {
   onExit(): void;
 }
 
+type PaneFocus = "editor" | "transcript" | "activity";
+type PanelAlign = "bottom" | "top";
+
 export class CoordinatorTuiApp implements Component, Focusable {
   public focused = false;
 
@@ -42,6 +46,9 @@ export class CoordinatorTuiApp implements Component, Focusable {
   private modalScrollOffset = 0;
   private transientHint: string | undefined;
   private submitting = false;
+  private paneFocus: PaneFocus = "editor";
+  private transcriptScrollOffset = 0;
+  private activityScrollOffset = 0;
 
   public constructor(
     private readonly tui: TUI,
@@ -100,10 +107,25 @@ export class CoordinatorTuiApp implements Component, Focusable {
         this.lastModalKey = undefined;
         void this.service.dispatch({ type: "close_modal" });
         this.tui.requestRender(true);
+      } else if (this.paneFocus !== "editor") {
+        this.paneFocus = "editor";
+        this.tui.requestRender(true);
       } else if (this.transientHint) {
         this.transientHint = undefined;
         this.tui.requestRender();
       }
+      return;
+    }
+
+    if (data === "\t") {
+      this.cyclePaneFocus(1);
+      this.tui.requestRender(true);
+      return;
+    }
+
+    if (data === "\u001b[Z") {
+      this.cyclePaneFocus(-1);
+      this.tui.requestRender(true);
       return;
     }
 
@@ -114,17 +136,26 @@ export class CoordinatorTuiApp implements Component, Focusable {
       return;
     }
 
+    if (this.paneFocus !== "editor") {
+      if (this.handlePaneInput(data, state)) {
+        this.tui.requestRender(true);
+        return;
+      }
+      this.paneFocus = "editor";
+    }
+
     this.editor.handleInput(data);
     this.tui.requestRender();
   }
 
   public render(width: number): string[] {
     const state = this.service.getState();
-    this.editor.focused = this.focused && state.modal.kind === "none";
+    this.editor.focused =
+      this.focused && state.modal.kind === "none" && this.paneFocus === "editor";
     this.syncModalState(state);
 
     const headerLines = renderHeader(state, width);
-    const footerLines = renderFooter(state, width, this.transientHint);
+    const footerLines = renderFooter(state, width, this.transientHint, this.paneFocus);
     const editorLines = this.editor.render(width);
     const availableMainHeight = Math.max(
       8,
@@ -132,8 +163,16 @@ export class CoordinatorTuiApp implements Component, Focusable {
     );
     const mainLines =
       width >= 100
-        ? renderSplitMain(state, width, availableMainHeight)
-        : renderStackedMain(state, width, availableMainHeight);
+        ? renderSplitMain(state, width, availableMainHeight, {
+            paneFocus: this.paneFocus,
+            transcriptScrollOffset: this.transcriptScrollOffset,
+            activityScrollOffset: this.activityScrollOffset
+          })
+        : renderStackedMain(state, width, availableMainHeight, {
+            paneFocus: this.paneFocus,
+            transcriptScrollOffset: this.transcriptScrollOffset,
+            activityScrollOffset: this.activityScrollOffset
+          });
 
     let lines = [...headerLines, ...mainLines, ...editorLines, ...footerLines];
     lines = normalizeScreen(lines, width, this.terminal.rows);
@@ -167,6 +206,14 @@ export class CoordinatorTuiApp implements Component, Focusable {
     this.lastCtrlCAt = now;
     this.transientHint = "Press Ctrl+C again to exit.";
     this.tui.requestRender(true);
+  }
+
+  private cyclePaneFocus(direction: 1 | -1): void {
+    const order: PaneFocus[] = ["editor", "transcript", "activity"];
+    const currentIndex = order.indexOf(this.paneFocus);
+    const nextIndex = (currentIndex + direction + order.length) % order.length;
+    this.paneFocus = order[nextIndex] ?? "editor";
+    this.transientHint = undefined;
   }
 
   private syncModalState(state: InteractiveUiState): void {
@@ -219,6 +266,78 @@ export class CoordinatorTuiApp implements Component, Focusable {
 
     return previous !== this.modalScrollOffset;
   }
+
+  private handlePaneInput(data: string, state: InteractiveUiState): boolean {
+    if (data === "\r" || data === "\n" || data === "\u001b") {
+      this.paneFocus = "editor";
+      return true;
+    }
+
+    const metrics = this.getScrollablePaneMetrics(state);
+    const currentOffset =
+      this.paneFocus === "transcript" ? this.transcriptScrollOffset : this.activityScrollOffset;
+    const maxOffset =
+      this.paneFocus === "transcript"
+        ? metrics.transcriptViewport.maxOffset
+        : metrics.activityViewport.maxOffset;
+    const pageSize =
+      this.paneFocus === "transcript"
+        ? metrics.transcriptPageSize
+        : metrics.activityPageSize;
+    const nextOffset = getNextScrollOffset(
+      data,
+      currentOffset,
+      maxOffset,
+      pageSize,
+      this.paneFocus === "transcript" ? "bottom" : "top"
+    );
+    if (nextOffset === undefined || nextOffset === currentOffset) {
+      return nextOffset !== undefined;
+    }
+
+    if (this.paneFocus === "transcript") {
+      this.transcriptScrollOffset = nextOffset;
+    } else {
+      this.activityScrollOffset = nextOffset;
+    }
+    return true;
+  }
+
+  private getScrollablePaneMetrics(state: InteractiveUiState): {
+    transcriptViewport: PanelViewport;
+    activityViewport: PanelViewport;
+    transcriptPageSize: number;
+    activityPageSize: number;
+  } {
+    const width = this.terminal.columns;
+    const headerLines = 3;
+    const footerLines = 2;
+    const editorLines = this.editor.render(width);
+    const availableMainHeight = Math.max(
+      8,
+      this.terminal.rows - headerLines - footerLines - editorLines.length
+    );
+    const layout = calculateMainLayoutMetrics(width, availableMainHeight);
+    const transcriptBody = renderTranscript(state, layout.transcriptWidth - 2);
+    const activityBody = renderActivity(state, layout.activityWidth - 2);
+
+    return {
+      transcriptViewport: selectPanelViewport(
+        transcriptBody,
+        layout.transcriptHeight,
+        "bottom",
+        this.transcriptScrollOffset
+      ),
+      activityViewport: selectPanelViewport(
+        activityBody,
+        layout.activityHeight,
+        "top",
+        this.activityScrollOffset
+      ),
+      transcriptPageSize: panelPageSize(layout.transcriptHeight),
+      activityPageSize: panelPageSize(layout.activityHeight)
+    };
+  }
 }
 
 function renderHeader(state: InteractiveUiState, width: number): string[] {
@@ -259,11 +378,14 @@ function renderHeader(state: InteractiveUiState, width: number): string[] {
 function renderFooter(
   state: InteractiveUiState,
   width: number,
-  transientHint?: string
+  transientHint: string | undefined,
+  paneFocus: PaneFocus
 ): string[] {
   const baseHint =
     transientHint ??
-    `${INTERACTIVE_TUI_KEY_HINT} | ${INTERACTIVE_COMMAND_HINT}`;
+    (paneFocus === "editor"
+      ? `${INTERACTIVE_TUI_KEY_HINT} | ${INTERACTIVE_COMMAND_HINT} | Tab focus panes`
+      : "Tab next pane | Shift+Tab prev pane | Up/Down scroll | PgUp/PgDn page | Home/End | Enter editor");
   const statusHint =
     state.notification?.message ??
     state.lastError?.message ??
@@ -276,25 +398,43 @@ function renderFooter(
 function renderSplitMain(
   state: InteractiveUiState,
   width: number,
-  height: number
+  height: number,
+  options: {
+    paneFocus: PaneFocus;
+    transcriptScrollOffset: number;
+    activityScrollOffset: number;
+  }
 ): string[] {
-  const rightWidth = Math.max(30, Math.floor(width * 0.34));
-  const leftWidth = width - rightWidth - 1;
+  const layout = calculateMainLayoutMetrics(width, height);
+  const transcriptBody = renderTranscript(state, layout.transcriptWidth - 2);
+  const transcriptViewport = selectPanelViewport(
+    transcriptBody,
+    layout.transcriptHeight,
+    "bottom",
+    options.transcriptScrollOffset
+  );
+  const activityBody = renderActivity(state, layout.activityWidth - 2);
+  const activityViewport = selectPanelViewport(
+    activityBody,
+    layout.activityHeight,
+    "top",
+    options.activityScrollOffset
+  );
   const transcriptPanel = renderPanel(
-    "Transcript",
-    renderTranscript(state, leftWidth - 2),
-    leftWidth,
-    height
+    formatPanelTitle("Transcript", transcriptViewport, options.paneFocus === "transcript"),
+    transcriptViewport.lines,
+    layout.transcriptWidth,
+    layout.transcriptHeight
   );
   const activityPanel = renderPanel(
-    "Activity",
-    renderActivity(state, rightWidth - 2),
-    rightWidth,
-    height
+    formatPanelTitle("Activity", activityViewport, options.paneFocus === "activity"),
+    activityViewport.lines,
+    layout.activityWidth,
+    layout.activityHeight
   );
 
   return transcriptPanel.map((line, index) => {
-    const right = activityPanel[index] ?? " ".repeat(rightWidth);
+    const right = activityPanel[index] ?? " ".repeat(layout.activityWidth);
     return `${line} ${right}`;
   });
 }
@@ -302,13 +442,41 @@ function renderSplitMain(
 function renderStackedMain(
   state: InteractiveUiState,
   width: number,
-  height: number
+  height: number,
+  options: {
+    paneFocus: PaneFocus;
+    transcriptScrollOffset: number;
+    activityScrollOffset: number;
+  }
 ): string[] {
-  const transcriptHeight = Math.max(6, Math.floor(height * 0.65));
-  const activityHeight = Math.max(4, height - transcriptHeight);
+  const layout = calculateMainLayoutMetrics(width, height);
+  const transcriptBody = renderTranscript(state, layout.transcriptWidth - 2);
+  const transcriptViewport = selectPanelViewport(
+    transcriptBody,
+    layout.transcriptHeight,
+    "bottom",
+    options.transcriptScrollOffset
+  );
+  const activityBody = renderActivity(state, layout.activityWidth - 2);
+  const activityViewport = selectPanelViewport(
+    activityBody,
+    layout.activityHeight,
+    "top",
+    options.activityScrollOffset
+  );
   return [
-    ...renderPanel("Transcript", renderTranscript(state, width - 2), width, transcriptHeight),
-    ...renderPanel("Activity", renderActivity(state, width - 2), width, activityHeight)
+    ...renderPanel(
+      formatPanelTitle("Transcript", transcriptViewport, options.paneFocus === "transcript"),
+      transcriptViewport.lines,
+      layout.transcriptWidth,
+      layout.transcriptHeight
+    ),
+    ...renderPanel(
+      formatPanelTitle("Activity", activityViewport, options.paneFocus === "activity"),
+      activityViewport.lines,
+      layout.activityWidth,
+      layout.activityHeight
+    )
   ];
 }
 
@@ -334,11 +502,11 @@ function renderTranscript(state: InteractiveUiState, width: number): string[] {
 
 function renderActivity(state: InteractiveUiState, width: number): string[] {
   const lines: string[] = [];
-  const active = state.activity.active;
-  if (active) {
-    lines.push(`Now: ${active.label}${active.target ? ` ${active.target}` : ""}`);
-    if (active.reason) {
-      lines.push(...wrapBlock(`Why: ${active.reason}`, width));
+  const summary = selectPrimaryActivitySummary(state);
+  if (summary) {
+    lines.push(`Now: ${summary.activity}`);
+    if (summary.reason) {
+      lines.push(...wrapBlock(`Why: ${summary.reason}`, width));
     }
     lines.push("");
   }
@@ -348,15 +516,23 @@ function renderActivity(state: InteractiveUiState, width: number): string[] {
     lines.push("");
   }
 
-  for (const runtime of state.status.runtimes) {
+  for (const runtime of orderRuntimesForActivity(state.status)) {
+    const history = state.activity.history[runtime.role];
     lines.push(`Agent ${runtime.role}: ${runtime.modelDisplay}`);
     lines.push(`  session ${runtime.sessionId}`);
     lines.push(`  health ${runtime.healthy ? "ok" : "down"}`);
-    if (runtime.currentActivity) {
-      lines.push(...wrapBlock(`  ${runtime.currentActivity}`, width));
-    }
-    if (runtime.currentReason) {
-      lines.push(...wrapBlock(`  reason ${runtime.currentReason}`, width));
+    lines.push(...wrapBlock(`  summary ${renderRuntimeActivitySummary(history).join(", ")}`, width));
+    lines.push("  recent");
+    if (history?.recent.length) {
+      for (const item of history.recent) {
+        const prefix =
+          item.status === "active" ? "  * " : item.status === "failed" ? "  ! " : "  - ";
+        lines.push(...wrapBlock(`${prefix}${item.text}`, width));
+      }
+    } else if (runtime.currentActivity) {
+      lines.push(...wrapBlock(`  * ${runtime.currentActivity}`, width));
+    } else {
+      lines.push("  - no recent tool activity");
     }
     lines.push("");
   }
@@ -370,20 +546,19 @@ function renderActivity(state: InteractiveUiState, width: number): string[] {
 
 function renderPanel(
   title: string,
-  bodyLines: string[],
+  visibleLines: string[],
   width: number,
   height: number
 ): string[] {
   if (width < 4 || height < 3) {
-    return normalizeScreen(bodyLines, width, height);
+    return normalizeScreen(visibleLines, width, height);
   }
 
   const innerWidth = width - 2;
   const header = truncateToWidth(` ${title} `, innerWidth, "...", true);
-  const visibleBody = bodyLines.slice(Math.max(0, bodyLines.length - Math.max(1, height - 2)));
   const lines = [
     `+${header}+`,
-    ...visibleBody.map((line) => `|${padLine(line, innerWidth)}|`)
+    ...visibleLines.map((line) => `|${padLine(line, innerWidth)}|`)
   ];
 
   while (lines.length < height - 1) {
@@ -391,6 +566,41 @@ function renderPanel(
   }
   lines.push(`+${"-".repeat(innerWidth)}+`);
   return lines.slice(0, height);
+}
+
+export interface PanelViewport {
+  lines: string[];
+  startLine: number;
+  endLine: number;
+  totalLines: number;
+  maxOffset: number;
+  scrollOffset: number;
+}
+
+export function selectPanelViewport(
+  bodyLines: string[],
+  height: number,
+  align: PanelAlign,
+  scrollOffset = 0
+): PanelViewport {
+  const visibleHeight = Math.max(1, height - 2);
+  const totalLines = bodyLines.length;
+  const maxOffset = Math.max(0, totalLines - visibleHeight);
+  const clampedOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
+  const startLine =
+    align === "top"
+      ? clampedOffset
+      : Math.max(0, totalLines - visibleHeight - clampedOffset);
+  const endLine = Math.min(totalLines, startLine + visibleHeight);
+
+  return {
+    lines: bodyLines.slice(startLine, endLine),
+    startLine: totalLines === 0 ? 0 : startLine + 1,
+    endLine,
+    totalLines,
+    maxOffset,
+    scrollOffset: clampedOffset
+  };
 }
 
 function renderModal(
@@ -445,6 +655,101 @@ function widthSafePageSize(rows: number): number {
   return Math.max(3, Math.floor(rows * 0.3));
 }
 
+function calculateMainLayoutMetrics(
+  width: number,
+  height: number
+): {
+  transcriptWidth: number;
+  transcriptHeight: number;
+  activityWidth: number;
+  activityHeight: number;
+} {
+  if (width >= 100) {
+    const activityWidth = Math.max(30, Math.floor(width * 0.34));
+    const transcriptWidth = width - activityWidth - 1;
+    return {
+      transcriptWidth,
+      transcriptHeight: height,
+      activityWidth,
+      activityHeight: height
+    };
+  }
+
+  const transcriptHeight = Math.max(6, Math.floor(height * 0.65));
+  const activityHeight = Math.max(4, height - transcriptHeight);
+  return {
+    transcriptWidth: width,
+    transcriptHeight,
+    activityWidth: width,
+    activityHeight
+  };
+}
+
+function formatPanelTitle(title: string, viewport: PanelViewport, focused: boolean): string {
+  const range =
+    viewport.totalLines > 0
+      ? `${viewport.startLine}-${viewport.endLine}/${viewport.totalLines}`
+      : "0/0";
+  return focused ? `${title} ${range} [focus]` : `${title} ${range}`;
+}
+
+function panelPageSize(height: number): number {
+  return Math.max(3, Math.floor(Math.max(1, height - 2) * 0.75));
+}
+
+export function getNextScrollOffset(
+  data: string,
+  currentOffset: number,
+  maxOffset: number,
+  pageSize: number,
+  align: PanelAlign
+): number | undefined {
+  const towardStart =
+    align === "top"
+      ? {
+          line: Math.max(0, currentOffset - 1),
+          page: Math.max(0, currentOffset - pageSize),
+          edge: 0
+        }
+      : {
+          line: Math.min(maxOffset, currentOffset + 1),
+          page: Math.min(maxOffset, currentOffset + pageSize),
+          edge: maxOffset
+        };
+  const towardEnd =
+    align === "top"
+      ? {
+          line: Math.min(maxOffset, currentOffset + 1),
+          page: Math.min(maxOffset, currentOffset + pageSize),
+          edge: maxOffset
+        }
+      : {
+          line: Math.max(0, currentOffset - 1),
+          page: Math.max(0, currentOffset - pageSize),
+          edge: 0
+        };
+
+  if (data === "\u001b[A" || data === "\u001bOA") {
+    return towardStart.line;
+  }
+  if (data === "\u001b[B" || data === "\u001bOB") {
+    return towardEnd.line;
+  }
+  if (data === "\u001b[5~") {
+    return towardStart.page;
+  }
+  if (data === "\u001b[6~") {
+    return towardEnd.page;
+  }
+  if (data === "\u001b[H" || data === "\u001bOH") {
+    return towardStart.edge;
+  }
+  if (data === "\u001b[F" || data === "\u001bOF") {
+    return towardEnd.edge;
+  }
+  return undefined;
+}
+
 function overlayModal(baseLines: string[], modalLines: string[]): string[] {
   if (modalLines.length === 0 || baseLines.length === 0) {
     return baseLines;
@@ -492,6 +797,48 @@ function wrapBlock(text: string, width: number): string[] {
 
 function padLine(text: string, width: number): string {
   return truncateToWidth(text, width, "...", true);
+}
+
+function selectPrimaryActivitySummary(
+  state: InteractiveUiState
+): { activity: string; reason?: string | undefined } | undefined {
+  const active = state.activity.active;
+  if (active) {
+    return {
+      activity: `${active.label}${active.target ? ` ${active.target}` : ""}`,
+      reason: active.reason
+    };
+  }
+
+  if (state.status.coordinatorActivity) {
+    return {
+      activity: state.status.coordinatorActivity,
+      reason: state.status.coordinatorReason
+    };
+  }
+
+  if (state.status.currentActivity) {
+    return {
+      activity: state.status.currentActivity,
+      reason: state.status.currentReason
+    };
+  }
+
+  return undefined;
+}
+
+function orderRuntimesForActivity(
+  status: InteractiveUiState["status"]
+): InteractiveUiState["status"]["runtimes"] {
+  return [...status.runtimes].sort((left, right) => {
+    if (left.role === status.activeRole) {
+      return -1;
+    }
+    if (right.role === status.activeRole) {
+      return 1;
+    }
+    return left.role.localeCompare(right.role);
+  });
 }
 
 function conversationLabel(kind: InteractiveUiState["conversation"][number]["kind"]): string {

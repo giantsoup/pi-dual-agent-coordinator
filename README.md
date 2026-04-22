@@ -109,6 +109,8 @@ If something is missing, `doctor` tells you exactly what to fix and which comman
 npm run repl -- .
 ```
 
+On a TTY, `repl` launches the full-screen TUI by default. If you need the plain shell fallback, add `--plain`.
+
 The saved Agent A default from `setup` is used automatically when `--model-a` is omitted.
 
 If you want to override either model explicitly for one run:
@@ -121,6 +123,14 @@ npm run repl -- . \
   --thinking-b off \
   --max-review-rounds 3
 ```
+
+If you prefer the localhost browser portal instead of the terminal UI:
+
+```bash
+npm run portal -- .
+```
+
+That starts the same coordinator service behind a localhost-only web UI and prints the launch URL plus a health-check URL.
 
 ### 7. Optional: add a `pdual` shell shortcut
 
@@ -170,6 +180,7 @@ Replace `/absolute/path/to/pi-dual-agent-coordinator` with the location where yo
 - `npm run auth -- .`: switch or repair Agent A auth/defaults
 - `npm run doctor -- .`: validate setup with saved defaults
 - `npm run repl -- .`: start the REPL with saved defaults
+- `npm run portal -- .`: start the localhost browser portal
 - `npm test`: run the test suite
 - `npm run check`: run the TypeScript checker
 
@@ -197,6 +208,27 @@ Useful slash commands:
 - `/switch A <session-path>`
 - `/switch B <session-path>`
 - `/quit`
+
+## Browser portal basics
+
+The portal uses the same shared coordinator service and slash-command contract as the TUI.
+
+- Start it with `npm run portal -- .`
+- The server binds to `127.0.0.1` only
+- The launch URL includes a per-process auth token
+- One browser tab holds the controller lock for mutations; additional tabs are observers
+- The React/Vite operations console renders the transcript, live stream, workflow inspector, runtime health, MCP status, metrics, command dock, sessions drawer, handoff drawer, and status drawer
+- SSE events include event ids, timestamps, heartbeat comments, and bounded replay; the browser falls back to `/api/state` if it detects a replay gap
+- MCP status is read-only in the portal and shows config sources, per-role server lists, transport, connection state, direct tool counts, metadata sync time, and last errors
+
+Frontend development and QA:
+
+```bash
+npm run web:build
+npm run web:e2e
+```
+
+`npm run web:e2e` builds the project and runs Playwright against a mock portal server. If Playwright was just installed, run `npx playwright install chromium` once on the machine.
 
 ## Config examples
 
