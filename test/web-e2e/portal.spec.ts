@@ -8,12 +8,23 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 test.describe("portal web UI", () => {
   let server: Awaited<ReturnType<typeof startMockPortal>>;
+  let browserErrors: string[];
 
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ page }) => {
+    browserErrors = [];
+    page.on("pageerror", (error) => {
+      browserErrors.push(error.message);
+    });
+    page.on("console", (message) => {
+      if (message.type() === "error") {
+        browserErrors.push(message.text());
+      }
+    });
     server = await startMockPortal();
   });
 
   test.afterEach(async () => {
+    expect(browserErrors).toEqual([]);
     await server.stop();
   });
 

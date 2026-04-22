@@ -1,24 +1,40 @@
 :root {
-  color-scheme: light;
-  --bg: #f5f6f7;
-  --bg-raised: #ffffff;
-  --surface: #ffffff;
-  --surface-subtle: #f8fafb;
-  --surface-muted: #eef1f4;
-  --line: #d8dde3;
-  --line-strong: #b9c1ca;
-  --text: #18212b;
-  --text-muted: #64717f;
-  --text-soft: #8793a0;
-  --actor-coordinator: #536273;
-  --actor-a: #168579;
-  --actor-b: #8a6416;
-  --actor-unknown: #8b949e;
-  --status-ok: #168579;
-  --status-warning: #b26a00;
-  --status-danger: #c23b32;
-  --accent: #2563eb;
-  --focus: #2563eb;
+  color-scheme: dark;
+  --bg: #080a0d;
+  --bg-raised: #0e1217;
+  --surface: #11161c;
+  --surface-subtle: #151b22;
+  --surface-muted: #1d2630;
+  --surface-hover: #24303b;
+  --line: #2a333d;
+  --line-strong: #3c4855;
+  --text: #edf3f7;
+  --text-muted: #a3b0bd;
+  --text-soft: #748191;
+  --actor-coordinator: #a9b6c6;
+  --actor-a: #35d0b3;
+  --actor-b: #f1b95b;
+  --actor-unknown: #818c9a;
+  --status-ok: #35d0a7;
+  --status-warning: #f3bc4c;
+  --status-danger: #ff6f6f;
+  --accent: #83a8ff;
+  --focus: #9cc4ff;
+  --on-accent: #06111f;
+  --on-success: #041814;
+  --on-danger: #210607;
+  --tone-accent-bg: rgba(131, 168, 255, 0.14);
+  --tone-accent-border: #435f9c;
+  --tone-success-bg: rgba(53, 208, 167, 0.14);
+  --tone-success-border: #2e7567;
+  --tone-warning-bg: rgba(243, 188, 76, 0.16);
+  --tone-warning-border: #806738;
+  --tone-danger-bg: rgba(255, 111, 111, 0.15);
+  --tone-danger-border: #8f4a4d;
+  --overlay: rgba(2, 5, 8, 0.72);
+  --shadow-raised: 0 18px 48px rgba(0, 0, 0, 0.42);
+  --shadow-subtle: 0 1px 0 rgba(255, 255, 255, 0.035) inset;
+  --code-bg: #070a0f;
   --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
   --radius: 8px;
@@ -42,7 +58,10 @@ body,
 
 body {
   margin: 0;
-  background: var(--bg);
+  background:
+    linear-gradient(180deg, rgba(42, 32, 28, 0.18), transparent 260px),
+    linear-gradient(135deg, rgba(34, 44, 52, 0.28), transparent 38%),
+    var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
   font-size: 14px;
@@ -60,6 +79,15 @@ button {
 
 button:disabled {
   cursor: not-allowed;
+}
+
+::selection {
+  background: rgba(131, 168, 255, 0.34);
+  color: var(--text);
+}
+
+* {
+  scrollbar-color: var(--line-strong) var(--surface-subtle);
 }
 
 pre,

@@ -6,6 +6,7 @@
   gap: var(--space-3);
   min-width: 0;
   border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
   padding: var(--space-3);
 }
 
@@ -50,6 +51,7 @@
   font-size: 12px;
   line-height: 1;
   white-space: nowrap;
+  box-shadow: var(--shadow-subtle);
 }
 
 .badge svg {
@@ -58,26 +60,26 @@
 }
 
 .badge[data-tone="accent"] {
-  border-color: #b8cdfc;
-  background: #eef4ff;
+  border-color: var(--tone-accent-border);
+  background: var(--tone-accent-bg);
   color: var(--accent);
 }
 
 .badge[data-tone="success"] {
-  border-color: #a7d8cf;
-  background: #eefbf8;
+  border-color: var(--tone-success-border);
+  background: var(--tone-success-bg);
   color: var(--status-ok);
 }
 
 .badge[data-tone="warning"] {
-  border-color: #eacb91;
-  background: #fff8eb;
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
   color: var(--status-warning);
 }
 
 .badge[data-tone="danger"] {
-  border-color: #e7aaa5;
-  background: #fff1f0;
+  border-color: var(--tone-danger-border);
+  background: var(--tone-danger-bg);
   color: var(--status-danger);
 }
 
@@ -147,6 +149,12 @@
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
+  box-shadow: var(--shadow-subtle);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    filter 140ms ease;
 }
 
 .ui-button {
@@ -169,22 +177,46 @@
 .ui-button[data-variant="primary"] {
   border-color: var(--accent);
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent);
+  font-weight: 700;
 }
 
 .ui-button[data-variant="ghost"] {
   border-color: transparent;
   background: transparent;
+  box-shadow: none;
 }
 
 .ui-button[data-tone="success"][data-variant="primary"] {
   border-color: var(--status-ok);
   background: var(--status-ok);
+  color: var(--on-success);
 }
 
-.ui-button[data-tone="danger"],
+.ui-button[data-tone="danger"][data-variant="primary"] {
+  border-color: var(--status-danger);
+  background: var(--status-danger);
+  color: var(--on-danger);
+}
+
+.ui-button[data-tone="danger"]:not([data-variant="primary"]),
 .icon-button[data-tone="danger"] {
   color: var(--status-danger);
+}
+
+.ui-button[data-tone="warning"]:not([data-variant="primary"]),
+.icon-button[data-tone="warning"] {
+  color: var(--status-warning);
+}
+
+.ui-button[data-tone="success"]:not([data-variant="primary"]),
+.icon-button[data-tone="success"] {
+  color: var(--status-ok);
+}
+
+.ui-button[data-tone="accent"]:not([data-variant="primary"]),
+.icon-button[data-tone="accent"] {
+  color: var(--accent);
 }
 
 .icon-button {
@@ -197,16 +229,27 @@
 .ui-button:hover:not(:disabled),
 .icon-button:hover:not(:disabled) {
   border-color: var(--line-strong);
-  background: var(--surface-muted);
+  background: var(--surface-hover);
 }
 
 .ui-button[data-variant="primary"]:hover:not(:disabled) {
   background: var(--accent);
-  filter: brightness(0.96);
+  filter: brightness(1.08);
 }
 
 .ui-button[data-tone="success"][data-variant="primary"]:hover:not(:disabled) {
   background: var(--status-ok);
+}
+
+.ui-button[data-variant="ghost"]:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--surface-muted);
+}
+
+.ui-button:disabled,
+.icon-button:disabled,
+.textarea:disabled {
+  opacity: 0.54;
 }
 
 .tabs-list {
@@ -214,6 +257,7 @@
   gap: var(--space-1);
   overflow-x: auto;
   border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
   padding: var(--space-2) var(--space-3) 0;
 }
 
@@ -223,6 +267,15 @@
   background: transparent;
   color: var(--text-muted);
   padding: var(--space-2) var(--space-3);
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    background-color 140ms ease;
+}
+
+.tabs-trigger:hover {
+  background: var(--surface-subtle);
+  color: var(--text);
 }
 
 .tabs-trigger[data-state="active"] {
@@ -242,14 +295,14 @@
 }
 
 .notice-banner[data-tone="info"] {
-  border-color: #a7d8cf;
-  background: #eefbf8;
-  color: #0d5c53;
+  border-color: var(--tone-success-border);
+  background: var(--tone-success-bg);
+  color: var(--status-ok);
 }
 
 .notice-banner[data-tone="error"] {
-  border-color: #e7aaa5;
-  background: #fff1f0;
+  border-color: var(--tone-danger-border);
+  background: var(--tone-danger-bg);
   color: var(--status-danger);
 }
 
@@ -261,6 +314,7 @@
   border-radius: var(--radius);
   background: var(--surface);
   overflow: hidden;
+  box-shadow: var(--shadow-subtle);
 }
 
 .timeline-row[data-actor="coordinator"] {
@@ -318,6 +372,11 @@
   line-height: 1.6;
 }
 
+.entry-text,
+.modal-content {
+  color: var(--text);
+}
+
 .live-entry {
   color: var(--text);
 }
@@ -361,6 +420,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-subtle);
 }
 
 .plan-panel {
@@ -372,6 +432,7 @@
 .plan-panel > .section-header {
   padding: 0;
   border-bottom: 0;
+  background: transparent;
 }
 
 .plan-summary,
@@ -395,7 +456,8 @@
 
 .plan-next {
   border-left: 3px solid var(--status-warning);
-  background: #fff8eb;
+  background: var(--tone-warning-bg);
+  color: var(--text);
   padding: var(--space-2) var(--space-3);
 }
 
@@ -428,6 +490,7 @@
 
 .mcp-role > .section-header {
   border-bottom: 0;
+  background: transparent;
   padding: 0;
 }
 
@@ -466,30 +529,44 @@
   resize: vertical;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--code-bg);
   color: var(--text);
   line-height: 1.55;
   padding: var(--space-3);
+  box-shadow: var(--shadow-subtle);
+}
+
+.textarea::placeholder {
+  color: var(--text-soft);
+}
+
+.textarea:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+
+.textarea:focus {
+  border-color: var(--focus);
 }
 
 .tooltip-content {
   z-index: 20;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
-  background: #111827;
-  color: #ffffff;
+  background: var(--code-bg);
+  color: var(--text);
   font-size: 12px;
   padding: 6px 8px;
+  box-shadow: var(--shadow-raised);
 }
 
 .tooltip-arrow {
-  fill: #111827;
+  fill: var(--code-bg);
 }
 
 .modal-content[data-format="json"] {
   border-radius: var(--radius);
-  background: #111827;
-  color: #f9fafb;
+  background: var(--code-bg);
+  color: var(--text);
   padding: var(--space-3);
 }
 
