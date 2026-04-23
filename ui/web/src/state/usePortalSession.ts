@@ -6,7 +6,14 @@ import {
   useState
 } from "react";
 
-import type { InteractiveUiState, UiAction, UiNotification } from "../../../../src/types/ui.js";
+import {
+  renderControllerActionNotice,
+  renderLaunchLinkCopiedNotice,
+  renderLaunchLinkCopyFailedNotice,
+  renderLocalOnlyAccessNotice,
+  renderThreadStateNotice
+} from "../../../../src/app/presentation/notices.js";
+import type { InteractiveUiState, UiAction } from "../../../../src/types/ui.js";
 import {
   fetchPortalState,
   postPortalAction,
@@ -18,7 +25,9 @@ import {
 export type ConnectionState = "connecting" | "connected" | "reconnecting" | "offline";
 
 export interface LocalBannerState {
+  title?: string | undefined;
   message: string;
+  nextStep?: string | undefined;
   tone: "info" | "error";
 }
 
@@ -33,6 +42,7 @@ export interface PortalSession {
   isSubmitting: boolean;
   lastEventId: number;
   localBanner: LocalBannerState | null;
+  notifyCopyLinkResult(copied: boolean): void;
   snapshot: InteractiveUiState | null;
 }
 
@@ -72,17 +82,17 @@ export function usePortalSession(): PortalSession {
   const hydrateSnapshot = useEffectEvent(async () => {
     const dto = await fetchPortalState(BOOTSTRAP);
     applySnapshot(dto.state, dto.controller, dto.lastEventId);
-    setLocalBanner(null);
   });
 
   const dispatchAction = useEffectEvent(async (action: UiAction): Promise<boolean> => {
     if (!canMutate) {
       setLocalBanner({
         tone: "error",
-        message:
+        ...toBanner(
           connectionState === "connected"
-            ? "Another browser tab currently holds the controller lock."
-            : "Portal actions are disabled until the controller stream reconnects."
+            ? renderControllerActionNotice("controller_locked")
+            : renderControllerActionNotice("stream_disconnected")
+        )
       });
       return false;
     }
@@ -95,7 +105,16 @@ export function usePortalSession(): PortalSession {
       if (!response.ok || !dto.accepted) {
         setLocalBanner({
           tone: "error",
-          message: dto.error ?? `Portal request failed with ${response.status}.`
+          ...(dto.error
+            ? {
+                message: dto.error
+              }
+            : toBanner({
+                title: "The request did not complete",
+                message: `PI Dual returned HTTP ${response.status}.`,
+                nextStep:
+                  "Reload the page or reopen the launch link, then try the action again."
+              }))
         });
         return false;
       }
@@ -115,6 +134,16 @@ export function usePortalSession(): PortalSession {
 
   useEffect(() => {
     let disposed = false;
+
+    if (!isLocalPortalHost(window.location.hostname)) {
+      setLocalBanner({
+        tone: "error",
+        ...toBanner(
+          renderLocalOnlyAccessNotice(window.location.hostname, BOOTSTRAP.launchUrl)
+        )
+      });
+    }
+
     const source = subscribePortalEvents(
       BOOTSTRAP,
       {
@@ -191,6 +220,16 @@ export function usePortalSession(): PortalSession {
     isSubmitting,
     lastEventId,
     localBanner,
+    notifyCopyLinkResult(copied) {
+      setLocalBanner({
+        tone: copied ? "info" : "error",
+        ...toBanner(
+          copied
+            ? renderLaunchLinkCopiedNotice()
+            : renderLaunchLinkCopyFailedNotice()
+        )
+      });
+    },
     snapshot
   };
 }
@@ -198,21 +237,29 @@ export function usePortalSession(): PortalSession {
 export function toSnapshotBanner(
   snapshot: InteractiveUiState | null
 ): LocalBannerState | null {
-  const notice = snapshot?.lastError ?? snapshot?.notification;
-  if (!notice) {
+  if (!snapshot) {
     return null;
   }
 
-  return {
-    message: formatNotification(notice),
-    tone: notice.level === "error" ? "error" : "info"
-  };
+  const notice = renderThreadStateNotice(snapshot);
+  return notice
+    ? {
+        tone: snapshot.lastError ? "error" : "info",
+        ...toBanner(notice)
+      }
+    : null;
 }
 
-function formatNotification(notification: UiNotification): string {
-  return notification.detail
-    ? `${notification.message}\n${notification.detail}`
-    : notification.message;
+function toBanner(notice: {
+  title: string;
+  message: string;
+  nextStep?: string | undefined;
+}): Omit<LocalBannerState, "tone"> {
+  return {
+    title: notice.title,
+    message: notice.message,
+    nextStep: notice.nextStep
+  };
 }
 
 function toErrorBanner(error: unknown): LocalBannerState {
@@ -220,4 +267,13 @@ function toErrorBanner(error: unknown): LocalBannerState {
     tone: "error",
     message: error instanceof Error ? error.message : String(error)
   };
+}
+
+function isLocalPortalHost(hostname: string): boolean {
+  return (
+    hostname === "127.0.0.1" ||
+    hostname === "localhost" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
 }

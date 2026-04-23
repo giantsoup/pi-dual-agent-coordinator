@@ -108,7 +108,11 @@ describe("portal server", () => {
     expect(root.status).toBe(200);
     expect(css.status).toBe(200);
     expect(js.status).toBe(200);
+    expect(portal.localOnly).toBe(true);
+    expect(portal.healthCheckUrl).toBe(`http://${portal.host}:${portal.port}/healthz`);
+    expect(portal.startupMessage).toContain("PI Dual web interface is ready.");
     expect(rootHtml).toContain("window.__PI_DUAL_PORTAL__");
+    expect(rootHtml).toContain(portal.launchUrl);
     expect(rootHtml).toContain('<div id="root"></div>');
     expect(root.headers.get("content-security-policy")).toContain(
       "style-src 'self' 'unsafe-inline'"
@@ -197,7 +201,7 @@ describe("portal server", () => {
     });
     expect(rejectedB.status).toBe(409);
     expect(rejectedB.body.accepted).toBe(false);
-    expect(rejectedB.body.error).toContain("controller lock");
+    expect(rejectedB.body.error).toContain("Another browser tab currently controls");
 
     controllerA.abort();
     await waitFor(async () => {

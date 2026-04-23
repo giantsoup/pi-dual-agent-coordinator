@@ -46,6 +46,7 @@
     "start": "node ./dist/src/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "web": "node ./dist/src/index.js portal",
     "web:build": "vite build --config ui/web/vite.config.ts",
     "web:dev": "vite --host 127.0.0.1 --config ui/web/vite.config.ts",
     "web:e2e": "npm run build && playwright test --config ui/web/playwright.config.ts"

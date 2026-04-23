@@ -9,8 +9,10 @@ export interface UiNotification {
   level: "info" | "error";
   scope: "system" | "service" | "workflow" | "runtime" | "operator";
   code: string;
+  title?: string | undefined;
   message: string;
   detail?: string | undefined;
+  nextStep?: string | undefined;
   fatal?: boolean | undefined;
   relatedAction?: UiAction["type"] | undefined;
   createdAt: string;

@@ -1,4 +1,5 @@
 import type { InteractiveUiState, UiAction, UiEvent } from "../../types/ui.js";
+import type { UserNotice } from "../presentation/notices.js";
 
 export const INTERACTIVE_PORTAL_PROTOCOL_VERSION = 1;
 
@@ -6,6 +7,12 @@ export interface PortalBootstrapConfigDto {
   protocolVersion: typeof INTERACTIVE_PORTAL_PROTOCOL_VERSION;
   authToken: string;
   controllerId: string;
+  launchUrl: string;
+  host: string;
+  port: number;
+  localOnly: true;
+  startupMessage: string;
+  startupNotice: UserNotice;
 }
 
 export interface PortalControllerLockSnapshot {
@@ -45,11 +52,36 @@ export interface PortalStreamEventDto {
 export function createPortalBootstrapConfigDto(input: {
   authToken: string;
   controllerId: string;
+  launchUrl?: string;
+  host?: string;
+  port?: number;
+  localOnly?: true;
+  startupMessage?: string;
+  startupNotice?: UserNotice;
 }): PortalBootstrapConfigDto {
+  const launchUrl = input.launchUrl ?? "http://127.0.0.1/";
+  const parsedLaunchUrl = safeParseUrl(launchUrl);
+
   return {
     protocolVersion: INTERACTIVE_PORTAL_PROTOCOL_VERSION,
     authToken: input.authToken,
-    controllerId: input.controllerId
+    controllerId: input.controllerId,
+    launchUrl,
+    host: input.host ?? parsedLaunchUrl?.hostname ?? "127.0.0.1",
+    port:
+      input.port ??
+      (parsedLaunchUrl?.port ? Number.parseInt(parsedLaunchUrl.port, 10) || 0 : 0),
+    localOnly: input.localOnly ?? true,
+    startupMessage: input.startupMessage ?? "",
+    startupNotice:
+      input.startupNotice ??
+      {
+        scope: "startup",
+        title: "PI Dual web interface is ready",
+        message: `Open this link in any browser on this computer: ${launchUrl}`,
+        nextStep:
+          "If the link does not open automatically, copy and paste it into a local browser."
+      }
   };
 }
 
@@ -170,6 +202,14 @@ function parseUiAction(value: unknown): UiAction {
     }
     default:
       throw new Error(`Unsupported action type: ${type}`);
+  }
+}
+
+function safeParseUrl(value: string): URL | undefined {
+  try {
+    return new URL(value);
+  } catch {
+    return undefined;
   }
 }
 

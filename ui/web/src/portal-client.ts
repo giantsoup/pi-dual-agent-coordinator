@@ -5,6 +5,7 @@ import type {
   PortalStateSnapshotDto,
   PortalStreamEventDto
 } from "../../../src/app/portal/protocol.js";
+import { createPortalBootstrapConfigDto } from "../../../src/app/portal/protocol.js";
 import type { UiAction } from "../../../src/types/ui.js";
 
 declare global {
@@ -30,7 +31,7 @@ export function readPortalBootstrapConfig(): PortalBootstrapConfigDto {
   if (!bootstrap?.authToken || !bootstrap.controllerId) {
     throw new Error("Missing portal bootstrap configuration.");
   }
-  return bootstrap;
+  return createPortalBootstrapConfigDto(bootstrap);
 }
 
 export async function fetchPortalState(

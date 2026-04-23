@@ -208,12 +208,12 @@ function buildComposerHint(props: {
   isController: boolean;
 }): string {
   if (props.connectionState !== "connected") {
-    return `${describeConnection(props.connectionState)} to the local event stream.`;
+    return `${describeConnection(props.connectionState)} to the local PI Dual event stream. Wait for the page to reconnect before sending changes.`;
   }
   if (props.controller.locked && !props.isController) {
-    return "Read-only while another tab holds the controller lock.";
+    return "This tab is read-only because another browser tab controls the thread. Use that tab or reconnect with the launch link.";
   }
-  return "Enter submits. Shift+Enter inserts a newline. / focuses this composer.";
+  return "Type a prompt or slash command. Enter sends it, Shift+Enter adds a newline, and / focuses this box.";
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {

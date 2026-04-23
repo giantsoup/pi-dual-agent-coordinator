@@ -78,7 +78,19 @@ describe("portal protocol serialization", () => {
     expect(bootstrap).toEqual({
       protocolVersion: INTERACTIVE_PORTAL_PROTOCOL_VERSION,
       authToken: "secret-token",
-      controllerId: "controller-1"
+      controllerId: "controller-1",
+      launchUrl: "http://127.0.0.1/",
+      host: "127.0.0.1",
+      port: 0,
+      localOnly: true,
+      startupMessage: "",
+      startupNotice: {
+        scope: "startup",
+        title: "PI Dual web interface is ready",
+        message: "Open this link in any browser on this computer: http://127.0.0.1/",
+        nextStep:
+          "If the link does not open automatically, copy and paste it into a local browser."
+      }
     });
     expect(parsed).toEqual({
       controllerId: "controller-1",

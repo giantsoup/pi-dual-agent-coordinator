@@ -7,6 +7,13 @@ import {
 } from "node:http";
 
 import type { InteractiveCoordinatorService } from "../interactive/service.js";
+import {
+  renderControllerActionNotice,
+  renderNoticeText,
+  renderRequestOriginNotice,
+  renderStartupInstructions,
+  renderUnauthorizedPortalNotice
+} from "../presentation/notices.js";
 import { loadPortalAssetBundle, renderPortalIndexHtml } from "./assets.js";
 import {
   createPortalActionResponseDto,
@@ -47,6 +54,10 @@ export interface InteractivePortalServer {
   port: number;
   authToken: string;
   launchUrl: string;
+  healthCheckUrl: string;
+  localOnly: true;
+  startupMessage: string;
+  startupNotice: ReturnType<typeof renderStartupInstructions>["startupNotice"];
   stop(): Promise<void>;
 }
 
@@ -72,6 +83,7 @@ export async function startInteractivePortalServer(
   };
   let lastEventId = 0;
   let stopped = false;
+  let address: Exclude<ReturnType<HttpServer["address"]>, null | string>;
 
   const server = createServer((request, response) => {
     void handleRequest(request, response).catch((error) => {
@@ -91,7 +103,6 @@ export async function startInteractivePortalServer(
     broadcastUiEvent(event);
   });
 
-  let address;
   try {
     address = await listenServer(server, host, options.port ?? 0);
   } catch (error) {
@@ -146,16 +157,32 @@ export async function startInteractivePortalServer(
     }
 
     if (!hasValidAuthToken(request, url, authToken)) {
-      respondWithError(response, 401, "Unauthorized.");
+      respondWithError(
+        response,
+        401,
+        renderNoticeText(renderUnauthorizedPortalNotice())
+      );
       return;
     }
 
     if (method === "GET" && url.pathname === "/") {
       const cspNonce = randomBytes(16).toString("base64");
       const controllerId = controllerIdFactory();
+      const startup = renderStartupInstructions({
+        browserOpenStatus: "unsupported",
+        healthCheckUrl,
+        launchUrl,
+        projectPath: options.service.getState().status.cwd
+      });
       const bootstrap = createPortalBootstrapConfigDto({
         authToken,
-        controllerId
+        controllerId,
+        host,
+        launchUrl,
+        localOnly: true,
+        port: address.port,
+        startupMessage: startup.startupMessage,
+        startupNotice: startup.startupNotice
       });
       response.writeHead(200, {
         "cache-control": "no-store",
@@ -236,8 +263,7 @@ export async function startInteractivePortalServer(
             state: options.service.getState(),
             controller,
             lastEventId,
-            error:
-              "Open /api/events from this browser tab before sending actions so the controller lock can be tracked."
+            error: renderNoticeText(renderControllerActionNotice("missing_stream"))
           })
         );
         return;
@@ -252,7 +278,7 @@ export async function startInteractivePortalServer(
             state: options.service.getState(),
             controller,
             lastEventId,
-            error: "Another browser tab currently holds the controller lock."
+            error: renderNoticeText(renderControllerActionNotice("controller_locked"))
           })
         );
         return;
@@ -280,7 +306,7 @@ export async function startInteractivePortalServer(
       return;
     }
 
-    respondWithError(response, 404, "Not found.");
+    respondWithError(response, 404, "This PI Dual page does not exist.");
   }
 
   function attachSseCleanup(request: IncomingMessage, client: SseClient): void {
@@ -338,11 +364,24 @@ export async function startInteractivePortalServer(
     await closeServer(server);
   }
 
+  const launchUrl = `http://${host}:${address.port}/?token=${encodeURIComponent(authToken)}`;
+  const healthCheckUrl = `http://${host}:${address.port}/healthz`;
+  const startup = renderStartupInstructions({
+    browserOpenStatus: "unsupported",
+    healthCheckUrl,
+    launchUrl,
+    projectPath: options.service.getState().status.cwd
+  });
+
   return {
     host,
     port: address.port,
     authToken,
-    launchUrl: `http://${host}:${address.port}/?token=${encodeURIComponent(authToken)}`,
+    launchUrl,
+    healthCheckUrl,
+    localOnly: true,
+    startupMessage: startup.startupMessage,
+    startupNotice: startup.startupNotice,
     stop
   };
 
@@ -464,12 +503,12 @@ function validatePostOrigin(request: IncomingMessage, expectedHost: string): voi
   try {
     parsed = new URL(origin);
   } catch {
-    throw new PortalHttpError(403, "Invalid request origin.");
+    throw new PortalHttpError(403, renderNoticeText(renderRequestOriginNotice()));
   }
 
   const requestHost = request.headers.host;
   if (!requestHost || parsed.host !== requestHost || parsed.protocol !== "http:") {
-    throw new PortalHttpError(403, "Invalid request origin.");
+    throw new PortalHttpError(403, renderNoticeText(renderRequestOriginNotice()));
   }
 
   assertLoopbackHost(parsed.hostname === "[::1]" ? "::1" : parsed.hostname);
@@ -484,7 +523,10 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
     const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
     size += buffer.byteLength;
     if (size > 64 * 1024) {
-      throw new PortalHttpError(413, "Request body exceeds the 64 KiB limit.");
+      throw new PortalHttpError(
+        413,
+        "The browser sent too much data in one request. Refresh the page and try again."
+      );
     }
     chunks.push(buffer);
   }
@@ -497,7 +539,10 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   try {
     return JSON.parse(raw) as unknown;
   } catch {
-    throw new PortalHttpError(400, "Request body must be valid JSON.");
+    throw new PortalHttpError(
+      400,
+      "The browser sent an invalid request. Refresh the page and try again."
+    );
   }
 }
 
@@ -537,7 +582,7 @@ function assertLoopbackHost(host: string): string {
     return host;
   }
   throw new Error(
-    `Portal host must stay on localhost. Received ${host}.`
+    `The PI Dual web interface is local-only and must stay on localhost. Received ${host}.`
   );
 }
 

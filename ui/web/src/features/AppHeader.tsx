@@ -1,9 +1,9 @@
 import type { ReactElement } from "react";
-import { Lock, Unlock, Wifi, WifiOff } from "lucide-react";
+import { Copy, Lock, RefreshCw, Unlock, Wifi, WifiOff } from "lucide-react";
 
 import type { InteractiveUiState } from "../../../../src/types/ui.js";
-import type { PortalControllerLockSnapshot } from "../portal-client.js";
-import { ActorMarker, Badge, StatusDot, Toolbar } from "../components/ui.js";
+import type { PortalBootstrapConfigDto, PortalControllerLockSnapshot } from "../../../../src/app/portal/protocol.js";
+import { ActorMarker, Badge, Button, StatusDot, Toolbar } from "../components/ui.js";
 import {
   connectionTone,
   describeConnection,
@@ -12,10 +12,12 @@ import {
 import type { ConnectionState } from "../state/usePortalSession.js";
 
 export function AppHeader(props: {
+  bootstrap: PortalBootstrapConfigDto;
   connectionState: ConnectionState;
   controller: PortalControllerLockSnapshot;
   isController: boolean;
   lastEventId: number;
+  onCopyLink(): Promise<void>;
   snapshot: InteractiveUiState | null;
 }): ReactElement {
   const snapshot = props.snapshot;
@@ -30,9 +32,38 @@ export function AppHeader(props: {
   return (
     <header className="app-header">
       <div className="app-header__main">
-        <div className="section-kicker">pi-dual localhost portal</div>
+        <div className="section-kicker">pi-dual local web interface</div>
         <div className="path-line" title={status?.cwd ?? ""}>
           {status?.cwd ?? "Connecting to coordinator"}
+        </div>
+        <div className="app-header__helper">
+          {props.bootstrap.startupNotice.message}
+        </div>
+        <div className="app-header__launch-line" title={props.bootstrap.launchUrl}>
+          {props.bootstrap.launchUrl}
+        </div>
+        <div className="app-header__actions">
+          <Button
+            icon={<Copy />}
+            onClick={() => {
+              void props.onCopyLink();
+            }}
+          >
+            Copy link
+          </Button>
+          <Button
+            icon={<RefreshCw />}
+            onClick={() => {
+              window.open(props.bootstrap.launchUrl, "_blank", "noopener,noreferrer");
+            }}
+            tone="accent"
+          >
+            Reconnect with this link
+          </Button>
+        </div>
+        <div className="app-header__helper">
+          This link works in any browser on this computer. It does not work over your
+          local network or the internet.
         </div>
       </div>
       <Toolbar>

@@ -10,6 +10,7 @@ import {
   type InteractiveCoordinatorLike
 } from "./interactive/service.js";
 import { renderConversationEntry } from "./interactive/presentation.js";
+import { renderNotificationText } from "./presentation/notices.js";
 import type { UiModalState } from "../types/ui.js";
 import type { NormalizedTelemetryEvent } from "../types/telemetry.js";
 import type { CoordinatorTurnResult } from "../types/workflow.js";
@@ -166,11 +167,12 @@ export function flushPlainUiOutput(
     state.notification.createdAt !== printedState.notificationTimestamp
   ) {
     printedState.notificationTimestamp = state.notification.createdAt;
-    io.stdout.write(`${state.notification.message}\n`);
+    io.stdout.write(`${renderNotificationText(state.notification)}\n`);
   }
 
   if (state.lastError && state.lastError.createdAt !== printedState.errorTimestamp) {
     printedState.errorTimestamp = state.lastError.createdAt;
+    io.stderr.write(`${renderNotificationText(state.lastError)}\n`);
   }
 }
 

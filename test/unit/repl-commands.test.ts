@@ -91,6 +91,15 @@ describe("repl commands", () => {
     });
   });
 
+  it("parses web as a portal alias", () => {
+    const parsed = parseCliArgs(["web", ".", "--port", "4317"]);
+    expect(parsed).toMatchObject({
+      command: "portal",
+      cwd: process.cwd(),
+      port: 4317
+    });
+  });
+
   it("defaults cwd to INIT_CWD when no path is provided", () => {
     const previous = process.env.INIT_CWD;
     process.env.INIT_CWD = "/tmp/operator-project";
@@ -155,11 +164,21 @@ describe("repl commands", () => {
     });
   });
 
+  it("treats web --help as portal help output", () => {
+    expect(parseCliArgs(["web", "--help"])).toEqual({
+      command: "help",
+      topic: "portal"
+    });
+  });
+
   it("includes setup and auth in general help", () => {
     const help = formatCliHelp("general");
     expect(help).toContain("setup     Guided first-run setup for auth and defaults");
     expect(help).toContain("auth      Change or repair Agent A auth/defaults");
-    expect(help).toContain("portal    Start the localhost browser portal");
+    expect(help).toContain(
+      "web       Alias for portal so you can launch the web interface from any linked install"
+    );
+    expect(help).toContain("portal    Start the local web interface on localhost");
   });
 
   it("includes the plain flag in repl help", () => {
@@ -168,7 +187,9 @@ describe("repl commands", () => {
 
   it("includes the port flag in portal help", () => {
     const help = formatCliHelp("portal");
+    expect(help).toContain("npm run web -- .");
+    expect(help).toContain("pi-dual web .");
     expect(help).toContain("--port PORT");
-    expect(help).toContain("localhost port");
+    expect(help).toContain("works in any browser on this computer");
   });
 });

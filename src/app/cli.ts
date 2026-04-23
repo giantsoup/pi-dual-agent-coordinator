@@ -102,47 +102,48 @@ export function parseCliArgs(
   baseCwd = process.env.INIT_CWD ? resolve(process.env.INIT_CWD) : process.cwd()
 ): CliOptions {
   const [command, ...rest] = argv;
+  const normalizedCommand = command === "web" ? "portal" : command;
 
-  if (!command || HELP_FLAGS.has(command) || command === "help") {
+  if (!normalizedCommand || HELP_FLAGS.has(normalizedCommand) || normalizedCommand === "help") {
     return {
       command: "help",
       topic: parseHelpTopic(rest[0])
     };
   }
 
-  if (VERSION_FLAGS.has(command) || command === "version") {
+  if (VERSION_FLAGS.has(normalizedCommand) || normalizedCommand === "version") {
     return { command: "version" };
   }
 
-  if (command === "repl") {
+  if (normalizedCommand === "repl") {
     if (rest.some((arg) => isHelpFlag(arg))) {
       return { command: "help", topic: "repl" };
     }
     return parseReplOptions(rest, baseCwd);
   }
 
-  if (command === "portal") {
+  if (normalizedCommand === "portal") {
     if (rest.some((arg) => isHelpFlag(arg))) {
       return { command: "help", topic: "portal" };
     }
     return parsePortalOptions(rest, baseCwd);
   }
 
-  if (command === "doctor") {
+  if (normalizedCommand === "doctor") {
     if (rest.some((arg) => isHelpFlag(arg))) {
       return { command: "help", topic: "doctor" };
     }
     return parseDoctorOptions(rest, baseCwd);
   }
 
-  if (command === "setup") {
+  if (normalizedCommand === "setup") {
     if (rest.some((arg) => isHelpFlag(arg))) {
       return { command: "help", topic: "setup" };
     }
     return parseSetupOptions(rest, baseCwd);
   }
 
-  if (command === "auth") {
+  if (normalizedCommand === "auth") {
     if (rest.some((arg) => isHelpFlag(arg))) {
       return { command: "help", topic: "auth" };
     }
@@ -184,10 +185,13 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
     return [
       "Usage:",
       "  pi-dual portal [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--port PORT] [--json-logs] [--verbose]",
+      "  pi-dual web [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--port PORT] [--json-logs] [--verbose]",
       "",
       "Examples:",
+      "  npm run web -- .",
+      "  pi-dual web .",
+      "  npm run web -- . --port 4317",
       "  pi-dual portal . --model-a openai/gpt-5.4 --model-b local-qwen/qwen3-coder-next",
-      "  pi-dual portal . --port 4317",
       "",
       "Flags:",
       "  --model-a MODEL",
@@ -203,6 +207,8 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
       "  --port PORT         defaults to 0 (pick any free localhost port)",
       "  --json-logs",
       "  --verbose",
+      "",
+      "The web interface stays on localhost, prints a launch link that works in any browser on this computer, and keeps the health-check URL as a secondary detail.",
       ""
     ].join("\n");
   }
@@ -259,7 +265,8 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
     "  setup     Guided first-run setup for auth and defaults",
     "  auth      Change or repair Agent A auth/defaults",
     "  repl      Start the interactive coordinator REPL",
-    "  portal    Start the localhost browser portal",
+    "  web       Alias for portal so you can launch the web interface from any linked install",
+    "  portal    Start the local web interface on localhost",
     "  doctor    Check whether this machine is ready to run the coordinator",
     "  help      Show help",
     "  version   Show the installed version",
@@ -591,6 +598,10 @@ function isHelpFlag(value: string | undefined): boolean {
 }
 
 function parseHelpTopic(value: string | undefined): HelpTopic {
+  if (value === "web") {
+    return "portal";
+  }
+
   if (
     value === "repl" ||
     value === "portal" ||

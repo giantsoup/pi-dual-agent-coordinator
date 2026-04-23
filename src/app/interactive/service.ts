@@ -219,6 +219,16 @@ export class HeadlessInteractiveCoordinatorService
             action: "approved",
             text: "Approved the pending plan."
           });
+          this.raiseNotification({
+            level: "info",
+            scope: "workflow",
+            code: "pending_plan.approved",
+            title: "Plan approved",
+            message: "Execution started for this project.",
+            nextStep:
+              "Wait for Agent B to finish the work, then Agent A will review the result.",
+            relatedAction: action.type
+          });
           this.appendResultEntries(result);
           this.refreshStatus();
           return;
@@ -229,7 +239,9 @@ export class HeadlessInteractiveCoordinatorService
               level: "info",
               scope: "operator",
               code: "pending_plan.absent",
-              message: "No pending plan to discard.",
+              title: "There is no pending plan to discard",
+              message: "PI Dual is not waiting on a plan decision right now.",
+              nextStep: "Send another prompt if you want Agent A to draft a new plan.",
               relatedAction: action.type
             });
             return;
@@ -239,6 +251,14 @@ export class HeadlessInteractiveCoordinatorService
             kind: "approval_discard",
             action: "discarded",
             text: "Discarded the pending plan."
+          });
+          this.raiseNotification({
+            level: "info",
+            scope: "workflow",
+            code: "pending_plan.discarded",
+            title: "Plan discarded",
+            message: "The pending plan was cleared for this thread.",
+            nextStep: "Send another prompt if you want a revised plan."
           });
           this.refreshStatus();
           return;
@@ -262,6 +282,23 @@ export class HeadlessInteractiveCoordinatorService
               action.mode === "new"
                 ? `Created new session for role ${action.role}.`
                 : `Switched role ${action.role} to ${action.sessionPath}.`
+          });
+          this.raiseNotification({
+            level: "info",
+            scope: "runtime",
+            code:
+              action.mode === "new"
+                ? "runtime.session.created"
+                : "runtime.session.switched",
+            title:
+              action.mode === "new"
+                ? `New ${action.role === "A" ? "Agent A" : "Agent B"} session selected`
+                : `${action.role === "A" ? "Agent A" : "Agent B"} session switched`,
+            message:
+              action.mode === "new"
+                ? "The next turn will use a fresh session for this role."
+                : `The next turn will use ${action.sessionPath}.`,
+            nextStep: "Send the next prompt when you are ready."
           });
           this.refreshStatus();
           return;
@@ -497,7 +534,10 @@ export class HeadlessInteractiveCoordinatorService
       level: "error",
       scope: "service",
       code: "dispatch.failed",
+      title: "PI Dual could not complete that action",
       message,
+      nextStep:
+        "Try the action again. If it keeps failing, reopen the local launch link and retry.",
       detail: error instanceof Error && error.stack ? error.stack : undefined,
       fatal: true
     });

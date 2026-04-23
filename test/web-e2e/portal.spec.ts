@@ -31,6 +31,8 @@ test.describe("portal web UI", () => {
   test("hydrates, submits a prompt, renders MCP, and opens drawers", async ({ page }) => {
     await page.goto(server.url);
     await expect(page.getByTitle("/tmp/project")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Copy link" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reconnect with this link" })).toBeVisible();
     await expect(page.getByText("Plan pending")).toBeVisible();
 
     await page.getByRole("tab", { name: "MCP" }).click();
@@ -246,13 +248,17 @@ async function renderIndex(): Promise<string> {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>pi-dual portal e2e</title>
     <link rel="stylesheet" href="/assets/portal.css" />
-    <script>window.__PI_DUAL_PORTAL__ = { protocolVersion: 1, authToken: "e2e-token", controllerId: "e2e-controller" };</script>
+    <script>window.__PI_DUAL_PORTAL__ = { protocolVersion: 1, authToken: "e2e-token", controllerId: "e2e-controller", launchUrl: "${serverLaunchUrlPlaceholder()}", host: "127.0.0.1", port: 0, localOnly: true, startupMessage: "PI Dual web interface is ready.", startupNotice: { scope: "startup", title: "PI Dual web interface is ready", message: "Open this link in any browser on this computer: ${serverLaunchUrlPlaceholder()}", nextStep: "If the link does not open automatically, copy and paste it into Chrome, Safari, Firefox, or another local browser." } };</script>
     <script type="module" src="/assets/portal.js"></script>
   </head>
   <body>
     <div id="root"></div>
   </body>
 </html>`;
+}
+
+function serverLaunchUrlPlaceholder(): string {
+  return "http://127.0.0.1:0/?token=e2e-token";
 }
 
 function createMockState(): any {

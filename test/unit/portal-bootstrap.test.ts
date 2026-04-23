@@ -59,6 +59,78 @@ describe("portal bootstrap", () => {
     expect(service.startCalls).toBe(1);
     expect(service.disposeCalls).toBe(1);
   });
+
+  it("prints guided startup instructions for the web interface", async () => {
+    const writes: string[] = [];
+
+    class StoppableService extends DisposableService {
+      public override subscribeState(listener: (state: InteractiveUiState) => void): () => void {
+        queueMicrotask(() => {
+          listener({
+            ...createState(),
+            shouldExit: true
+          });
+        });
+        return () => {};
+      }
+    }
+
+    const service = new StoppableService();
+
+    await bootstrapPortal(
+      {
+        command: "portal",
+        cwd: "/tmp/project",
+        port: 0,
+        sessionMode: "memory",
+        jsonLogs: false,
+        verbose: false,
+        maxReviewRounds: 3
+      },
+      {
+        createService: () => service,
+        openBrowser: async () => ({
+          status: "failed"
+        }),
+        startServer: async () => ({
+          authToken: "secret-token",
+          healthCheckUrl: "http://127.0.0.1:4317/healthz",
+          host: "127.0.0.1",
+          launchUrl: "http://127.0.0.1:4317/?token=secret-token",
+          localOnly: true,
+          port: 4317,
+          startupMessage: "",
+          startupNotice: {
+            scope: "startup",
+            title: "PI Dual web interface is ready",
+            message:
+              "Open this link in any browser on this computer: http://127.0.0.1:4317/?token=secret-token"
+          },
+          stop: async () => {}
+        }),
+        stdout: {
+          write(chunk: string) {
+            writes.push(chunk);
+            return true;
+          }
+        }
+      }
+    );
+
+    const output = writes.join("");
+    expect(output).toContain("PI Dual web interface is ready.");
+    expect(output).toContain(
+      "Open this link in any browser on this computer: http://127.0.0.1:4317/?token=secret-token"
+    );
+    expect(output).toContain(
+      "If the link does not open automatically, copy and paste it into Chrome, Safari, Firefox, or another local browser."
+    );
+    expect(output).toContain(
+      "This interface is only available on this machine because the server listens on localhost."
+    );
+    expect(output).toContain("Project loaded: /tmp/project");
+    expect(output).toContain("Health check URL: http://127.0.0.1:4317/healthz");
+  });
 });
 
 function createState(): InteractiveUiState {

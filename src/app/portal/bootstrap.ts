@@ -1,8 +1,10 @@
 import type { PortalCliOptions } from "../cli.js";
+import { openUrlInBrowser, type BrowserOpenResult } from "../browser.js";
 import {
   HeadlessInteractiveCoordinatorService,
   type InteractiveCoordinatorService
 } from "../interactive/service.js";
+import { renderStartupInstructions } from "../presentation/notices.js";
 import { startInteractivePortalServer } from "./server.js";
 import { Coordinator } from "../../coordinator/coordinator.js";
 
@@ -11,6 +13,7 @@ export interface BootstrapPortalDependencies {
   startServer?(
     options: Parameters<typeof startInteractivePortalServer>[0]
   ): ReturnType<typeof startInteractivePortalServer>;
+  openBrowser?(url: string): Promise<BrowserOpenResult>;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
 }
@@ -35,6 +38,15 @@ export async function bootstrapPortal(
       service,
       port: options.port
     });
+    const browserOpenResult = await (dependencies.openBrowser ?? openUrlInBrowser)(
+      portal.launchUrl
+    );
+    const startup = renderStartupInstructions({
+      browserOpenStatus: browserOpenResult.status,
+      healthCheckUrl: portal.healthCheckUrl,
+      launchUrl: portal.launchUrl,
+      projectPath: options.cwd
+    });
 
     const stopGate = createStopGate();
     removeSignalHandlers = installSignalHandlers(stopGate.stop);
@@ -44,8 +56,9 @@ export async function bootstrapPortal(
       }
     });
 
-    stdout.write(`Portal ready at ${portal.launchUrl}\n`);
-    stdout.write(`Health check at http://${portal.host}:${portal.port}/healthz\n`);
+    for (const line of startup.lines) {
+      stdout.write(`${line}\n`);
+    }
 
     await stopGate.wait;
   } finally {

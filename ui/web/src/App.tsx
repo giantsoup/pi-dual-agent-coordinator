@@ -111,10 +111,24 @@ export function App(): ReactElement {
   return (
     <div className="portal-shell">
       <AppHeader
+        bootstrap={session.bootstrap}
         connectionState={session.connectionState}
         controller={session.controller}
         isController={session.isController}
         lastEventId={session.lastEventId}
+        onCopyLink={async () => {
+          if (typeof navigator?.clipboard?.writeText !== "function") {
+            session.notifyCopyLinkResult(false);
+            return;
+          }
+
+          try {
+            await navigator.clipboard.writeText(session.bootstrap.launchUrl);
+            session.notifyCopyLinkResult(true);
+          } catch {
+            session.notifyCopyLinkResult(false);
+          }
+        }}
         snapshot={session.snapshot}
       />
 
@@ -123,7 +137,13 @@ export function App(): ReactElement {
           tone={activeBanner.tone}
           onDismiss={session.localBanner ? session.dismissBanner : undefined}
         >
-          {activeBanner.message}
+          {[
+            activeBanner.title,
+            activeBanner.message,
+            activeBanner.nextStep
+          ]
+            .filter(Boolean)
+            .join("\n")}
         </NoticeBanner>
       ) : null}
 
