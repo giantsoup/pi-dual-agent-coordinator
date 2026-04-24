@@ -6,7 +6,10 @@ import {
   type ServerResponse
 } from "node:http";
 
-import type { InteractiveCoordinatorService } from "../interactive/service.js";
+import {
+  InteractiveActionError,
+  type InteractiveCoordinatorService
+} from "../interactive/service.js";
 import {
   renderControllerActionNotice,
   renderNoticeText,
@@ -23,7 +26,7 @@ import {
   parsePortalActionRequestDto,
   type PortalControllerLockSnapshot
 } from "./protocol.js";
-import type { UiEvent } from "../../types/ui.js";
+import type { UiAction, UiEvent } from "../../types/ui.js";
 
 interface SseClient {
   id: string;
@@ -269,7 +272,11 @@ export async function startInteractivePortalServer(
         return;
       }
 
-      if (controller.locked && controller.controllerId !== body.controllerId) {
+      if (
+        controller.locked &&
+        controller.controllerId !== body.controllerId &&
+        !isViewOnlyAction(body.action)
+      ) {
         writeJson(
           response,
           409,
@@ -284,7 +291,7 @@ export async function startInteractivePortalServer(
         return;
       }
 
-      if (!controller.locked) {
+      if (!controller.locked && !isViewOnlyAction(body.action)) {
         controller = {
           locked: true,
           controllerId: body.controllerId
@@ -292,7 +299,25 @@ export async function startInteractivePortalServer(
         broadcastStateEcho();
       }
 
-      await options.service.dispatch(body.action);
+      try {
+        await options.service.dispatch(body.action);
+      } catch (error) {
+        if (error instanceof InteractiveActionError) {
+          writeJson(
+            response,
+            409,
+            createPortalActionResponseDto({
+              accepted: false,
+              state: options.service.getState(),
+              controller,
+              lastEventId,
+              error: error.message
+            })
+          );
+          return;
+        }
+        throw error;
+      }
       writeJson(
         response,
         200,
@@ -556,6 +581,22 @@ function hasLiveControllerStream(
     }
   }
   return false;
+}
+
+function isViewOnlyAction(action: UiAction): boolean {
+  return (
+    action.type === "select_thread" ||
+    action.type === "open_settings" ||
+    action.type === "close_settings" ||
+    action.type === "refresh_settings_providers" ||
+    action.type === "open_help" ||
+    action.type === "open_status" ||
+    action.type === "open_handoff" ||
+    action.type === "open_sessions" ||
+    action.type === "close_modal" ||
+    action.type === "verify_provider_target" ||
+    action.type === "set_timeline_group_expanded"
+  );
 }
 
 function writeJson(response: ServerResponse, statusCode: number, payload: unknown): void {

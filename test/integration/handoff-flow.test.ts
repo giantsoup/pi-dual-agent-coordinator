@@ -461,9 +461,10 @@ Plan draft below.
     await coordinator.dispose();
   });
 
-  it("rejects new input while a recovered workflow is still active", async () => {
+  it("supersedes a recovered workflow and accepts new input on startup", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-dual-active-workflow-"));
     const ledger = new SessionLedger(join(root, "ledger", "handoffs.jsonl"));
+    const runtimes = new Map<string, FakeRuntime>();
     await ledger.append({
       workflowId: "wf-active",
       handoffId: "h-1",
@@ -481,22 +482,30 @@ Plan draft below.
       sessionMode: "persistent",
       jsonLogs: false,
       verbose: false,
-      createRoleRuntime: async (options: CreateRoleRuntimeOptions) =>
-        createFakeBinding(
-          options.role,
-          new FakeRuntime(
-            process.cwd(),
-            new FakeSession(`${options.role}-session-1`, join(root, `${options.role}.jsonl`)),
-            options.role
-          )
-        )
+      createRoleRuntime: async (options: CreateRoleRuntimeOptions) => {
+        let session!: FakeSession;
+        session = new FakeSession(
+          `${options.role}-session-1`,
+          join(root, `${options.role}.jsonl`),
+          async () => {
+            await session.emit(assistantTurnEnd(""));
+          }
+        );
+        const runtime = new FakeRuntime(process.cwd(), session, options.role);
+        runtimes.set(options.role, runtime);
+        return createFakeBinding(options.role, runtime);
+      }
     });
 
     await coordinator.start();
-
-    await expect(coordinator.submitUserInput("Implement the feature")).rejects.toThrow(
-      "Cannot start a new task while workflow wf-active is still active"
-    );
+    const statusAfterStart = coordinator.getStatus();
+    expect(statusAfterStart.activeWorkflowId).toBeUndefined();
+    expect(statusAfterStart.lastSummary).toContain("superseded");
+    expect(runtimes.get("A")?.newSessionCount).toBe(1);
+    expect(runtimes.get("B")?.newSessionCount).toBe(1);
+    const workflowStatus = await coordinator.getWorkflowStatus();
+    expect(workflowStatus.state.workflows["wf-active"]?.status).toBe("blocked");
+    expect(workflowStatus.ledgerTail?.status).toBe("superseded");
 
     await coordinator.dispose();
   });

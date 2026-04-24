@@ -1,4 +1,10 @@
-import { forwardRef, type ReactElement, type ReactNode, type TextareaHTMLAttributes } from "react";
+import {
+  forwardRef,
+  useEffect,
+  type ReactElement,
+  type ReactNode,
+  type TextareaHTMLAttributes
+} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as RadixTabs from "@radix-ui/react-tabs";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
@@ -125,16 +131,33 @@ export function Drawer(props: {
   open: boolean;
   title: string;
 }): ReactElement {
+  useEffect(() => {
+    if (!props.open) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        props.onOpenChange(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [props.onOpenChange, props.open]);
+
   return (
     <Dialog.Root open={props.open} onOpenChange={props.onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="drawer-backdrop" />
         <Dialog.Content
+          aria-label={props.title}
           className="drawer-shell"
           aria-describedby={undefined}
           onEscapeKeyDown={(event) => {
             event.preventDefault();
-            props.onOpenChange(false);
           }}
         >
           <header className="drawer-header">
@@ -142,9 +165,18 @@ export function Drawer(props: {
               <div className="section-kicker">Shared Modal</div>
               <Dialog.Title className="drawer-title">{props.title}</Dialog.Title>
             </div>
-            <Dialog.Close asChild>
-              <IconButton aria-label="Close drawer" tooltip="Close drawer" icon={<X />} />
-            </Dialog.Close>
+            <Tooltip content="Close drawer">
+              <Dialog.Close asChild>
+                <button
+                  aria-label="Close drawer"
+                  className="icon-button"
+                  data-tone="neutral"
+                  type="button"
+                >
+                  <X />
+                </button>
+              </Dialog.Close>
+            </Tooltip>
           </header>
           <div className="drawer-body">{props.children}</div>
         </Dialog.Content>

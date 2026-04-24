@@ -10,6 +10,7 @@ import { Coordinator } from "../../coordinator/coordinator.js";
 
 export interface BootstrapPortalDependencies {
   createService?(options: PortalCliOptions): InteractiveCoordinatorService;
+  launchOptions?: PortalCliOptions | undefined;
   startServer?(
     options: Parameters<typeof startInteractivePortalServer>[0]
   ): ReturnType<typeof startInteractivePortalServer>;
@@ -24,7 +25,10 @@ export async function bootstrapPortal(
 ): Promise<void> {
   const service =
     dependencies.createService?.(options) ??
-    new HeadlessInteractiveCoordinatorService(new Coordinator(options));
+    new HeadlessInteractiveCoordinatorService(new Coordinator(options), {
+      createCoordinator: (nextOptions) => new Coordinator(nextOptions),
+      portalOptions: dependencies.launchOptions ?? options
+    });
   let portal:
     | Awaited<ReturnType<typeof startInteractivePortalServer>>
     | undefined;

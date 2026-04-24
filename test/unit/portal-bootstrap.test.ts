@@ -136,6 +136,10 @@ describe("portal bootstrap", () => {
 function createState(): InteractiveUiState {
   return {
     status: {
+      threadId: "thread-1",
+      threadTitle: "Thread 1",
+      threadStartedAt: "2026-04-20T00:00:00.000Z",
+      threadUpdatedAt: "2026-04-20T00:00:00.000Z",
       cwd: "/tmp/project",
       conversationMode: "planning",
       phase: "planning",
@@ -150,6 +154,16 @@ function createState(): InteractiveUiState {
       metrics: {}
     },
     conversation: [],
+    workspace: {
+      projects: [],
+      recentProjects: [],
+      threads: [],
+      activeThreadId: "thread-1",
+      selectedThreadId: "thread-1"
+    },
+    timeline: [],
+    activeView: "thread",
+    settings: createEmptySettingsState(),
     activity: {
       runtimes: {},
       history: {}
@@ -160,5 +174,29 @@ function createState(): InteractiveUiState {
     },
     notifications: [],
     shouldExit: false
+  };
+}
+
+function createEmptySettingsState() {
+  return {
+    activeScope: "global" as const,
+    effective: {
+      values: {},
+      sources: {
+        modelA: "legacy" as const,
+        modelB: "legacy" as const,
+        thinkingA: "legacy" as const,
+        thinkingB: "legacy" as const,
+        mcpEnabled: "legacy" as const
+      }
+    },
+    scopes: {
+      global: { scope: "global" as const, label: "Global defaults", available: true, hasOverrides: false, values: {} },
+      project: { scope: "project" as const, label: "Project overrides", available: false, hasOverrides: false, values: {} },
+      thread: { scope: "thread" as const, label: "Thread overrides", available: false, hasOverrides: false, values: {} }
+    },
+    providers: [],
+    catalogByProvider: {},
+    providerOperation: undefined
   };
 }

@@ -1,6 +1,6 @@
 import type { RuntimeStatusSnapshot } from "../../../../src/types/status.js";
 import type { Role } from "../../../../src/types/role.js";
-import type { UiConversationEntry } from "../../../../src/types/ui.js";
+import type { UiConversationEntry, UiTimelineActor, UiTimelineStatus } from "../../../../src/types/ui.js";
 import type { CoordinatorMcpStatusSnapshot, RoleMcpStatusSnapshot } from "../../../../src/mcp/types.js";
 import type { Actor, Tone } from "../components/ui.js";
 import type { ConnectionState } from "../state/usePortalSession.js";
@@ -110,4 +110,36 @@ export function summarizeMcp(status: CoordinatorMcpStatusSnapshot | undefined): 
     return "MCP disabled";
   }
   return `A: ${summarizeMcpRole(status.roleA)} · B: ${summarizeMcpRole(status.roleB)}`;
+}
+
+export function timelineActorLabel(actor: UiTimelineActor): string {
+  switch (actor) {
+    case "operator":
+      return "Operator";
+    case "system":
+      return "System";
+    case "A":
+      return "Agent A";
+    case "B":
+      return "Agent B";
+  }
+}
+
+export function timelineStatusTone(status: UiTimelineStatus): Tone {
+  switch (status) {
+    case "active":
+      return "accent";
+    case "completed":
+      return "success";
+    case "failed":
+      return "danger";
+  }
+}
+
+export function formatDuration(durationMs: number | undefined): string {
+  if (!durationMs || durationMs < 1000) {
+    return durationMs ? `${durationMs}ms` : "now";
+  }
+  const seconds = Math.round(durationMs / 100) / 10;
+  return `${seconds}s`;
 }

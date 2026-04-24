@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   renderConfigSaveNotice,
   renderNoticeText,
+  renderProjectLaunchBlockedNotice,
+  renderProjectLaunchSuccessNotice,
+  renderProjectValidationNotice,
   renderRecoveryNotice,
   renderStartupInstructions,
   renderThreadLaunchNotice
@@ -61,5 +64,17 @@ describe("presentation notices", () => {
 
     expect(renderNoticeText(notice)).toContain("Resume it");
     expect(renderNoticeText(notice)).toContain("/tmp/project");
+  });
+
+  it("renders project launcher notices with explicit guidance", () => {
+    expect(renderNoticeText(renderProjectLaunchBlockedNotice("pending_plan"))).toContain(
+      "Approve it, discard it"
+    );
+    expect(renderProjectLaunchSuccessNotice("/tmp/project-b").message).toContain(
+      "/tmp/project-b"
+    );
+    expect(renderProjectValidationNotice("Project path was not valid: directory does not exist.").message).toContain(
+      "directory does not exist"
+    );
   });
 });

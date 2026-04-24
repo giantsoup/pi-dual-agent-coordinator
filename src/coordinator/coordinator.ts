@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
@@ -71,6 +71,7 @@ export interface CoordinatorOptions {
   maxReviewRounds?: number;
   mcpEnabled?: boolean;
   mcpConfigPaths?: string[];
+  supersedeRecoveredWorkflowOnStart?: boolean;
   createRoleRuntime?: typeof createRoleRuntime;
   stdout?: NodeJS.WriteStream;
   stderr?: NodeJS.WriteStream;
@@ -86,6 +87,10 @@ export class Coordinator {
   private readonly workflowOrchestrator: WorkflowOrchestrator;
   private readonly runtimeFactory: typeof createRoleRuntime;
   private readonly eventBridge: RuntimeEventBridge;
+  private readonly threadId = randomUUID();
+  private readonly threadStartedAt = new Date().toISOString();
+  private threadUpdatedAt = this.threadStartedAt;
+  private threadTitle: string;
   private resolvedMcpConfig: ResolvedMcpConfig = {
     enabled: false,
     projectRoot: "",
@@ -107,6 +112,7 @@ export class Coordinator {
 
   public constructor(private readonly options: CoordinatorOptions) {
     this.sessionRoot = options.sessionRoot ?? getDefaultSessionRoot(options.cwd);
+    this.threadTitle = basename(options.cwd) || options.cwd;
     const paths = createPersistencePaths(this.sessionRoot);
     this.ledger = new SessionLedger(paths.ledgerFile);
     this.logger = new TelemetryLogger({
@@ -169,9 +175,11 @@ export class Coordinator {
     await this.eventBridge.bind(bindingA);
     await this.eventBridge.bind(bindingB);
     this.setUiState("planning", "A");
+    await this.supersedeRecoveredWorkflowOnStartIfNeeded();
   }
 
   public async submitUserInput(text: string): Promise<CoordinatorTurnResult> {
+    this.touchThread();
     this.clearAllActivity();
     const activeWorkflow = this.getActiveWorkflow();
     if (activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)) {
@@ -262,6 +270,7 @@ export class Coordinator {
   }
 
   public async approvePendingPlan(): Promise<CoordinatorTurnResult> {
+    this.touchThread();
     this.clearAllActivity();
     const activeWorkflow = this.getActiveWorkflow();
     if (activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)) {
@@ -320,6 +329,7 @@ export class Coordinator {
     if (!this.pendingPlan) {
       return;
     }
+    this.touchThread();
     const bindingA = this.registry.get("A");
     const requestId = this.pendingPlan.requestId;
     this.pendingPlan = undefined;
@@ -331,6 +341,7 @@ export class Coordinator {
   }
 
   public async replaceRuntime(role: Role, action: RuntimeReplacementAction): Promise<void> {
+    this.touchThread();
     const binding = this.requireBinding(role);
     const updated = await applyRuntimeOperation(binding, action);
     this.registry.set(updated);
@@ -362,6 +373,10 @@ export class Coordinator {
     const activeSnapshot = this.runtimeActivity.get(this.uiState.activeRole);
 
     return {
+      threadId: this.threadId,
+      threadTitle: this.threadTitle,
+      threadStartedAt: this.threadStartedAt,
+      threadUpdatedAt: this.threadUpdatedAt,
       cwd: this.options.cwd,
       conversationMode: this.getConversationMode(),
       phase: this.uiState.phase,
@@ -648,26 +663,60 @@ export class Coordinator {
       return;
     }
 
+    await this.supersedeWorkflow(activeWorkflow, {
+      binding,
+      reason: `Runtime ${role} was replaced while the workflow was still active.`,
+      lastSummary: `Workflow ${activeWorkflow.workflowId} was superseded after runtime ${role} was replaced.`,
+      replacedRole: role
+    });
+  }
+
+  private async supersedeRecoveredWorkflowOnStartIfNeeded(): Promise<void> {
+    if (this.options.supersedeRecoveredWorkflowOnStart === false) {
+      return;
+    }
+
+    const activeWorkflow = this.getActiveWorkflow();
+    if (!activeWorkflow || isWorkflowTerminal(activeWorkflow.status)) {
+      return;
+    }
+
+    await this.replaceRuntime("A", { type: "new", role: "A" });
+    await this.replaceRuntime("B", { type: "new", role: "B" });
+    this.lastSummary =
+      `Workflow ${activeWorkflow.workflowId} was superseded when PI Dual started fresh runtime sessions.`;
+  }
+
+  private async supersedeWorkflow(
+    activeWorkflow: WorkflowSnapshot,
+    input: {
+      binding: RoleRuntimeBinding;
+      reason: string;
+      lastSummary: string;
+      replacedRole: Role;
+    }
+  ): Promise<void> {
     await this.ledger.append({
       workflowId: activeWorkflow.workflowId,
       iteration: activeWorkflow.currentIteration,
       status: "superseded",
       role: "coordinator",
       requestId: activeWorkflow.requestId,
-      sessionId: binding.sessionId,
-      sessionFile: binding.sessionFile,
+      sessionId: input.binding.sessionId,
+      sessionFile: input.binding.sessionFile,
       timestamp: new Date().toISOString(),
       details: {
-        reason: `Runtime ${role} was replaced while the workflow was still active.`,
-        replacedRole: role
+        reason: input.reason,
+        replacedRole: input.replacedRole
       }
     });
     this.workflowState = await this.recoveryLoader.load();
-    this.lastSummary = `Workflow ${activeWorkflow.workflowId} was superseded after runtime ${role} was replaced.`;
+    this.lastSummary = input.lastSummary;
     this.clearAllActivity();
   }
 
   private observeActivityEvent(event: NormalizedTelemetryEvent): void {
+    this.touchThread(event.timestamp);
     if (
       (event.eventType === "pi.tool_execution_start" ||
         event.eventType === "pi.tool_execution_update" ||
@@ -705,6 +754,10 @@ export class Coordinator {
   private clearAllActivity(): void {
     this.runtimeActivity.clear();
     this.coordinatorActivity = undefined;
+  }
+
+  private touchThread(timestamp = new Date().toISOString()): void {
+    this.threadUpdatedAt = timestamp;
   }
 }
 

@@ -1,49 +1,42 @@
 :root {
   color-scheme: dark;
-  --bg: #080a0d;
-  --bg-raised: #0e1217;
-  --surface: #11161c;
-  --surface-subtle: #151b22;
-  --surface-muted: #1d2630;
-  --surface-hover: #24303b;
-  --line: #2a333d;
-  --line-strong: #3c4855;
-  --text: #edf3f7;
-  --text-muted: #a3b0bd;
-  --text-soft: #748191;
-  --actor-coordinator: #a9b6c6;
-  --actor-a: #35d0b3;
-  --actor-b: #f1b95b;
-  --actor-unknown: #818c9a;
-  --status-ok: #35d0a7;
-  --status-warning: #f3bc4c;
-  --status-danger: #ff6f6f;
-  --accent: #83a8ff;
-  --focus: #9cc4ff;
-  --on-accent: #06111f;
-  --on-success: #041814;
-  --on-danger: #210607;
-  --tone-accent-bg: rgba(131, 168, 255, 0.14);
-  --tone-accent-border: #435f9c;
-  --tone-success-bg: rgba(53, 208, 167, 0.14);
-  --tone-success-border: #2e7567;
-  --tone-warning-bg: rgba(243, 188, 76, 0.16);
-  --tone-warning-border: #806738;
-  --tone-danger-bg: rgba(255, 111, 111, 0.15);
-  --tone-danger-border: #8f4a4d;
-  --overlay: rgba(2, 5, 8, 0.72);
-  --shadow-raised: 0 18px 48px rgba(0, 0, 0, 0.42);
-  --shadow-subtle: 0 1px 0 rgba(255, 255, 255, 0.035) inset;
-  --code-bg: #070a0f;
-  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
-  --radius: 8px;
+  --bg: #071017;
+  --bg-deep: #04090f;
+  --bg-warm: rgba(173, 107, 53, 0.12);
+  --surface: rgba(13, 21, 30, 0.76);
+  --surface-raised: rgba(19, 30, 42, 0.88);
+  --surface-soft: rgba(29, 44, 59, 0.52);
+  --surface-strong: rgba(37, 58, 78, 0.74);
+  --surface-accent: rgba(110, 166, 255, 0.12);
+  --divider: rgba(191, 209, 228, 0.1);
+  --divider-strong: rgba(210, 225, 243, 0.16);
+  --text: #edf5fb;
+  --text-muted: #b1c0ce;
+  --text-soft: #7f93a7;
+  --operator: #a6b3c3;
+  --agent-a: #2ec9ae;
+  --agent-b: #ecb04b;
+  --system: #9aa7b8;
+  --danger: #ff7d76;
+  --success: #54d5a7;
+  --accent: #8bb4ff;
+  --focus: #d4e6ff;
+  --overlay: rgba(4, 8, 12, 0.68);
+  --shadow-panel: 0 28px 64px rgba(0, 0, 0, 0.32);
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --font-ui: "IBM Plex Sans", ui-sans-serif, sans-serif;
+  --font-display: "Space Grotesk", "IBM Plex Sans", ui-sans-serif, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
 * {
@@ -58,17 +51,16 @@ body,
 
 body {
   margin: 0;
-  background:
-    linear-gradient(180deg, rgba(42, 32, 28, 0.18), transparent 260px),
-    linear-gradient(135deg, rgba(34, 44, 52, 0.28), transparent 38%),
-    var(--bg);
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
   font-size: 14px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 button,
+input,
+select,
 textarea {
   font: inherit;
 }
@@ -81,19 +73,35 @@ button:disabled {
   cursor: not-allowed;
 }
 
-::selection {
-  background: rgba(131, 168, 255, 0.34);
+input,
+select,
+textarea {
   color: var(--text);
-}
-
-* {
-  scrollbar-color: var(--line-strong) var(--surface-subtle);
 }
 
 pre,
 code,
-textarea {
+textarea,
+.timeline-row-item__details,
+.message-card__body {
   font-family: var(--font-mono);
+}
+
+h1,
+h2,
+h3,
+h4,
+strong {
+  font-family: var(--font-display);
+}
+
+::selection {
+  background: rgba(139, 180, 255, 0.32);
+  color: var(--text);
+}
+
+* {
+  scrollbar-color: var(--divider-strong) transparent;
 }
 
 :focus-visible {

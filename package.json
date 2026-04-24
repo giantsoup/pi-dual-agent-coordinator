@@ -62,6 +62,9 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/space-grotesk": "^5.2.10",
     "@mariozechner/pi-coding-agent": "^0.67.68",
     "@mariozechner/pi-tui": "^0.67.68",
     "@modelcontextprotocol/sdk": "^1.29.0",

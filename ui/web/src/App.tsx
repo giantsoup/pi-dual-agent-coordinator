@@ -2,136 +2,90 @@ import {
   useDeferredValue,
   useEffect,
   useEffectEvent,
+  useState,
   type ReactElement
 } from "react";
 
-import type { UiAction, UiConversationEntry } from "../../../src/types/ui.js";
-import { NoticeBanner, SplitPane } from "./components/ui.js";
-import { AppHeader } from "./features/AppHeader.js";
-import { CommandDock } from "./features/CommandDock.js";
-import { InspectorPanel } from "./features/InspectorPanel.js";
+import type { UiAction } from "../../../src/types/ui.js";
+import { NoticeBanner } from "./components/ui.js";
+import { ComposerBar } from "./features/ComposerBar.js";
 import { ModalDrawer } from "./features/ModalDrawer.js";
-import { TranscriptPane } from "./features/TranscriptPane.js";
+import { SettingsView } from "./features/SettingsView.js";
+import { ThreadHeader } from "./features/ThreadHeader.js";
+import { TimelineFeed } from "./features/TimelineFeed.js";
+import { WorkspaceSidebar } from "./features/WorkspaceSidebar.js";
 import {
   toSnapshotBanner,
   usePortalSession
 } from "./state/usePortalSession.js";
 
-const EMPTY_CONVERSATION: UiConversationEntry[] = [];
-
 export function App(): ReactElement {
   const session = usePortalSession();
-  const conversation = useDeferredValue(
-    session.snapshot?.conversation ?? EMPTY_CONVERSATION
-  );
-  const liveStream = useDeferredValue(session.snapshot?.liveStream);
-  const activeBanner = session.localBanner ?? toSnapshotBanner(session.snapshot);
-  const hasPendingPlan = Boolean(session.snapshot?.pendingPlan);
-
-  const dispatch = useEffectEvent((action: UiAction) => {
-    return session.dispatchAction(action);
-  });
-
-  const handleGlobalKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented) {
-      return;
-    }
-
-    const lowerKey = event.key.toLowerCase();
-    if (event.key === "Escape") {
-      if (session.snapshot?.modal.kind !== "none" && session.canMutate) {
-        event.preventDefault();
-        void dispatch({ type: "close_modal" });
-        return;
-      }
-      if (session.localBanner) {
-        event.preventDefault();
-        session.dismissBanner();
-      }
-      return;
-    }
-
-    if (!(event.ctrlKey || event.metaKey)) {
-      return;
-    }
-
-    if (lowerKey === "/" && !event.shiftKey) {
-      event.preventDefault();
-      void dispatch({ type: "open_help" });
-      return;
-    }
-
-    if (!event.shiftKey) {
-      return;
-    }
-
-    switch (lowerKey) {
-      case "a":
-        if (hasPendingPlan) {
-          event.preventDefault();
-          void dispatch({ type: "approve_pending_plan" });
-        }
-        break;
-      case "d":
-        if (hasPendingPlan) {
-          event.preventDefault();
-          void dispatch({ type: "discard_pending_plan" });
-        }
-        break;
-      case "h":
-        event.preventDefault();
-        void dispatch({ type: "open_handoff" });
-        break;
-      case "q":
-        event.preventDefault();
-        void dispatch({ type: "quit" });
-        break;
-      case "s":
-        event.preventDefault();
-        void dispatch({ type: "open_status" });
-        break;
-      case "u":
-        event.preventDefault();
-        void dispatch({ type: "open_sessions" });
-        break;
-    }
-  });
+  const snapshot = session.snapshot;
+  const timeline = useDeferredValue(snapshot?.timeline ?? []);
+  const activeBanner = session.localBanner ?? toSnapshotBanner(snapshot);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const dispatch = useEffectEvent((action: UiAction) => session.dispatchAction(action));
 
   useEffect(() => {
-    window.addEventListener("keydown", handleGlobalKeyDown, {
-      capture: true
-    });
-    return () => {
-      window.removeEventListener("keydown", handleGlobalKeyDown, {
-        capture: true
+    if (!snapshot) {
+      return;
+    }
+    syncUrlWithState(snapshot);
+  }, [snapshot]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    const requestedThreadId = url.searchParams.get("threadId");
+    const requestedView = url.searchParams.get("view");
+    const requestedScope = url.searchParams.get("scope");
+
+    if (
+      requestedThreadId &&
+      requestedThreadId !== snapshot.workspace.selectedThreadId
+    ) {
+      void dispatch({
+        type: "select_thread",
+        threadId: requestedThreadId
       });
-    };
-  }, [handleGlobalKeyDown]);
+      return;
+    }
+
+    if (requestedView === "settings" && snapshot.activeView !== "settings") {
+      void dispatch({
+        type: "open_settings",
+        scope:
+          requestedScope === "global" ||
+          requestedScope === "project" ||
+          requestedScope === "thread"
+            ? requestedScope
+            : undefined
+      });
+      return;
+    }
+
+    if (requestedView !== "settings" && snapshot.activeView === "settings") {
+      void dispatch({ type: "close_settings" });
+    }
+  }, [dispatch, snapshot]);
+
+  const selectedThreadId = snapshot?.workspace.selectedThreadId;
+  const activeThreadId = snapshot?.workspace.activeThreadId;
+  const isLiveThread = Boolean(selectedThreadId && selectedThreadId === activeThreadId);
+  const canOpenUtilities = session.connectionState === "connected";
+  const disabledReason = !isLiveThread
+    ? "This thread is a persisted local snapshot. Return to the live thread to continue the conversation."
+    : session.connectionState !== "connected"
+      ? "The local event stream is reconnecting."
+      : !session.canMutate
+        ? "This browser tab is read-only right now."
+        : "The live thread is ready.";
 
   return (
-    <div className="portal-shell">
-      <AppHeader
-        bootstrap={session.bootstrap}
-        connectionState={session.connectionState}
-        controller={session.controller}
-        isController={session.isController}
-        lastEventId={session.lastEventId}
-        onCopyLink={async () => {
-          if (typeof navigator?.clipboard?.writeText !== "function") {
-            session.notifyCopyLinkResult(false);
-            return;
-          }
-
-          try {
-            await navigator.clipboard.writeText(session.bootstrap.launchUrl);
-            session.notifyCopyLinkResult(true);
-          } catch {
-            session.notifyCopyLinkResult(false);
-          }
-        }}
-        snapshot={session.snapshot}
-      />
-
+    <div className="workspace-shell">
       {activeBanner ? (
         <NoticeBanner
           tone={activeBanner.tone}
@@ -147,48 +101,82 @@ export function App(): ReactElement {
         </NoticeBanner>
       ) : null}
 
-      <SplitPane
-        left={
-          <TranscriptPane
-            canMutate={session.canMutate}
-            conversation={conversation}
-            isSubmitting={session.isSubmitting}
-            liveStream={liveStream}
-            onAction={dispatch}
-          />
-        }
-        right={
-          <InspectorPanel
-            canMutate={session.canMutate}
-            isSubmitting={session.isSubmitting}
-            snapshot={session.snapshot}
-            onApprovePlan={() => {
-              void dispatch({ type: "approve_pending_plan" });
-            }}
-            onDiscardPlan={() => {
-              void dispatch({ type: "discard_pending_plan" });
-            }}
-          />
-        }
-      />
+      <div className="workspace-layout">
+        <WorkspaceSidebar
+          activeView={snapshot?.activeView ?? "thread"}
+          canOpenProject={session.canMutate && session.connectionState === "connected"}
+          connectionState={session.connectionState}
+          mobileOpen={mobileSidebarOpen}
+          onAction={dispatch}
+          onCloseMobile={() => setMobileSidebarOpen(false)}
+          workspace={
+            snapshot?.workspace ?? {
+              projects: [],
+              recentProjects: [],
+              threads: []
+            }
+          }
+        />
 
-      <CommandDock
-        canMutate={session.canMutate}
-        connectionState={session.connectionState}
-        controller={session.controller}
-        hasPendingPlan={hasPendingPlan}
-        isController={session.isController}
-        isSubmitting={session.isSubmitting}
-        onAction={dispatch}
-      />
+        <main className="workspace-main">
+          {snapshot ? (
+            snapshot.activeView === "settings" ? (
+              <SettingsView
+                canMutate={session.canMutate}
+                isSubmitting={session.isSubmitting}
+                onAction={dispatch}
+                settings={snapshot.settings}
+              />
+            ) : (
+              <>
+                <ThreadHeader
+                  canOpenUtilities={canOpenUtilities}
+                  canMutate={session.canMutate}
+                  isLiveThread={isLiveThread}
+                  onAction={dispatch}
+                  onOpenSidebar={() => setMobileSidebarOpen(true)}
+                  snapshot={snapshot}
+                />
+                <TimelineFeed onAction={dispatch} timeline={timeline} />
+                <ComposerBar
+                  canOpenUtilities={canOpenUtilities}
+                  canMutate={session.canMutate}
+                  connectionState={session.connectionState}
+                  disabledReason={disabledReason}
+                  hasPendingPlan={Boolean(snapshot.pendingPlan)}
+                  isLiveThread={isLiveThread}
+                  isSubmitting={session.isSubmitting}
+                  onAction={dispatch}
+                />
+              </>
+            )
+          ) : (
+            <section className="workspace-loading">
+              <h2>Loading local workspace</h2>
+              <p>Waiting for the first authoritative PI Dual snapshot.</p>
+            </section>
+          )}
+        </main>
+      </div>
 
       <ModalDrawer
-        canMutate={session.canMutate}
-        modal={session.snapshot?.modal ?? { kind: "none" }}
+        modal={snapshot?.modal ?? { kind: "none" }}
         onClose={() => {
           void dispatch({ type: "close_modal" });
         }}
       />
     </div>
   );
+}
+
+function syncUrlWithState(snapshot: NonNullable<ReturnType<typeof usePortalSession>["snapshot"]>): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("threadId", snapshot.workspace.selectedThreadId ?? snapshot.status.threadId);
+  url.searchParams.set("view", snapshot.activeView);
+  if (snapshot.activeView === "settings") {
+    url.searchParams.set("scope", snapshot.settings.activeScope);
+  } else {
+    url.searchParams.delete("scope");
+  }
+  window.history.replaceState({}, "", `${url.pathname}${url.search}`);
 }

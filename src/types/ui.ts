@@ -4,6 +4,234 @@ import type { CoordinatorStatusSnapshot } from "./status.js";
 import type { Role } from "./role.js";
 import type { PendingExecutionPlanSnapshot } from "./workflow.js";
 
+export type UiSettingsFieldSource =
+  | "cli"
+  | "thread"
+  | "project"
+  | "global"
+  | "legacy";
+
+export type UiSettingsScope = "global" | "project" | "thread";
+export type UiProviderKind =
+  | "openai-codex"
+  | "openai"
+  | "lm-studio"
+  | "ollama"
+  | "custom-openai-compatible";
+
+export interface UiProviderAuthState {
+  connected: boolean;
+  label: string;
+  source:
+    | "oauth"
+    | "stored-key"
+    | "env-var"
+    | "custom-env-var"
+    | "no-auth"
+    | "unknown";
+  detail?: string | undefined;
+}
+
+export interface UiProviderDiscoveryState {
+  available: boolean;
+  reachable: boolean;
+  running?: boolean | undefined;
+  installed?: boolean | undefined;
+  modelsFound: number;
+  label: string;
+  detail?: string | undefined;
+  lastVerifiedAt?: string | undefined;
+}
+
+export interface UiProviderVerifyState {
+  status: "idle" | "running" | "passed" | "failed";
+  message?: string | undefined;
+  target?: string | undefined;
+  checkedAt?: string | undefined;
+  nextStep?: string | undefined;
+}
+
+export interface UiSelectableModel {
+  id: string;
+  provider: string;
+  canonicalRef: string;
+  name: string;
+  available: boolean;
+  reasoning: boolean;
+  supportsReasoningEffort: boolean;
+  input: Array<"text" | "image">;
+  contextWindow?: number | undefined;
+  maxTokens?: number | undefined;
+  detail?: string | undefined;
+}
+
+export interface UiSettingsProviderState {
+  id: string;
+  kind: UiProviderKind;
+  label: string;
+  auth: UiProviderAuthState;
+  discovery: UiProviderDiscoveryState;
+  verify: UiProviderVerifyState;
+  hidden?: boolean | undefined;
+  sourceModelCount: number;
+  defaultModelId?: string | undefined;
+}
+
+export interface UiSettingsProviderCatalog {
+  providers: UiSettingsProviderState[];
+  catalogByProvider: Record<string, UiSelectableModel[]>;
+  lastDiscoveryAt?: string | undefined;
+}
+
+export interface UiSettingsValues {
+  modelA?: string | undefined;
+  modelB?: string | undefined;
+  thinkingA?: "off" | "low" | "medium" | "high" | undefined;
+  thinkingB?: "off" | "low" | "medium" | "high" | undefined;
+  mcpEnabled?: boolean | undefined;
+}
+
+export interface UiSettingsOverrides {
+  modelA?: string | null | undefined;
+  modelB?: string | null | undefined;
+  thinkingA?: "off" | "low" | "medium" | "high" | null | undefined;
+  thinkingB?: "off" | "low" | "medium" | "high" | null | undefined;
+  mcpEnabled?: boolean | null | undefined;
+}
+
+export interface UiSettingsScopeState {
+  scope: UiSettingsScope;
+  label: string;
+  description?: string | undefined;
+  available: boolean;
+  hasOverrides: boolean;
+  values: UiSettingsValues;
+}
+
+export interface UiSettingsState {
+  activeScope: UiSettingsScope;
+  scopes: Record<UiSettingsScope, UiSettingsScopeState>;
+  effective: {
+    values: UiSettingsValues;
+    sources: Record<keyof UiSettingsValues, UiSettingsFieldSource>;
+  };
+  providers: UiSettingsProviderState[];
+  catalogByProvider: Record<string, UiSelectableModel[]>;
+  lastDiscoveryAt?: string | undefined;
+  providerOperation?:
+    | {
+        kind:
+          | "refresh"
+          | "connect_oauth"
+          | "save_api_key"
+          | "save_custom_provider"
+          | "verify_target";
+        provider: string;
+        status: "idle" | "running" | "error";
+        message?: string | undefined;
+      }
+    | undefined;
+}
+
+export interface UiWorkspaceThread {
+  id: string;
+  threadId: string;
+  title: string;
+  projectHash: string;
+  projectName: string;
+  projectPath: string;
+  startedAt: string;
+  updatedAt: string;
+  latestStatus: string;
+  latestSummary?: string | undefined;
+  activeModelA?: string | undefined;
+  activeModelB?: string | undefined;
+  resumable: boolean;
+  isActive: boolean;
+}
+
+export interface UiWorkspaceProject {
+  id: string;
+  projectHash: string;
+  projectName: string;
+  projectPath: string;
+  threads: UiWorkspaceThread[];
+}
+
+export interface UiRecentProject {
+  path: string;
+  name: string;
+  lastOpenedAt: string;
+}
+
+export interface UiWorkspaceState {
+  projects: UiWorkspaceProject[];
+  recentProjects: UiRecentProject[];
+  threads: UiWorkspaceThread[];
+  activeThreadId?: string | undefined;
+  selectedThreadId?: string | undefined;
+}
+
+export type UiTimelineActor = "operator" | "system" | Role;
+export type UiTimelineActivityKind =
+  | "message"
+  | "thinking"
+  | "mcp"
+  | "harness"
+  | "workflow"
+  | "plan"
+  | "system";
+export type UiTimelineStatus = "active" | "completed" | "failed";
+
+export interface UiTimelineChildRow {
+  id: string;
+  toolCallId?: string | undefined;
+  toolName?: string | undefined;
+  summary: string;
+  detailPreview?: string | undefined;
+  target?: string | undefined;
+  argsPreview?: string | undefined;
+  resultPreview?: string | undefined;
+  errorPreview?: string | undefined;
+  status: UiTimelineStatus;
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface UiTimelineMessageItem {
+  id: string;
+  kind: "message";
+  threadId: string;
+  activityKind: "message";
+  actor: UiTimelineActor;
+  sourceLabel: string;
+  createdAt: string;
+  text: string;
+  streaming: boolean;
+}
+
+export interface UiTimelineGroupItem {
+  id: string;
+  kind: "group";
+  threadId: string;
+  activityKind: Exclude<UiTimelineActivityKind, "message">;
+  actor: UiTimelineActor;
+  sourceLabel: string;
+  summary: string;
+  startedAt: string;
+  updatedAt: string;
+  durationMs?: number | undefined;
+  status: UiTimelineStatus;
+  expanded: boolean;
+  inline?: boolean | undefined;
+  requestId?: string | undefined;
+  turnIndex?: number | undefined;
+  rows: UiTimelineChildRow[];
+  expansionMode?: "auto" | "manual" | undefined;
+}
+
+export type UiTimelineItem = UiTimelineMessageItem | UiTimelineGroupItem;
+
 export interface UiNotification {
   id: string;
   level: "info" | "error";
@@ -162,6 +390,10 @@ export type UiConversationEntryDraft =
 export interface InteractiveUiState {
   status: CoordinatorStatusSnapshot;
   conversation: UiConversationEntry[];
+  workspace: UiWorkspaceState;
+  timeline: UiTimelineItem[];
+  activeView: "thread" | "settings";
+  settings: UiSettingsState;
   liveStream?: UiStreamingState | undefined;
   activity: UiActivityState;
   pendingPlan?: UiPendingPlanState | undefined;
@@ -207,6 +439,57 @@ export type UiAction =
       sessionPath?: string | undefined;
     }
   | {
+      type: "select_thread";
+      threadId: string;
+    }
+  | {
+      type: "launch_project_thread";
+      projectPath: string;
+    }
+  | {
+      type: "open_settings";
+      scope?: UiSettingsScope | undefined;
+    }
+  | {
+      type: "close_settings";
+    }
+  | {
+      type: "save_settings";
+      scope: UiSettingsScope;
+      values: UiSettingsOverrides;
+    }
+  | {
+      type: "refresh_settings_providers";
+    }
+  | {
+      type: "connect_provider_oauth";
+      provider: "openai-codex";
+    }
+  | {
+      type: "save_provider_api_key";
+      provider: "openai";
+      mode: "paste-now" | "openai-api-key-env" | "custom-env";
+      value?: string | undefined;
+    }
+  | {
+      type: "save_custom_provider";
+      label: string;
+      baseUrl: string;
+      authMode: "paste-now" | "env-var" | "custom-env" | "no-auth";
+      authValue?: string | undefined;
+      modelId: string;
+    }
+  | {
+      type: "verify_provider_target";
+      provider: string;
+      modelId?: string | undefined;
+    }
+  | {
+      type: "set_timeline_group_expanded";
+      itemId: string;
+      expanded: boolean;
+    }
+  | {
       type: "close_modal";
     }
   | {
@@ -235,6 +518,21 @@ export type UiEvent =
       role: Role;
       sessionId: string;
       text: string;
+    }
+  | {
+      type: "timeline_appended";
+      state: InteractiveUiState;
+      items: UiTimelineItem[];
+    }
+  | {
+      type: "workspace_updated";
+      state: InteractiveUiState;
+      workspace: UiWorkspaceState;
+    }
+  | {
+      type: "settings_updated";
+      state: InteractiveUiState;
+      settings: UiSettingsState;
     }
   | {
       type: "activity_changed";

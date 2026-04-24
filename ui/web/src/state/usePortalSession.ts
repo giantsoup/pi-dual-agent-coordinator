@@ -64,6 +64,16 @@ export function usePortalSession(): PortalSession {
   const canMutate =
     connectionState === "connected" && (!controller.locked || isController);
 
+  const canDispatchAction = useEffectEvent((action: UiAction): boolean => {
+    if (connectionState !== "connected") {
+      return false;
+    }
+    if (isViewOnlyAction(action)) {
+      return true;
+    }
+    return !controller.locked || isController;
+  });
+
   const applySnapshot = useEffectEvent(
     (
       nextSnapshot: InteractiveUiState,
@@ -85,11 +95,11 @@ export function usePortalSession(): PortalSession {
   });
 
   const dispatchAction = useEffectEvent(async (action: UiAction): Promise<boolean> => {
-    if (!canMutate) {
+    if (!canDispatchAction(action)) {
       setLocalBanner({
         tone: "error",
         ...toBanner(
-          connectionState === "connected"
+          connectionState === "connected" && !isViewOnlyAction(action)
             ? renderControllerActionNotice("controller_locked")
             : renderControllerActionNotice("stream_disconnected")
         )
@@ -97,7 +107,10 @@ export function usePortalSession(): PortalSession {
       return false;
     }
 
-    setIsSubmitting(true);
+    const shouldTrackSubmission = isBlockingUiAction(action);
+    if (shouldTrackSubmission) {
+      setIsSubmitting(true);
+    }
     try {
       const { response, dto } = await postPortalAction(BOOTSTRAP, action);
       applySnapshot(dto.state, dto.controller, dto.lastEventId);
@@ -128,7 +141,9 @@ export function usePortalSession(): PortalSession {
       });
       return false;
     } finally {
-      setIsSubmitting(false);
+      if (shouldTrackSubmission) {
+        setIsSubmitting(false);
+      }
     }
   });
 
@@ -232,6 +247,37 @@ export function usePortalSession(): PortalSession {
     },
     snapshot
   };
+}
+
+function isViewOnlyAction(action: UiAction): boolean {
+  return (
+    action.type === "select_thread" ||
+    action.type === "open_settings" ||
+    action.type === "close_settings" ||
+    action.type === "refresh_settings_providers" ||
+    action.type === "open_help" ||
+    action.type === "open_status" ||
+    action.type === "open_handoff" ||
+    action.type === "open_sessions" ||
+    action.type === "close_modal" ||
+    action.type === "verify_provider_target" ||
+    action.type === "set_timeline_group_expanded"
+  );
+}
+
+function isBlockingUiAction(action: UiAction): boolean {
+  switch (action.type) {
+    case "submit_input":
+    case "run_repl_command":
+    case "launch_project_thread":
+    case "save_settings":
+    case "approve_pending_plan":
+    case "discard_pending_plan":
+    case "replace_runtime":
+      return true;
+    default:
+      return false;
+  }
 }
 
 export function toSnapshotBanner(

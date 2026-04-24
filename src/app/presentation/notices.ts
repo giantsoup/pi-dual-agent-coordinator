@@ -91,6 +91,59 @@ export function renderThreadLaunchNotice(input: {
   };
 }
 
+export function renderProjectLaunchBlockedNotice(
+  reason: "pending_plan" | "active_workflow" | "active_runtime_activity"
+): UserNotice {
+  switch (reason) {
+    case "pending_plan":
+      return {
+        scope: "project",
+        title: "Cannot start a new project thread yet",
+        message:
+          "The current live thread has a pending plan, so switching projects is blocked right now.",
+        nextStep:
+          "Approve it, discard it, or wait for the current run to finish before starting a new thread in another directory."
+      };
+    case "active_workflow":
+      return {
+        scope: "project",
+        title: "Cannot start a new project thread yet",
+        message:
+          "The current live thread still has an active workflow, so PI Dual cannot replace it safely.",
+        nextStep:
+          "Wait for the run to finish before switching projects. If a plan is waiting, approve or discard it first."
+      };
+    case "active_runtime_activity":
+      return {
+        scope: "project",
+        title: "Cannot start a new project thread yet",
+        message:
+          "The current live thread is still streaming or reporting active coordinator work.",
+        nextStep:
+          "Wait for the current activity to settle before starting a new thread in another directory."
+      };
+  }
+}
+
+export function renderProjectLaunchSuccessNotice(projectPath: string): UserNotice {
+  return {
+    scope: "project",
+    title: "Thread started",
+    message: `Started a new live thread in ${projectPath}.`,
+    nextStep: "The previous live thread is now saved in history in the sidebar."
+  };
+}
+
+export function renderProjectValidationNotice(message: string): UserNotice {
+  return {
+    scope: "project",
+    title: "Project path was not valid",
+    message,
+    nextStep:
+      "Enter an absolute path or a path that starts with \"~/\", and make sure the directory exists and is readable."
+  };
+}
+
 export function renderRecoveryNotice(input: {
   projectPath: string;
   resumable: boolean;

@@ -144,6 +144,10 @@ function createSnapshot(input: {
 
 function createStatusSnapshot(): CoordinatorStatusSnapshot {
   return {
+    threadId: "thread-1",
+    threadTitle: "Thread 1",
+    threadStartedAt: "2026-04-20T00:00:00.000Z",
+    threadUpdatedAt: "2026-04-20T00:00:00.000Z",
     cwd: "/tmp/project",
     conversationMode: "planning",
     phase: "planning",

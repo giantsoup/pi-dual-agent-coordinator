@@ -223,6 +223,44 @@ describe("portal server", () => {
     });
   });
 
+  it("allows non-mutating utility actions from a non-controller tab", async () => {
+    const portal = await startInteractivePortalServer({
+      service: new FakeInteractiveService(),
+      authToken: "secret-token"
+    });
+    servers.push(portal);
+
+    const controllerA = new AbortController();
+    abortControllers.push(controllerA);
+    const eventsA = await fetch(
+      `http://${portal.host}:${portal.port}/api/events?token=secret-token&controllerId=controller-a`,
+      {
+        signal: controllerA.signal
+      }
+    );
+    expect(eventsA.status).toBe(200);
+
+    const controllerB = new AbortController();
+    abortControllers.push(controllerB);
+    const eventsB = await fetch(
+      `http://${portal.host}:${portal.port}/api/events?token=secret-token&controllerId=controller-b`,
+      {
+        signal: controllerB.signal
+      }
+    );
+    expect(eventsB.status).toBe(200);
+
+    const accepted = await postAction(portal, "controller-b", {
+      type: "open_status"
+    });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.accepted).toBe(true);
+    expect(accepted.body.controller).toMatchObject({
+      locked: true,
+      controllerId: "controller-a"
+    });
+  });
+
   it("adds SSE event ids, replays buffered events, and rejects cross-origin posts", async () => {
     const portal = await startInteractivePortalServer({
       service: new FakeInteractiveService(),
@@ -386,6 +424,10 @@ async function waitFor(
 function createState(): InteractiveUiState {
   return {
     status: {
+      threadId: "thread-1",
+      threadTitle: "Thread 1",
+      threadStartedAt: "2026-04-20T00:00:00.000Z",
+      threadUpdatedAt: "2026-04-20T00:00:00.000Z",
       cwd: "/tmp/project",
       conversationMode: "planning",
       phase: "planning",
@@ -400,6 +442,16 @@ function createState(): InteractiveUiState {
       metrics: {}
     },
     conversation: [],
+    workspace: {
+      projects: [],
+      recentProjects: [],
+      threads: [],
+      activeThreadId: "thread-1",
+      selectedThreadId: "thread-1"
+    },
+    timeline: [],
+    activeView: "thread",
+    settings: createEmptySettingsState(),
     activity: {
       runtimes: {},
       history: {}
@@ -410,5 +462,29 @@ function createState(): InteractiveUiState {
     },
     notifications: [],
     shouldExit: false
+  };
+}
+
+function createEmptySettingsState() {
+  return {
+    activeScope: "global" as const,
+    effective: {
+      values: {},
+      sources: {
+        modelA: "legacy" as const,
+        modelB: "legacy" as const,
+        thinkingA: "legacy" as const,
+        thinkingB: "legacy" as const,
+        mcpEnabled: "legacy" as const
+      }
+    },
+    scopes: {
+      global: { scope: "global" as const, label: "Global defaults", available: true, hasOverrides: false, values: {} },
+      project: { scope: "project" as const, label: "Project overrides", available: false, hasOverrides: false, values: {} },
+      thread: { scope: "thread" as const, label: "Thread overrides", available: false, hasOverrides: false, values: {} }
+    },
+    providers: [],
+    catalogByProvider: {},
+    providerOperation: undefined
   };
 }
