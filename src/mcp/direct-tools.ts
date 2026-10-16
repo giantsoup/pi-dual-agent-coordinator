@@ -62,7 +62,7 @@ export function buildDirectToolDefinitions(options: {
         parameters: Type.Unsafe<Record<string, unknown>>(
           normalizeObjectSchema(tool.inputSchema)
         ),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId, params, signal) {
           const gate = isMcpToolCallAllowed(options.policy, options.serverName, tool);
           if (!gate.allowed) {
             throw new Error(gate.reason ?? `Tool ${options.serverName}/${tool.name} is blocked.`);
@@ -71,7 +71,8 @@ export function buildDirectToolDefinitions(options: {
           const result = await options.clientPool.callTool(
             options.serverName,
             tool.name,
-            params
+            params,
+            signal
           );
           return toPiToolResult(result, {
             server: options.serverName,

@@ -8,6 +8,7 @@ import {
   type ReplUiLike,
   type ReplReadlineLike
 } from "../../src/app/bootstrap.js";
+import type { CoordinatorTurnResult } from "../../src/types/workflow.js";
 import type { CoordinatorStatusSnapshot } from "../../src/types/status.js";
 import type { NormalizedTelemetryEvent } from "../../src/types/telemetry.js";
 import type { InteractiveCoordinatorService } from "../../src/app/interactive/service.js";
@@ -45,7 +46,7 @@ function createCoordinator(): ReplCoordinatorLike & {
     async start() {},
     async submitUserInput(text: string) {
       if (text === "plan it") {
-        return {
+        const result: CoordinatorTurnResult = {
           mode: "planning" as const,
           userResponse: "Here is the implementation plan.",
           pendingPlan: {
@@ -63,6 +64,9 @@ function createCoordinator(): ReplCoordinatorLike & {
             "Run /approve to start coordinated execution with Agent B, send another message to revise the plan, or run /discard to clear it.",
           workflow: undefined
         };
+        status.pendingPlan = result.pendingPlan;
+        status.pendingPlanReady = true;
+        return result;
       }
       return {
         mode: "planning" as const,
@@ -71,6 +75,8 @@ function createCoordinator(): ReplCoordinatorLike & {
       };
     },
     async approvePendingPlan() {
+      status.pendingPlan = undefined;
+      status.pendingPlanReady = false;
       return {
         mode: "planning" as const,
         userResponse: "approved:pending-plan",
@@ -277,8 +283,8 @@ describe("bootstrap repl", () => {
     expect(output).toContain("Agent A model: GPT-5.4 (openai/gpt-5.4)");
     expect(output).toContain("Agent B model: Qwen3 Coder Next (local-qwen/qwen3-coder-next)");
     expect(output).toContain("Modes switch automatically");
-    expect(output).toContain("Commands: /help /status /approve /discard /sessions /handoff /new A|B /switch A|B /quit");
-    expect(output).toContain("Keys: Enter submit | Ctrl+C exit");
+    expect(output).toContain("Commands: /help /status /approve /discard /sessions /handoff /cancel /new A|B /switch A|B /quit");
+    expect(output).toContain("Keys: Enter submit | Ctrl+C cancel work, repeat while idle to exit");
   });
 
   it("exits cleanly when the readline interface closes", async () => {
@@ -366,7 +372,7 @@ describe("bootstrap repl", () => {
     expect(output).toContain("Summary: Ready for approval");
     expect(output).toContain("Next: Run /approve to start coordinated execution with Agent B");
     expect(output).toContain("approved:pending-plan");
-    expect(output).toContain("No pending plan to discard.");
+    expect(output).toContain("There is no pending plan to discard");
   });
 
   it("recognizes readline termination errors", () => {
@@ -385,8 +391,10 @@ describe("bootstrap repl", () => {
       status: createStatusSnapshot(),
       conversation: [],
       activity: { runtimes: {}, history: {} },
+      history: { records: [], revision: 0, warnings: [] },
       modal: { kind: "none" },
       notifications: [],
+      operation: { kind: "idle" },
       shouldExit: true
     });
     const terminal = createTerminal();

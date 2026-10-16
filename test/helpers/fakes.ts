@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 
 import type {
@@ -19,7 +20,7 @@ export class FakeSession implements SessionLike {
   public isStreaming = false;
   public thinkingLevel = "medium";
   public model = undefined;
-  public messages: unknown[] = [];
+  public messages: AgentMessage[] = [];
   public sessionManager = {
     getLeafId: () => `${this.sessionId}-leaf`
   };
@@ -60,6 +61,8 @@ export class FakeSession implements SessionLike {
       await listener(event);
     }
   }
+
+  public async abort(): Promise<void> {}
 
   public dispose(): void {}
 }

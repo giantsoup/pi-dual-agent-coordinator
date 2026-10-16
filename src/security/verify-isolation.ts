@@ -4,13 +4,14 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync, mkdirSync, rmSyn
 import { tmpdir, homedir } from "node:os";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import { ManagedSession } from "../runtime/managed-session.js";
 import { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { ToolIsolation, installationRoot } from "./isolation.js";
 import { credentialAccount, credentialHelper, credentialStatus, loadCredential } from "./credentials.js";
 import { createProviderBroker, assertProviderEndpoint } from "./provider-broker.js";
-import { SMART_MODEL, SMOKE_MAX_TOKENS } from "./models.js";
-import { fixtureResponse } from "./fixture-provider.js";
+import { EXECUTION_MODEL, LM_STUDIO_BASE_URL, SMART_MODEL, SMOKE_MAX_TOKENS } from "./models.js";
+import { fixtureChatResponse, fixtureResponse } from "./fixture-provider.js";
 import { createRoleTools } from "../tools/create-role-tools.js";
 import { createRoleRuntime } from "../runtime/create-role-runtime.js";
 import { Coordinator } from "../coordinator/coordinator.js";
@@ -156,8 +157,9 @@ export async function verifyCredentialIsolation(): Promise<IsolationReport> {
 
     let sent = 0;
     const request: typeof fetch = async (url, init) => {
-      check(url === "https://api.openai.com/v1/responses", "provider", "trusted destination only");
-      check(new Headers(init?.headers).get("authorization") === `Bearer ${dummy}`, "provider", "key confined to trusted provider auth");
+      const local = url === `${LM_STUDIO_BASE_URL}/chat/completions`;
+      check(local || url === "https://api.openai.com/v1/responses", "provider", "trusted destination only");
+      check(new Headers(init?.headers).get("authorization") === (local ? "Bearer lm-studio" : `Bearer ${dummy}`), "provider", "cloud key never sent to local provider");
       check(init?.redirect === "error", "provider", "credential redirects forbidden");
       check(!String(init?.body).includes(dummy), "leakage", "model request excludes key");
       const payload: unknown = JSON.parse(String(init?.body));
@@ -166,7 +168,7 @@ export async function verifyCredentialIsolation(): Promise<IsolationReport> {
         check(!("prompt_cache_retention" in payload), "luna", "legacy cache option omitted");
       }
       captured.push({ text: String(init?.body), label: "provider request body" }); sent++;
-      return fixtureResponse("LOCAL_API_OK");
+      return local ? fixtureChatResponse("LOCAL_API_OK") : fixtureResponse("LOCAL_API_OK");
     };
     mkdirSync(join(workspace, ".pi", "extensions"), { recursive: true });
     writeFileSync(join(workspace, ".pi", "extensions", "attack.ts"), `require('node:fs').writeFileSync(${JSON.stringify(join(workspace, "extension-ran"))}, 'bad')`);
@@ -192,24 +194,25 @@ export async function verifyCredentialIsolation(): Promise<IsolationReport> {
         if (!binding) throw new Error("Missing runtime");
         const initialFile = binding.sessionFile;
         const probeSession = async () => {
-          if (!(binding.session instanceof AgentSession)) throw new Error("Actual Pi session required");
-          const read = binding.session.agent.state.tools.find((tool: AgentTool<any>) => tool.name === "read");
+          if (!(binding.session instanceof ManagedSession) || !(binding.session.piSession instanceof AgentSession)) throw new Error("Actual Pi session required");
+          const piSession = binding.session.piSession;
+          const read = piSession.agent.state.tools.find((tool: AgentTool<any>) => tool.name === "read");
           check(Boolean(read), "runtime", `${role} actual session supplied read tool`);
           await expectFailure(() => read!.execute("runtime-probe", { path: secretFile }), "runtime", `${role} supplied read denies protected file`);
           if (role === "B") {
-            const bash = binding.session.agent.state.tools.find((tool) => tool.name === "bash");
+            const bash = piSession.agent.state.tools.find((tool) => tool.name === "bash");
             check(Boolean(bash), "runtime", "B supplied bash exists");
             inspect(await bash!.execute("runtime-shell-probe", { command: `cat ${quote(secretFile)}` }).catch((error: unknown) => String(error)), "B actual supplied bash");
           } else {
-            check(binding.session.getAllTools().every((tool) => !["bash", "write", "edit"].includes(tool.name)), "roles", "A registry contains no alternative mutation tools");
+            check(piSession.getAllTools().every((tool) => !["bash", "write", "edit"].includes(tool.name)), "roles", "A registry contains no alternative mutation tools");
           }
-          const direct = binding.session.agent.state.tools.find((tool) => tool.name === "probe");
+          const direct = piSession.agent.state.tools.find((tool) => tool.name === "probe");
           check(Boolean(direct), "mcp", `${role} actual session direct MCP tool exists`);
           inspect(await direct!.execute("actual-mcp-probe", {}), `${role} actual session MCP result`);
-          const proxy = binding.session.agent.state.tools.find((tool) => tool.name === "mcp");
+          const proxy = piSession.agent.state.tools.find((tool) => tool.name === "mcp");
           check(Boolean(proxy), "mcp", `${role} actual session proxy exists`);
           inspect(await proxy!.execute("actual-mcp-proxy", { action: "call_tool", tool: "probe/probe", arguments: {} }), `${role} actual session MCP proxy`);
-          check(binding.session.getAllTools().every((tool) => !tool.name.includes("attack")), "extensions", "untrusted extension disabled");
+          check(piSession.getAllTools().every((tool) => !tool.name.includes("attack")), "extensions", "untrusted extension disabled");
           await binding.session.prompt("Reply exactly LOCAL_API_OK");
           inspect(binding.session.messages, `${role} Pi session messages`);
         };
@@ -230,17 +233,17 @@ export async function verifyCredentialIsolation(): Promise<IsolationReport> {
         return request(url, init);
       } } });
     try {
-      check(lunaSmoke.session instanceof AgentSession && lunaSmoke.session.getAllTools().length === 0, "luna", "smoke registry has no tools or MCP");
+      check(lunaSmoke.session instanceof ManagedSession && lunaSmoke.session.piSession instanceof AgentSession && lunaSmoke.session.piSession.getAllTools().length === 0, "luna", "smoke registry has no tools or MCP");
       await lunaSmoke.session.prompt("Reply exactly LOCAL_API_OK");
       inspect(lunaSmoke.session.messages, "Luna high no-tools fixture response");
     } finally { await lunaSmoke.dispose(); }
     for (const role of ["A", "B"] as const) {
-      const failed = await createRoleRuntime({ role, cwd: workspace, sessionRoot: join(state, "invalid-credential"), sessionMode: "persistent", noTools: true, modelOverride: "openai/gpt-5.4",
+      const failed = await createRoleRuntime({ role, cwd: workspace, sessionRoot: join(state, "invalid-credential"), sessionMode: "persistent", noTools: true, modelOverride: role === "A" ? "openai/gpt-5.4" : EXECUTION_MODEL,
         providerTestBackend: { cwd: workspace, modelIds: ["gpt-5.4"], load: () => loadCredential(workspace), request: async () => new Response(dummy, { status: 401 }) } });
       try {
         await failed.session.prompt("Reply exactly LOCAL_API_OK");
         inspect(failed.session.messages, `${role} Pi invalid credential error and persisted messages`);
-        if (failed.session instanceof AgentSession) {
+        if (failed.session instanceof ManagedSession && failed.session.piSession instanceof AgentSession) {
           const last = failed.session.messages.at(-1);
           check(last?.role === "assistant" && last.stopReason === "error", "provider", "invalid credential reaches actual Pi error path");
         }

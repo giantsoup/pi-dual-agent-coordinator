@@ -167,3 +167,17 @@ function createStatusSnapshot(): CoordinatorStatusSnapshot {
     metrics: {}
   };
 }
+
+it("keeps the bounded recent projection idempotent and never reopens a completed tool", () => {
+  const start = createToolEvent("pi.tool_execution_start", { toolName: "read", toolCallId: "reused" });
+  start.runId = "run-one";
+  const end = { ...start, eventType: "pi.tool_execution_end", details: { ...start.details, isError: true } };
+  let state = createActivityState();
+  for (const event of [start, start, end, end, start]) state = applyActivityHistoryEvent(state, event);
+  expect(state.history.A?.totals.reads).toBe(1);
+  expect(state.history.A?.recent).toHaveLength(1);
+  expect(state.history.A?.recent[0]?.status).toBe("failed");
+  state = applyActivityHistoryEvent(state, { ...start, runId: "run-two" });
+  expect(state.history.A?.totals.reads).toBe(2);
+  expect(state.history.A?.recent).toHaveLength(2);
+});

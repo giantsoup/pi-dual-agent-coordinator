@@ -8,7 +8,10 @@ export type HandoffStatus =
   | "blocked"
   | "capped"
   | "repair_requested"
-  | "superseded";
+  | "superseded"
+  | "cancelled"
+  | "timed_out"
+  | "failed";
 
 export type HandoffRecordActor = Role | "coordinator";
 

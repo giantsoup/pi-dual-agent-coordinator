@@ -2,7 +2,7 @@ import type { AuthCliOptions, SetupCliOptions } from "./cli.js";
 import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createSecureModelRegistry, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
+import { createSecureModelRegistry, isRoleModel, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
 import { enterCredential } from "../security/credentials.js";
 import { ToolIsolation } from "../security/isolation.js";
 import { assertSafeProviderEnvironment } from "../security/provider-broker.js";
@@ -46,7 +46,8 @@ async function runWizard(options: SetupCliOptions | AuthCliOptions, dependencies
     await (dependencies.writeConfig ?? writeCoordinatorConfig)({
       version: 1,
       defaults: { ...loaded.config?.defaults, thinkingA: loaded.config?.defaults.thinkingA ?? "high",
-        modelA: configuredOpenAiModel(loaded.config?.defaults.modelA, SMART_MODEL), modelB: configuredOpenAiModel(loaded.config?.defaults.modelB, EXECUTION_MODEL) },
+        modelA: configuredOpenAiModel(loaded.config?.defaults.modelA, SMART_MODEL),
+        modelB: configuredLocalModel(loaded.config?.defaults.modelB), thinkingB: "off" },
       onboarding: { lastSelectedAgentAAuthFlow: "openai-api-key", lastCompletedAt: new Date().toISOString() }
     });
     output.write(`Stored in macOS Keychain. No literal key was saved in Pi configuration.\n${renderNextSteps()}\n`);
@@ -70,4 +71,9 @@ function configuredOpenAiModel(reference: string | undefined, fallback: string):
   const model = reference?.startsWith("openai/")
     ? createSecureModelRegistry().find("openai", reference.slice("openai/".length)) : undefined;
   return model?.api === "openai-responses" ? `openai/${model.id}` : fallback;
+}
+
+function configuredLocalModel(reference: string | undefined): string {
+  const model = createSecureModelRegistry().getAll().find((candidate) => `${candidate.provider}/${candidate.id}` === reference && isRoleModel("B", candidate));
+  return model ? `${model.provider}/${model.id}` : EXECUTION_MODEL;
 }

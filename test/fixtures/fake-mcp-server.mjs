@@ -30,6 +30,14 @@ server.registerTool(
   })
 );
 
+server.registerTool("slow", { description: "Cancellable fixture request", inputSchema: {}, annotations: { readOnlyHint: true } }, async (_args, extra) => {
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 30_000);
+    extra.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
+  return { content: [{ type: "text", text: "finished" }] };
+});
+
 server.registerTool(
   "destroy",
   {

@@ -10,6 +10,7 @@ import { resolveAgentAResponse, resolveAgentBResponse } from "./review-cycle.js"
 import { normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
 import { SessionLedger } from "../persistence/session-ledger.js";
 import { getModelDisplayInfo } from "../runtime/model-display.js";
+import { OperationStoppedError } from "./bind-runtime-events.js";
 import type { RuntimeEventBridge } from "./bind-runtime-events.js";
 import type { RoleRuntimeBinding } from "../runtime/create-role-runtime.js";
 import type { CoordinatorUiPhase } from "../types/status.js";
@@ -140,6 +141,7 @@ export class WorkflowOrchestrator {
         initialEnvelope: aOutcome.envelope
       });
     } catch (error) {
+      if (error instanceof OperationStoppedError) throw error;
       const failure =
         error instanceof WorkflowProtocolError
           ? {
@@ -211,6 +213,7 @@ export class WorkflowOrchestrator {
         workflowId: options.initialEnvelope.workflowId
       });
     } catch (error) {
+      if (error instanceof OperationStoppedError) throw error;
       const failure =
         error instanceof WorkflowProtocolError
           ? {
@@ -429,6 +432,7 @@ export class WorkflowOrchestrator {
   }
 
   private async persistRecord(state: WorkflowState, record: HandoffRecord): Promise<WorkflowState> {
+    this.bridge.assertActive();
     await this.ledger.append(record);
     const nextState = applyTransition(state, record);
     this.currentState = nextState;
@@ -437,6 +441,7 @@ export class WorkflowOrchestrator {
   }
 
   private async persistRecordNoStateMutation(record: HandoffRecord): Promise<void> {
+    this.bridge.assertActive();
     await this.ledger.append(record);
     if (this.currentState) {
       this.currentState = applyTransition(this.currentState, record);

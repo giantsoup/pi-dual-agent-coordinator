@@ -152,6 +152,52 @@ describe("interactive coordinator service", () => {
     }
   });
 
+  it("accepts once, blocks concurrent work, and keeps read-only controls available", async () => {
+    const coordinator = new FakeCoordinator();
+    const service = new HeadlessInteractiveCoordinatorService(coordinator);
+    let finish = () => {};
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const submit = vi.spyOn(coordinator, "submitUserInput").mockImplementation(async () => {
+      await gate;
+      return { mode: "planning", userResponse: "done" };
+    });
+    await service.start();
+    const accepted = vi.fn();
+    const rejected = vi.fn();
+    const running = service.dispatch({ type: "submit_input", input: "first" }, accepted);
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(service.getState().operation.kind).toBe("running");
+    await service.dispatch({ type: "submit_input", input: "draft" }, rejected);
+    await service.dispatch({ type: "submit_input", input: "/new A" }, rejected);
+    expect(rejected).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledOnce();
+    expect(service.getState().notification?.code).toBe("operation.busy");
+    await service.dispatch({ type: "submit_input", input: "/status" });
+    expect(service.getState().modal.kind).toBe("status");
+    finish(); await running;
+    expect(service.getState().operation.kind).toBe("completed");
+    await service.dispose();
+  });
+
+  it("retains authoritative completed prose once, even without deltas", async () => {
+    const coordinator = new FakeCoordinator();
+    const service = new HeadlessInteractiveCoordinatorService(coordinator);
+    await service.start();
+    vi.spyOn(coordinator, "submitUserInput").mockImplementation(async () => {
+      const event: RuntimeUiBridgeEvent = { type: "assistant_turn_committed", role: "A",
+        sessionId: "A-session-1", timestamp: "now", messageId: "request:turn",
+        text: "Completed prose\n```pi-plan\n{}\n```" };
+      coordinator.emitRuntimeUiEvent({type:"assistant_text_delta",role:"A",sessionId:"A-session-1",timestamp:"before",delta:"Wrong partial text"});
+      coordinator.emitRuntimeUiEvent(event);
+      coordinator.emitRuntimeUiEvent(event);
+      coordinator.emitRuntimeUiEvent({ ...event, role: "B", sessionId: "B-session-1", messageId: "execution", text: "Execution detail" });
+      return { mode: "planning", userResponse: "Completed prose" };
+    });
+    await service.dispatch({ type: "submit_input", input: "task" });
+    expect(service.getState().conversation.map((entry) => entry.text)).toEqual(["task", "Completed prose", "Execution detail"]);
+    await service.dispose();
+  });
+
   it("builds operator and assistant transcript entries from shared dispatch", async () => {
     const coordinator = new FakeCoordinator();
     const service = new HeadlessInteractiveCoordinatorService(coordinator);
@@ -167,6 +213,18 @@ describe("interactive coordinator service", () => {
       { kind: "assistant_planning_response", text: "submitted:ship it" }
     ]);
 
+    await service.dispose();
+  });
+
+  it("does not announce approval or execution when no plan exists", async () => {
+    const coordinator = new FakeCoordinator();
+    const service = new HeadlessInteractiveCoordinatorService(coordinator);
+    await service.start();
+    const approve = vi.spyOn(coordinator, "approvePendingPlan");
+    await service.dispatch({type:"submit_input",input:"/approve"});
+    expect(approve).not.toHaveBeenCalled();
+    expect(service.getState().conversation.some((entry) => entry.kind === "approval_discard")).toBe(false);
+    expect(service.getState().lastError?.message).toContain("No pending plan");
     await service.dispose();
   });
 
@@ -219,6 +277,20 @@ describe("interactive coordinator service", () => {
     expect(events).toContain("stream_delta_appended");
     expect(events).toContain("stream_committed");
 
+    await service.dispose();
+  });
+
+  it("ignores stale events after a role session has been replaced", async () => {
+    const coordinator = new FakeCoordinator();
+    const service = new HeadlessInteractiveCoordinatorService(coordinator);
+    await service.start();
+    const next = createStatusSnapshot();
+    next.runtimes = next.runtimes.map((runtime) => runtime.role === "A" ? {...runtime,sessionId:"A-new"} : runtime);
+    vi.spyOn(coordinator,"getStatus").mockReturnValue(next);
+    coordinator.emitRuntimeUiEvent({type:"assistant_text_delta",role:"A",sessionId:"A-session-1",timestamp:"old",delta:"stale"});
+    expect(service.getState().liveStream).toBeUndefined();
+    coordinator.emitRuntimeUiEvent({type:"assistant_text_delta",role:"A",sessionId:"A-new",timestamp:"new",delta:"current"});
+    expect(service.getState().liveStream?.text).toBe("current");
     await service.dispose();
   });
 

@@ -1,0 +1,97 @@
+{
+  "checkedAt": "2026-10-16T22:50:12.975Z",
+  "screens": [
+    {
+      "option": "framed",
+      "columns": 120,
+      "rows": 40,
+      "role": "A",
+      "passed": true
+    },
+    {
+      "option": "framed",
+      "columns": 120,
+      "rows": 40,
+      "role": "B",
+      "passed": true
+    },
+    {
+      "option": "framed",
+      "columns": 80,
+      "rows": 24,
+      "role": "A",
+      "passed": true
+    },
+    {
+      "option": "framed",
+      "columns": 80,
+      "rows": 24,
+      "role": "B",
+      "passed": true
+    },
+    {
+      "option": "pinned",
+      "columns": 120,
+      "rows": 40,
+      "role": "A",
+      "passed": true
+    },
+    {
+      "option": "pinned",
+      "columns": 120,
+      "rows": 40,
+      "role": "B",
+      "passed": true
+    },
+    {
+      "option": "pinned",
+      "columns": 80,
+      "rows": 24,
+      "role": "A",
+      "passed": true
+    },
+    {
+      "option": "pinned",
+      "columns": 80,
+      "rows": 24,
+      "role": "B",
+      "passed": true
+    },
+    {
+      "option": "rail",
+      "columns": 120,
+      "rows": 40,
+      "role": "A",
+      "passed": true
+    },
+    {
+      "option": "rail",
+      "columns": 120,
+      "rows": 40,
+      "role": "B",
+      "passed": true
+    },
+    {
+      "option": "rail",
+      "columns": 80,
+      "rows": 24,
+      "role": "A",
+      "passed": true
+    },
+    {
+      "option": "rail",
+      "columns": 80,
+      "rows": 24,
+      "role": "B",
+      "passed": true
+    }
+  ],
+  "checks": [
+    "exact terminal row count",
+    "Pi visibleWidth equals specified columns",
+    "current turn label visible",
+    "correct active step visible",
+    "F1 help hint visible"
+  ],
+  "limitations": "ASCII fixture; no real terminal interaction or provider execution."
+}

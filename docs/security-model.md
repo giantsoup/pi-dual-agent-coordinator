@@ -2,7 +2,7 @@
 
 ## Credential boundary
 
-The coordinator and its OpenAI credential broker are trusted. Agent-generated
+The coordinator, its OpenAI credential broker, and the local LM Studio service are trusted. Agent-generated
 instructions, workspace contents, tool arguments, stdio MCP servers, and tool
 subprocesses are untrusted. Both agent roles receive tools whose executable code
 runs in a macOS Seatbelt sandbox, launched with `/usr/bin/sandbox-exec`. Kernel
@@ -19,9 +19,19 @@ The trusted broker holds the project key in memory. Pi receives a fresh random
 broker capability in an in-memory `AuthStorage`, never the project key. Its
 built-in OpenAI Responses provider sends requests to the broker. The broker
 replaces authentication, constructs its own headers, and forwards only
-`POST https://api.openai.com/v1/responses` for the selected approved model.
+`POST https://api.openai.com/v1/responses` for Agent A's selected approved model.
 Redirects are forbidden. Endpoint, proxy, TLS, and Node injection overrides fail
 closed. Neither `auth.json` nor `models.json` is evaluated for authentication.
+
+Agent B uses a separate broker that forwards only
+`POST http://127.0.0.1:1234/v1/chat/completions` for its selected fixed LM Studio
+model. It never retrieves the OpenAI key. Its upstream bearer value is an inert
+placeholder, and LM Studio must run without API authentication. Both brokers
+require a fresh private capability, reject redirects, and limit request and
+response sizes. Agent B has no cloud fallback. Tool processes retain their
+network restrictions and cannot contact either broker or LM Studio directly.
+Treat LM Studio and its loaded model as trusted inference software; do not attach
+external execution integrations to this server for coordinator requests.
 
 The broker discards upstream error bodies and response headers. Whole SSE lines
 are redacted before returning to Pi, including credential strings split across
@@ -81,7 +91,10 @@ isolated read tool, so a symlink to a protected credential cannot turn the
 resource loader into a credential reader. Coordinator-authored role prompts and
 the built-in MCP extension are the only executable extensions.
 The fixed trusted model catalog adds the official `gpt-6-luna` descriptor to Pi's
-built-in OpenAI models. This does not accept endpoint or model data from files.
+built-in OpenAI models for Agent A and Qwen3.6 35B A3B and Qwen3 Coder Next through
+LM Studio for Agent B. Local descriptors use a 65,536-token context and API thinking
+off. Load the local model with at least this context length. This does not accept
+endpoint or model data from files.
 High reasoning is checked in the actual installed provider's serialized request;
 the no-tools live smoke uses the saved Agent A reasoning level and a 1,024-token
 cap that includes reasoning.
@@ -144,3 +157,18 @@ can change. Verification must run on each deployment host and after OS, Pi,
 Node, helper, or policy updates. Other operating systems fail closed. Keychain
 availability depends on the current login session and macOS access decisions.
 There is no plaintext, environment-key, subscription, or unrestricted fallback.
+
+## Terminal cancellation and configuration
+
+Idle-only model controls use the secure Pi registry and the same runtime factory
+as startup. Agent A retrieves authentication through the trusted broker; Agent B
+uses only its local broker. Both preserve role isolation. Arbitrary endpoints, project extensions, and
+plaintext authentication remain disabled. Session history and restoration stay
+inside the role's private session directory. Saved defaults contain no credentials.
+
+Cancellation aborts Pi compaction, branch summaries, and agent work, then drains the owned prompt and runtime cleanup. Queued preflight cannot start a provider request after cancellation.
+Sandboxed tool workers kill their process group on abort. MCP tool requests
+receive the abort signal, but remote side effects cannot be rolled back.
+Cancellation and timeout preserve changes already completed in the workspace.
+The coordinator blocks later automatic stages and records a terminal outcome.
+No browser restoration or automatic workflow continuation is introduced.

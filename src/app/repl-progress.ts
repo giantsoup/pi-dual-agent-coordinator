@@ -285,6 +285,14 @@ export function buildHelpText(isTTY: boolean): string {
     "Modes switch automatically.",
     `Commands: ${INTERACTIVE_COMMAND_HINT}`,
     `Runtime/session commands: ${INTERACTIVE_RUNTIME_HINT}`,
+    "/history lists retained operator turns, individual role runs and calls. /inspect ID summary|request|output|metadata [line offset] reads up to 100 lines.",
+    "Inspection never approves, reruns, resumes, switches sessions, or repairs files. Missing data has an explicit reason.",
+    "TUI: F1 help from any view; F1/Esc returns. F6/Shift+F6 panes; F2 activity. Editor /help is the typed fallback.",
+    "/sessions A or /sessions B lists saved history. Viewing does not switch a runtime.",
+    "/model A|B and /thinking A|B open selectors. Choices affect the current conversation and next operation.",
+    "Append save to an explicit model, thinking, or /config command to update saved defaults.",
+    "Only one request runs at once. Drafts stay editable. /cancel stops work and preserves completed changes.",
+    "The default total deadline is 600000 ms per submission. Use /config timeout-ms N or --timeout-ms N.",
     `Keys: ${INTERACTIVE_PLAIN_KEY_HINT}.`,
     ""
   ].join("\n");

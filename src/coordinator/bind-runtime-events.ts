@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
@@ -22,6 +23,7 @@ export type RuntimeUiBridgeEvent =
       sessionId: string;
       sessionFile?: string | undefined;
       timestamp: string;
+      messageId?: string | undefined;
       delta: string;
     }
   | {
@@ -30,6 +32,7 @@ export type RuntimeUiBridgeEvent =
       sessionId: string;
       sessionFile?: string | undefined;
       timestamp: string;
+      messageId?: string | undefined;
       text: string;
     };
 
@@ -51,6 +54,13 @@ export class RuntimeEventBridge {
   private readonly turnWaiters = new Map<string, TurnWaiter[]>();
   private readonly pseudoToolAttempts = new Map<string, { toolName: string; count: number }>();
   private lastError: Error | undefined;
+  private operatorTurnId: string | undefined;
+  private readonly runIds = new Map<Role, string>();
+  public setOperatorTurn(id: string): void { this.operatorTurnId = id; }
+
+  private operationSignal: AbortSignal | undefined;
+  private turnSequence = 0;
+  private readonly turnIds = new Map<Role, string>();
 
   public constructor(
     private readonly logger: TelemetryLogger,
@@ -58,8 +68,8 @@ export class RuntimeEventBridge {
   ) {}
 
   public async bind(binding: RoleRuntimeBinding): Promise<void> {
-    this.subscriptions.get(binding.role)?.();
     await binding.rebind();
+    this.subscriptions.get(binding.role)?.();
 
     this.logger.log(
       normalizeLifecycleEvent({
@@ -70,7 +80,9 @@ export class RuntimeEventBridge {
       })
     );
 
-    const unsubscribe = binding.session.subscribe((event) => {
+    const session = binding.session;
+    const unsubscribe = session.subscribe((event) => {
+      if (binding.session !== session) return;
       const pending = this.handleEvent(binding, event)
         .catch((error: unknown) => {
           this.lastError =
@@ -83,6 +95,21 @@ export class RuntimeEventBridge {
     });
 
     this.subscriptions.set(binding.role, unsubscribe);
+  }
+
+  public beginOperation(signal: AbortSignal): void {
+    this.operationSignal = signal;
+    signal.addEventListener("abort", () => {
+      for (const waiters of this.turnWaiters.values()) {
+        for (const waiter of waiters) waiter.reject(new OperationStoppedError());
+      }
+      this.turnWaiters.clear();
+      this.bufferedTurnEnds.clear();
+    }, { once: true });
+  }
+
+  public assertActive(): void {
+    if (this.operationSignal?.aborted) throw new OperationStoppedError();
   }
 
   public setRequestId(role: Role, requestId: string | undefined): void {
@@ -108,14 +135,44 @@ export class RuntimeEventBridge {
       preflightResult?: (success: boolean) => void;
     }
   ): Promise<AgentMessage> {
+    this.assertActive();
     const sessionKey = this.sessionKey(binding);
+    const runId = randomUUID();
+    this.runIds.set(binding.role, runId);
+    const tag = text.split("\n", 1)[0] ?? "";
+    const attribute = (name: string) => tag.match(new RegExp(`${name}="([^"<>]+)"`))?.[1];
+    const metadata = { runId, operatorTurnId: this.operatorTurnId, requestId: this.requestIds.get(binding.role),
+      workflowId: attribute("workflowId"), handoffId: attribute("handoffId"), provenance: attribute("provenance") ?? "planning_user" };
+    const branchId = binding.session.sessionManager?.appendCustomEntry?.("pi-dual-run", metadata) ?? binding.session.sessionManager?.getLeafId();
+    const logRun = (eventType: string, details: Record<string, unknown>) => this.logger.log({
+      ...normalizeLifecycleEvent({ role: binding.role, sessionId: binding.sessionId, sessionFile: binding.sessionFile,
+        requestId: metadata.requestId, eventType, details: { ...metadata, branchId, ...details } }),
+      runId, operatorTurnId: this.operatorTurnId
+    });
+    logRun("runtime.run_started", {});
+    this.turnIds.set(binding.role, `${this.requestIds.get(binding.role) ?? "turn"}:${++this.turnSequence}`);
     this.bufferedTurnEnds.set(sessionKey, []);
     this.pseudoToolAttempts.delete(sessionKey);
     const turnEndPromise = this.awaitNextTurnEnd(sessionKey);
     void turnEndPromise.catch(() => undefined);
+    const prompt = binding.session.prompt(text, options);
     const pending = (async () => {
-      await binding.session.prompt(text, options);
-      return await turnEndPromise;
+      try {
+        const [, message] = await Promise.all([prompt, turnEndPromise]);
+        this.assertActive();
+        logRun("runtime.run_finished", { outcome: "completed", leafId: binding.session.sessionManager?.getLeafId() });
+        return message;
+      } catch (error) {
+        if (!this.operationSignal?.aborted) await binding.session.abort();
+        logRun("runtime.run_finished", { outcome: this.operationSignal?.aborted ? "interrupted" : "failed", leafId: binding.session.sessionManager?.getLeafId() });
+        throw error;
+      } finally {
+        this.runIds.delete(binding.role);
+        await prompt.catch(() => undefined);
+        const waiters = this.turnWaiters.get(sessionKey) ?? [];
+        this.turnWaiters.delete(sessionKey);
+        for (const waiter of waiters) waiter.reject(new Error("Prompt ended before turn_end."));
+      }
     })();
     void pending.catch(() => undefined);
     return pending;
@@ -154,6 +211,7 @@ export class RuntimeEventBridge {
     binding: RoleRuntimeBinding,
     event: AgentSessionEvent
   ): Promise<void> {
+    if (this.operationSignal?.aborted) return;
     const requestId = this.requestIds.get(binding.role);
     const sessionKey = this.sessionKey(binding);
     this.correlation.setRequestId(sessionKey, requestId);
@@ -167,6 +225,8 @@ export class RuntimeEventBridge {
       leafId: binding.session.sessionManager?.getLeafId?.() ?? undefined,
       correlation: this.correlation
     });
+    telemetry.runId = this.runIds.get(binding.role);
+    telemetry.operatorTurnId = this.operatorTurnId;
     const model = getModelDisplayInfo(binding.session.model);
     telemetry.details = {
       ...telemetry.details,
@@ -194,10 +254,16 @@ export class RuntimeEventBridge {
     }
 
     this.pseudoToolAttempts.delete(sessionKey);
+    this.turnIds.set(binding.role, `${requestId ?? "turn"}:${++this.turnSequence}`);
+
+    if (event.message.role === "assistant" && event.message.content.some((part) => part.type === "toolCall")) return;
 
     const queue = this.turnWaiters.get(sessionKey);
     if (queue && queue.length > 0) {
-      queue.shift()?.resolve(event.message);
+      const waiter = queue.shift();
+      if (event.message.role === "assistant" && (event.message.stopReason === "error" || event.message.stopReason === "aborted")) {
+        waiter?.reject(new Error(event.message.errorMessage ?? `Provider stopped: ${event.message.stopReason}`));
+      } else waiter?.resolve(event.message);
       if (queue.length === 0) {
         this.turnWaiters.delete(sessionKey);
       }
@@ -223,6 +289,7 @@ export class RuntimeEventBridge {
         sessionId: binding.sessionId,
         sessionFile: binding.sessionFile,
         timestamp: new Date().toISOString(),
+        messageId: this.turnIds.get(binding.role),
         delta: event.assistantMessageEvent.delta
       });
       return;
@@ -238,6 +305,7 @@ export class RuntimeEventBridge {
       sessionId: binding.sessionId,
       sessionFile: binding.sessionFile,
       timestamp: new Date().toISOString(),
+      messageId: this.turnIds.get(binding.role),
       text: event.message.role === "assistant" ? extractAssistantText(event.message) : ""
     });
   }
@@ -297,4 +365,8 @@ export class RuntimeEventBridge {
       waiter.reject(error);
     }
   }
+}
+
+export class OperationStoppedError extends Error {
+  public constructor() { super("Work cancelled. Completed file changes are preserved."); }
 }

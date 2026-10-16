@@ -1,0 +1,86 @@
+[
+  {
+    "file": "screenshots/framed-A-120x40.png",
+    "width": 980,
+    "height": 754,
+    "sha256": "08793996de2371adebe14a9af07db2b7632a0e360c816263d7aeeee73d140e16",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/framed-A-80x24.png",
+    "width": 668,
+    "height": 466,
+    "sha256": "2a5a1b3e635687dcdb27e9fb53b2b4c58a2fee3ce62bb050fec42395d6cbd787",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/framed-B-120x40.png",
+    "width": 980,
+    "height": 754,
+    "sha256": "a815b9f57d62af23dbbb6c138246e172d0750e9aadcff244479c54e186962668",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/framed-B-80x24.png",
+    "width": 668,
+    "height": 466,
+    "sha256": "b5d8d839045c7038f94c1636b51f2656981c16d7110e820c99ccb3aa34cc409f",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/pinned-A-120x40.png",
+    "width": 980,
+    "height": 754,
+    "sha256": "274b3f2d9dd166a3a84d82206ba48f294d29360cb5f3226dfcc9d6a7bfcbc20a",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/pinned-A-80x24.png",
+    "width": 668,
+    "height": 466,
+    "sha256": "ad297f1e4dd7555af51dea5fc80a2a572ce129097e883c178401f39231c00227",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/pinned-B-120x40.png",
+    "width": 980,
+    "height": 754,
+    "sha256": "9db836a1b428a303b9aaf10390b55cffd063873b65edd3140cd2c9f3bec1a1a7",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/pinned-B-80x24.png",
+    "width": 668,
+    "height": 466,
+    "sha256": "f38db968bd7276b7d5edcd0d540f9019035326654c28f8e26bd1bc61f754f1a8",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/rail-A-120x40.png",
+    "width": 980,
+    "height": 754,
+    "sha256": "3d9c1e18aeeacfc2ec2049f0b0c5d64df5f8e23f17c56bae22f49cb302dd43ff",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/rail-A-80x24.png",
+    "width": 668,
+    "height": 466,
+    "sha256": "e5a25c3671d496b9737b479606cd2ee384074700f50805927b145ca0802d1900",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/rail-B-120x40.png",
+    "width": 980,
+    "height": 754,
+    "sha256": "84d321c691908f3141b5f8ce938dd5ea6aaa911255d1f8933cecf487675d170c",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  },
+  {
+    "file": "screenshots/rail-B-80x24.png",
+    "width": 668,
+    "height": 466,
+    "sha256": "282a339eb1786f75391f456beb440131ac483be2ef184b286d792768716c77bd",
+    "provenance": "T3 html_preview PNG of build.mjs --screen output; synthetic workflow; no live terminal or provider"
+  }
+]

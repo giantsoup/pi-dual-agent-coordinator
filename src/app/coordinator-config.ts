@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { chmodSync } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -14,10 +15,12 @@ import type {
 export interface CoordinatorConfigV1 {
   version: 1;
   defaults: {
+    maxReviewRounds?: number;
+    timeoutMs?: number;
     modelA?: string;
     modelB?: string;
-    thinkingA?: "off" | "low" | "medium" | "high";
-    thinkingB?: "off" | "low" | "medium" | "high";
+    thinkingA?: ReplThinkingLevel;
+    thinkingB?: ReplThinkingLevel;
   };
   onboarding?: {
     lastSelectedAgentAAuthFlow?:
@@ -45,7 +48,7 @@ type OptionsWithCoordinatorDefaults =
   | SetupCliOptions
   | AuthCliOptions;
 
-const VALID_THINKING = new Set<ReplThinkingLevel>(["off", "low", "medium", "high"]);
+const VALID_THINKING = new Set<ReplThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh"]);
 
 export function getCoordinatorConfigDir(): string {
   const overrideRoot = process.env.PI_DUAL_COORDINATOR_HOME;
@@ -105,8 +108,11 @@ export async function writeCoordinatorConfig(
     mode: 0o700
   });
   chmodSync(configDir, 0o700);
-  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-  chmodSync(configPath, 0o600);
+  const temporaryPath = `${configPath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await rename(temporaryPath, configPath);
+  } finally { await rm(temporaryPath, { force: true }); }
 }
 
 export function resolveEffectiveModelA(
@@ -205,6 +211,8 @@ export function applyCoordinatorDefaultsToCliOptions(
 
   const resolved: ReplCliOptions = {
     ...options,
+    ...(!options.reviewRoundsExplicit && config?.defaults.maxReviewRounds ? { maxReviewRounds: config.defaults.maxReviewRounds } : {}),
+    ...(options.timeoutMs === undefined && config?.defaults.timeoutMs ? { timeoutMs: config.defaults.timeoutMs } : {}),
     ...(resolvedModelA.value ? { modelA: resolvedModelA.value } : {}),
     ...(resolvedModelB.value ? { modelB: resolvedModelB.value } : {}),
     ...(resolvedThinkingA.value ? { thinkingA: resolvedThinkingA.value } : {}),
@@ -260,9 +268,13 @@ function normalizeCoordinatorConfig(value: unknown): {
     warnings.push("Coordinator config ignored an invalid `onboarding` object.");
   }
 
+  const maxReviewRounds = optionalPositiveInteger(defaults.maxReviewRounds, "defaults.maxReviewRounds", warnings);
+  const timeoutMs = optionalPositiveInteger(defaults.timeoutMs, "defaults.timeoutMs", warnings, 2_147_483_647);
   const config: CoordinatorConfigV1 = {
     version: 1,
     defaults: {
+      ...(maxReviewRounds !== undefined ? { maxReviewRounds } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...pickOptionalString(defaults.modelA, "defaults.modelA", warnings),
       ...pickOptionalString(defaults.modelB, "defaults.modelB", warnings),
       ...pickOptionalThinking(defaults.thinkingA, "defaults.thinkingA", warnings),
@@ -348,4 +360,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function resolveOverrideConfigDir(root: string): string {
   return join(root, "dual-agent-coordinator");
+}
+
+function optionalPositiveInteger(value: unknown, label: string, warnings: string[], maximum = Number.MAX_SAFE_INTEGER): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= maximum) return value;
+  warnings.push(`Coordinator config ignored invalid ${label}.`);
+  return undefined;
 }

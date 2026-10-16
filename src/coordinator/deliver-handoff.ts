@@ -57,8 +57,16 @@ export async function deliverHandoff(options: {
       throw error;
     });
 
-  const accepted = await preflightPromise;
+  void messagePromise.catch(() => undefined);
+  let accepted: boolean;
+  try {
+    accepted = await preflightPromise;
+  } catch (error) {
+    await options.binding.session.abort();
+    throw error;
+  } finally { clearTimeout(timeoutId); }
   if (!accepted) {
+    await options.binding.session.abort();
     throw new Error(`Delivery preflight rejected for ${options.prepared.handoffId}`);
   }
 

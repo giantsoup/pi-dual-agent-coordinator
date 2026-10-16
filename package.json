@@ -47,7 +47,9 @@
     "test:watch": "vitest",
     "verify:isolation": "npm run build && node dist/src/security/verify-isolation.js && vitest run test/security",
     "secure:install": "node scripts/prepare-secure-runtime.mjs",
-    "smoke:api": "node dist/src/security/smoke.js"
+    "smoke:api": "node dist/src/security/smoke.js",
+    "verify:terminal": "npm run build && python3 scripts/verify-terminal.py",
+    "verify:local": "npm run build && node scripts/verify-local-executor.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

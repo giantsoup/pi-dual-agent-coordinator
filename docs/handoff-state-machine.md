@@ -9,7 +9,10 @@
 - `blocked`: The coordinator terminated the workflow after a failed repair or protocol violation.
 - `capped`: The workflow hit the review-round cap without a valid terminal response.
 - `repair_requested`: The coordinator issued a deterministic repair prompt for a malformed or missing machine block.
-- `superseded`: Reserved for invalidation by runtime replacement or later coordinator control.
+- `superseded`: Invalidation by runtime replacement or fresh-start recovery.
+- `cancelled`: The operator stopped the active operation.
+- `timed_out`: The total operation deadline expired and cleanup finished.
+- `failed`: A request failed outside a validated workflow terminal decision.
 
 ## Rules
 
@@ -18,7 +21,7 @@
 - Each workflow has a stable `workflowId`; each execution round has its own `iteration`.
 - `prepared` must exist before `delivered`.
 - `delivered` must exist before `completed`.
-- `finalized`, `blocked`, and `capped` are terminal workflow outcomes.
+- `finalized`, `blocked`, `capped`, `cancelled`, `timed_out`, and `failed` are terminal outcomes. `superseded` replays as blocked.
 
 ## Allowed Transitions
 
@@ -28,8 +31,13 @@
 - `completed` -> `finalized`
 - `prepared|delivered|completed` -> `repair_requested`
 - `repair_requested` -> `prepared|completed|finalized|blocked`
-- any non-terminal workflow -> `capped|blocked|superseded`
+- any non-terminal workflow -> `capped|blocked|superseded|cancelled|timed_out|failed`
 
 ## Recovery
 
 On restart, the coordinator replays the ledger in order and reconstructs the latest workflow snapshot per `workflowId`. If multiple workflows appear in the ledger, the most recent non-terminal workflow becomes the active workflow view until newer terminal evidence is found.
+
+Startup supersedes unfinished work with fresh sessions. Saved-session switching
+restores conversation context only. Neither path resumes workflow execution.
+Cancellation and timeout records also cover planning requests without a handoff.
+Existing ledger records retain their original replay meaning.

@@ -8,15 +8,16 @@ This project runs two isolated Pi runtimes under one coordinator:
 - Agent B is the execution model and the only agent allowed to make changes.
 - The coordinator handles the handoff loop, review cap, and workflow persistence.
 
-Use OpenAI project API-key authentication for both roles. Credentials live in
-macOS Keychain behind a trusted broker. Agent tools and stdio MCP servers run in
+Agent A uses OpenAI project API-key authentication. Agent B runs locally through
+LM Studio. Cloud credentials live in macOS Keychain behind a trusted broker.
+Agent tools and stdio MCP servers run in
 an OS sandbox. Read [the security model](docs/security-model.md) before use.
 
 ## Secure setup
 
 Requirements: macOS, Node.js >=20.6, npm, Apple Command Line Tools, an unlocked
-Keychain, and a logged-in desktop for private entry. Subscription auth and custom
-provider endpoints are not supported by the secure path.
+Keychain, a logged-in desktop for private entry, and LM Studio serving on
+`127.0.0.1:1234`. Subscription auth and arbitrary provider endpoints are not supported.
 
 Run these commands in the source checkout, before creating or entering a real key:
 
@@ -43,7 +44,8 @@ node "$HOME/.local/share/pi-dual/runtime-1/dist/src/security/smoke.js" /absolute
 ```
 
 Setup verifies isolation with dummy secrets before opening the secure entry
-dialog. Agent A defaults to `openai/gpt-6-luna` at high reasoning. Agent B defaults to `openai/gpt-5.4`. Step 0 stays incomplete until the
+dialog. Agent A defaults to `openai/gpt-6-luna` at high reasoning. Agent B defaults to
+`lm-studio/qwen3.6-35b-a3b` with API thinking off. Step 0 stays incomplete until the
 isolation suite and the live smoke check both pass.
 
 ## Everyday commands
@@ -57,11 +59,26 @@ Use the trusted installation's `dist/src/index.js` entry point:
 - `repl /absolute/project --plain`: use the plain terminal fallback.
 - `repl /absolute/project --no-mcp`: disable MCP for that run.
 
-Model overrides must name approved OpenAI Responses models, such as
-`--model-a openai/gpt-6-luna --thinking-a high --model-b openai/gpt-5.4`.
+Agent A accepts approved OpenAI Responses models. Agent B accepts the fixed local
+LM Studio models `lm-studio/qwen3.6-35b-a3b` and `lm-studio/qwen3-coder-next`.
+For example, `--model-a openai/gpt-6-luna --thinking-a high --model-b lm-studio/qwen3.6-35b-a3b --thinking-b off`.
 Pi 0.67.68 lacks Luna in its bundled catalog; the app supplies one fixed,
 reviewed descriptor for the official `gpt-6-luna` model and endpoint. Coordinator defaults are
 non-secret and separate from Pi auth. Legacy unrelated credentials remain intact.
+
+Start LM Studio and load the executor with a 65,536-token context:
+
+```sh
+lms server start --port 1234 --bind 127.0.0.1
+lms load qwen3.6-35b-a3b --identifier qwen3.6-35b-a3b --context-length 65536 --yes
+```
+
+Agent B never retrieves an OpenAI credential or falls back to a cloud model.
+Its server must accept local requests without authentication. If you have saved
+older OpenAI defaults for B, replace them in `~/.pi/dual-agent-coordinator/config.json`
+with `"modelB": "lm-studio/qwen3.6-35b-a3b"` and `"thinkingB": "off"`, or rerun setup.
+Run `npm run verify:local` to exercise Agent B's live LM Studio inference and
+sandboxed write tool in a temporary workspace. It makes local inference requests.
 
 ## REPL basics
 
@@ -76,21 +93,39 @@ Useful slash commands:
 
 - `/help`
 - `/status`
+- `/history` and `/inspect ID [section] [line-offset]` for retained, read-only work inspection
 - `/approve`
 - `/discard`
 - `/sessions`
 - `/handoff`
+- `/cancel`
+- `/sessions A` and `/sessions B` to select saved conversations
+- `/model A` and `/model B`
+- `/thinking A` and `/thinking B`
+- `/config review-rounds 3`
+- `/config timeout-ms 600000`
 - `/new A`
 - `/new B`
 - `/switch A <session-path>`
 - `/switch B <session-path>`
 - `/quit`
 
+The TUI gives the current operator turn most of the workspace, with a history
+rail on wide terminals and a focusable history control at 80 columns. F1 opens
+contextual help; F6 cycles panes. Earlier role runs and tools remain individually
+inspectable across session changes and restart.
+The current-turn border and role labels use cyan for A and amber for B. Prose
+keeps the terminal's default foreground and background, with no colored fill.
+
+See [terminal controls](docs/terminal-experience.md) for keyboard navigation, editable
+drafts, cancellation, deadlines, session switching, and explicitly saved defaults.
+
 ## Config examples
 
 The [project MCP example](examples/project/.mcp.json.example) demonstrates stdio
-configuration. The older local-provider JSON files are standalone Pi examples;
-secure mode does not load `models.json` or OpenAI entries in `auth.json`.
+configuration. The local-provider JSON files are standalone Pi examples;
+the coordinator uses its fixed catalog and does not load `models.json` or OpenAI
+entries in `auth.json`.
 
 ## MCP support
 
@@ -138,9 +173,10 @@ legacy OpenAI auth, unsupported provider overrides, and isolation failures block
 startup. Follow [secure setup and migration](docs/secure-setup.md). Doctor never
 prints credential values and never substitutes environment-key authentication.
 
-Unfinished recovered workflows still require an explicit fresh session or the
-existing coordinator operations. This credential work does not add automatic
-workflow continuation.
+Startup replays saved outcomes and supersedes unfinished workflows with fresh
+sessions. Session switching restores conversation context without resuming work.
+Cancellation and timeout preserve completed file changes. Inspect those changes
+before submitting another request.
 
 ## Development
 
@@ -149,6 +185,7 @@ npm run check
 npm test
 npm run build
 npm run verify:isolation
+npm run verify:terminal
 ```
 
 ## Project scope

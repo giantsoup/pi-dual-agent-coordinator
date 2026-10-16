@@ -2,7 +2,15 @@
 
 Use macOS, Node.js >=20.6, npm, and Apple Command Line Tools. Keep the trusted
 installation outside every workspace that agents can edit. Secure mode supports
-approved `openai` Responses models for both roles, with API-key authentication.
+approved `openai` Responses models for Agent A, with API-key authentication, and
+fixed local LM Studio models for Agent B without cloud credentials.
+
+Start LM Studio on `127.0.0.1:1234` and load `qwen3.6-35b-a3b` with that API
+identifier and a 65,536-token context. The CLI commands are in the
+[README](../README.md). Agent B defaults to `lm-studio/qwen3.6-35b-a3b` and API
+thinking off. Doctor checks that the selected local model is loaded with at least
+65,536 context tokens through LM Studio's `/api/v1/models` endpoint.
+An unavailable local model blocks startup; there is no cloud fallback.
 
 ## Prepare without a real key
 

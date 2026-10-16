@@ -27,6 +27,7 @@ export interface RuntimeStatusSnapshot {
 }
 
 export interface CoordinatorStatusSnapshot {
+  operation?: { kind: "idle" | "running" | "cancelling" | "completed" | "failed" | "cancelled" | "timed_out" } | undefined;
   cwd: string;
   conversationMode: ConversationMode;
   phase: CoordinatorUiPhase;
@@ -54,6 +55,7 @@ export interface CoordinatorStatusSnapshot {
   lastCompletionSummary?: string | undefined;
   repairCount: number;
   maxReviewRounds: number;
+  timeoutMs?: number;
   runtimes: RuntimeStatusSnapshot[];
   mcp?: CoordinatorMcpStatusSnapshot;
   metrics: Record<string, number>;

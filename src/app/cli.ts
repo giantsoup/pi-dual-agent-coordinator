@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import type { Role } from "../types/role.js";
 
-export type ReplThinkingLevel = "off" | "low" | "medium" | "high";
+export type ReplThinkingLevel = import("../runtime/create-role-runtime.js").SupportedThinkingLevel;
 export type HelpTopic = "general" | "repl" | "doctor" | "setup" | "auth";
 
 export interface ReplCliOptions {
@@ -19,6 +19,8 @@ export interface ReplCliOptions {
   thinkingA?: ReplThinkingLevel;
   thinkingB?: ReplThinkingLevel;
   maxReviewRounds: number;
+  timeoutMs?: number;
+  reviewRoundsExplicit?: boolean;
   mcpEnabled?: boolean;
   mcpConfigPaths?: string[];
 }
@@ -65,16 +67,22 @@ export type CliOptions =
 export type ParsedReplCommand =
   | { type: "user_turn"; text: string }
   | { type: "help" }
+  | { type: "history" }
+  | { type: "inspect"; id: string; section: import("../types/history.js").HistoryDetail["section"]; offset: number }
   | { type: "status" }
   | { type: "approve" }
   | { type: "discard" }
-  | { type: "sessions" }
+  | { type: "sessions"; role?: Role }
+  | { type: "model"; role: Role; model?: string; save: boolean }
+  | { type: "thinking"; role: Role; thinking?: ReplThinkingLevel; save: boolean }
+  | { type: "config"; key: "review-rounds" | "timeout-ms"; value: number; save: boolean }
   | { type: "handoff" }
   | { type: "new"; role: Role }
   | { type: "switch"; role: Role; sessionPath: string }
+  | { type: "cancel" }
   | { type: "quit" };
 
-const VALID_THINKING = new Set<ReplThinkingLevel>(["off", "low", "medium", "high"]);
+const VALID_THINKING = new Set<ReplThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh"]);
 const HELP_FLAGS = new Set(["--help", "-h"]);
 const VERSION_FLAGS = new Set(["--version", "-v"]);
 
@@ -130,18 +138,19 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
   if (topic === "repl") {
     return [
       "Usage:",
-      "  pi-dual repl [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--plain] [--json-logs] [--verbose]",
+      "  pi-dual repl [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--timeout-ms N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--plain] [--json-logs] [--verbose]",
       "",
       "Examples:",
-      "  pi-dual repl . --model-a openai/gpt-5.4 --model-b openai/gpt-5.4",
+      "  pi-dual repl . --model-a openai/gpt-5.4 --model-b lm-studio/qwen3.6-35b-a3b",
       "  npm run repl -- . --no-session",
       "",
       "Flags:",
       "  --model-a MODEL",
       "  --model-b MODEL",
-      "  --thinking-a off|low|medium|high",
-      "  --thinking-b off|low|medium|high",
+      "  --thinking-a off|minimal|low|medium|high|xhigh",
+      "  --thinking-b off|minimal|low|medium|high|xhigh",
       "  --max-review-rounds N",
+      "  --timeout-ms N       total submission deadline; default 600000",
       "  --agent-dir PATH",
       "  --session-root PATH",
       "  --mcp-config PATH   repeatable",
@@ -160,8 +169,8 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
       "  pi-dual doctor [cwd] [--model-a MODEL] [--model-b MODEL] [--agent-dir PATH] [--mcp-config PATH]... [--no-mcp]",
       "",
       "Examples:",
-      "  pi-dual doctor . --model-a openai/gpt-5.4 --model-b openai/gpt-5.4",
-      "  npm run doctor -- . --model-b local-qwen/qwen3-coder-next",
+      "  pi-dual doctor . --model-a openai/gpt-5.4 --model-b lm-studio/qwen3.6-35b-a3b",
+      "  npm run doctor -- . --model-b lm-studio/qwen3-coder-next",
       "",
       "The doctor command validates Node.js, your Pi config files, model overrides, and any MCP config paths before you launch the REPL.",
       ""
@@ -249,7 +258,12 @@ function parseReplOptions(argv: string[], baseCwd: string): ReplCliOptions {
       case "--thinking-b":
         options.thinkingB = parseThinking(arg, requireValue(arg, args[++i]));
         break;
+      case "--timeout-ms":
+        options.timeoutMs = parsePositiveInt(arg, requireValue(arg, args[++i]));
+        if (options.timeoutMs > 2_147_483_647) throw new Error("Timeout exceeds the supported timer range.");
+        break;
       case "--max-review-rounds":
+        options.reviewRoundsExplicit = true;
         options.maxReviewRounds = parsePositiveInt(arg, requireValue(arg, args[++i]));
         break;
       case "--agent-dir":
@@ -403,11 +417,30 @@ export function parseReplCommand(input: string): ParsedReplCommand {
   if (trimmed === "/handoff") {
     return { type: "handoff" };
   }
+  if (trimmed === "/cancel") return { type: "cancel" };
   if (trimmed === "/quit") {
     return { type: "quit" };
   }
 
   const parts = trimmed.split(/\s+/);
+  if (trimmed === "/history") return { type: "history" };
+  if (parts[0] === "/inspect" && parts[1]) {
+    const section = parts[2] ?? "output";
+    const offset = Number(parts[3] ?? 0);
+    if (!["summary", "request", "output", "metadata"].includes(section) || !Number.isSafeInteger(offset) || offset < 0 || parts.length > 4) throw new Error("Use /inspect ID summary|request|output|metadata [line offset].");
+    if (section === "summary" || section === "request" || section === "output" || section === "metadata") return { type: "inspect", id: parts[1], section, offset };
+  }
+  const role = parts[1]?.toUpperCase();
+  const save = parts.at(-1) === "save";
+  if ((parts[0] === "/model" || parts[0] === "/thinking" || parts[0] === "/sessions") && (role === "A" || role === "B")) {
+    if (parts[0] === "/sessions" && parts.length === 2) return { type: "sessions", role };
+    const value = parts[2];
+    if (parts[0] === "/model" && parts.length <= (save ? 4 : 3) && value !== "save") return { type: "model", role, save, ...(value ? { model: value } : {}) };
+    if (parts[0] === "/thinking" && parts.length <= (save ? 4 : 3) && value !== "save") return { type: "thinking", role, save, ...(value ? { thinking: parseThinking("/thinking", value) } : {}) };
+  }
+  if (parts[0] === "/config" && (parts[1] === "review-rounds" || parts[1] === "timeout-ms") && parts[2] && parts.length === (save ? 4 : 3)) {
+    return { type: "config", key: parts[1], value: parsePositiveInt("/config", parts[2]), save };
+  }
   if (parts[0] === "/new" && parts[1] && isRole(parts[1])) {
     return { type: "new", role: parts[1].toUpperCase() as Role };
   }
@@ -437,8 +470,8 @@ function parseThinking(flag: string, value: string): ReplThinkingLevel {
 }
 
 function parsePositiveInt(flag: string, value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`Invalid value for ${flag}: ${value}`);
   }
   return parsed;
@@ -469,3 +502,16 @@ function parseHelpTopic(value: string | undefined): HelpTopic {
   }
   return "general";
 }
+
+export const REPL_COMPLETION_COMMANDS = [
+  { name: "history", description: "Read retained turns, runs and calls" },
+  { name: "inspect", description: "Read detail: /inspect ID [section] [line offset]" },
+  { name: "help", description: "Show commands" }, { name: "status", description: "Show state" },
+  { name: "approve", description: "Execute the pending plan" }, { name: "discard", description: "Clear pending plan" },
+  { name: "cancel", description: "Cancel active work" }, { name: "quit", description: "Cancel and exit" },
+  { name: "sessions", description: "Saved sessions: /sessions A|B" }, { name: "handoff", description: "Latest workflow" },
+  { name: "new", description: "Fresh session: /new A|B" }, { name: "switch", description: "Restore context: /switch A|B PATH" },
+  { name: "model", description: "Choose model: /model A|B [MODEL] [save]" },
+  { name: "thinking", description: "Choose reasoning: /thinking A|B [LEVEL] [save]" },
+  { name: "config", description: "Defaults: /config review-rounds|timeout-ms N [save]" }
+];

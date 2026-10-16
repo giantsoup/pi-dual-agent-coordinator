@@ -1,3 +1,4 @@
+import { cleanupAll } from "./cleanup.js";
 import type { Role } from "../types/role.js";
 import type { RoleRuntimeBinding } from "./create-role-runtime.js";
 
@@ -34,8 +35,6 @@ export class RuntimeRegistry {
   public async disposeAll(): Promise<void> {
     const bindings = this.list();
     this.bindings.clear();
-    for (const binding of bindings) {
-      await binding.dispose();
-    }
+    await cleanupAll(bindings.map((binding) => () => binding.dispose()));
   }
 }

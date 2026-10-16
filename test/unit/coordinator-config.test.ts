@@ -57,6 +57,19 @@ describe("coordinator config", () => {
     expect(loaded.warnings[0]).toContain("could not be parsed");
   });
 
+  it("reports invalid deadline and review limits instead of silently defaulting", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-dual-config-limits-"));
+    process.env.PI_DUAL_COORDINATOR_HOME = root;
+    await writeCoordinatorConfig({version:1,defaults:{maxReviewRounds:4,timeoutMs:12000}});
+    expect((await loadCoordinatorConfig()).config?.defaults).toMatchObject({maxReviewRounds:4,timeoutMs:12000});
+    writeFileSync(getCoordinatorConfigPath(),JSON.stringify({version:1,defaults:{maxReviewRounds:0,timeoutMs:2147483648}}));
+    const loaded = await loadCoordinatorConfig();
+    expect(loaded.config?.defaults).toEqual({});
+    expect(loaded.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining("defaults.maxReviewRounds"),expect.stringContaining("defaults.timeoutMs")
+    ]));
+  });
+
   it("lets explicit CLI model-a override the saved default", () => {
     const resolved = applyCoordinatorDefaultsToCliOptions(
       {

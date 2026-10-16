@@ -4,11 +4,12 @@ import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import type { DoctorCliOptions, ReplCliOptions } from "./cli.js";
 import { loadCoordinatorConfig, resolveEffectiveModelA, resolveEffectiveModelB } from "./coordinator-config.js";
 import { loadResolvedMcpConfig } from "../mcp/config-loader.js";
-import { createSecureModelRegistry, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
+import { createSecureModelRegistry, isRoleModel, LM_STUDIO_BASE_URL, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
 import { ToolIsolation } from "../security/isolation.js";
 import { credentialAccount, credentialHelper, credentialStatus } from "../security/credentials.js";
 import { assertSafeProviderEnvironment } from "../security/provider-broker.js";
 import { hasLegacyOpenAiAuth } from "./setup.js";
+import { assertLmStudioModelReady } from "../security/lm-studio.js";
 
 export interface RuntimeSetupCheck { name: string; status: "pass" | "warn" | "fail"; detail: string; }
 export interface RuntimeSetupReport {
@@ -44,11 +45,14 @@ export async function inspectRuntimeSetup(options: RuntimeSetupOptions): Promise
   const loaded = await loadCoordinatorConfig();
   checks.push({ name: "Coordinator defaults", status: loaded.warnings.length ? "fail" : "pass", detail: loaded.warnings.length ? "Invalid coordinator defaults; repair non-secret configuration." : "Loaded non-secret coordinator defaults." });
   const registry = createSecureModelRegistry();
-  for (const [role, reference] of [["A", resolveEffectiveModelA(options, loaded.config).value ?? SMART_MODEL], ["B", resolveEffectiveModelB(options, loaded.config).value ?? EXECUTION_MODEL]]) {
-    await test(`Agent ${role} model`, () => {
-      const id = reference?.startsWith("openai/") ? reference.slice("openai/".length) : reference;
-      const model = registry.find("openai", id ?? "");
-      if (!model || model.api !== "openai-responses" || (reference?.includes("/") && !reference.startsWith("openai/"))) throw new Error("Choose an approved openai Responses API model. Subscription, local-provider, and custom endpoint overrides are rejected.");
+  for (const [role, reference] of [["A", resolveEffectiveModelA(options, loaded.config).value ?? SMART_MODEL], ["B", resolveEffectiveModelB(options, loaded.config).value ?? EXECUTION_MODEL]] as const) {
+    await test(`Agent ${role} model`, async () => {
+      const model = registry.getAll().find((candidate) => reference === `${candidate.provider}/${candidate.id}` || reference === candidate.id);
+      if (!model || !isRoleModel(role, model)) throw new Error(`Agent ${role} requires ${role === "A" ? "an approved OpenAI Responses model" : "a local LM Studio model, such as " + EXECUTION_MODEL}.`);
+      if (role === "B") {
+        await assertLmStudioModelReady(model);
+        return `lm-studio/${model.id}, local inference at ${LM_STUDIO_BASE_URL}; no OpenAI credential used.`;
+      }
       return `openai/${model.id}, API-key authentication through the trusted broker.`;
     });
   }

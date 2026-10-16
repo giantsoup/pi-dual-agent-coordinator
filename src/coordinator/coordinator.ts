@@ -1,7 +1,16 @@
+import { safeDisplayText } from "../security/display-text.js";
+import { loadHistoryEvents } from "../app/interactive/history.js";
+import type { HistoryRecord } from "../types/history.js";
+import { readSessionArchive, archiveRunEntries } from "../runtime/session-history.js";
+import { supportsXhigh } from "@mariozechner/pi-ai";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { join, relative, isAbsolute } from "node:path";
+import { realpath } from "node:fs/promises";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
-import { getAgentDir } from "@mariozechner/pi-coding-agent";
+import { loadCoordinatorConfig, writeCoordinatorConfig } from "../app/coordinator-config.js";
+import { createSecureModelRegistry, isRoleModel } from "../security/models.js";
+import { SessionManager, getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
   deriveActivityUpdate,
   renderActivityText,
@@ -13,6 +22,7 @@ import { createRequestId } from "../telemetry/correlation.js";
 import { normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
 import {
   RuntimeEventBridge,
+  OperationStoppedError,
   type RuntimeUiBridgeEvent
 } from "./bind-runtime-events.js";
 import { createEmptyHandoffState } from "./handoff-state-machine.js";
@@ -20,9 +30,12 @@ import { WorkflowOrchestrator, createWorkflowHandoffEnvelope } from "./workflow-
 import {
   createRoleRuntime,
   getDefaultSessionRoot,
+  getRoleSessionDirectory,
   type RoleRuntimeBinding,
   type SupportedThinkingLevel
 } from "../runtime/create-role-runtime.js";
+import { readSessionHistory } from "../runtime/session-history.js";
+import { cleanupAll } from "../runtime/cleanup.js";
 import { RuntimeRegistry } from "../runtime/runtime-registry.js";
 import { applyRuntimeOperation, type RuntimeReplacementAction } from "../runtime/runtime-operations.js";
 import { getRuntimeHealth } from "../runtime/runtime-health.js";
@@ -72,6 +85,7 @@ export interface CoordinatorOptions {
   mcpEnabled?: boolean;
   mcpConfigPaths?: string[];
   supersedeRecoveredWorkflowOnStart?: boolean;
+  timeoutMs?: number;
   createRoleRuntime?: typeof createRoleRuntime;
   stdout?: NodeJS.WriteStream;
   stderr?: NodeJS.WriteStream;
@@ -101,12 +115,21 @@ export class Coordinator {
     phase: "planning",
     activeRole: "A"
   };
+  private activeOperation: { controller: AbortController; id: string; done: Promise<void>; finish(): void; stopping?: Promise<PromiseSettledResult<void>[]>; outcome: "cancelled" | "timed_out" } | undefined;
+  private operatorTurnId: string | undefined;
+  private readonly requestTurns = new Map<string, string>();
+  private operationKind: NonNullable<CoordinatorStatusSnapshot["operation"]>["kind"] = "idle";
+  private disposed = false;
+  private configuring = false;
+  private configurationDone = Promise.resolve();
+  private finishConfiguration = () => {};
   private readonly runtimeActivity = new Map<Role, ActivitySnapshot>();
   private readonly lastToolNames = new Map<Role, string>();
   private coordinatorActivity: ActivitySnapshot | undefined;
   private readonly unsubscribeActivityListener: () => void;
 
   public constructor(private readonly options: CoordinatorOptions) {
+    if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 || options.timeoutMs > 2_147_483_647)) throw new Error("Timeout must be a positive whole number within the supported timer range.");
     this.sessionRoot = options.sessionRoot ?? getDefaultSessionRoot(options.cwd);
     const paths = createPersistencePaths(this.sessionRoot);
     this.ledger = new SessionLedger(paths.ledgerFile);
@@ -155,25 +178,34 @@ export class Coordinator {
       sessionMode: this.options.sessionMode,
       mcp: this.resolvedMcpConfig
     });
-    const bindingB = await this.runtimeFactory({
-      role: "B",
-      cwd: this.options.cwd,
-      agentDir: this.options.agentDir,
-      sessionRoot: this.sessionRoot,
-      modelOverride: this.options.modelB,
-      thinkingOverride: this.options.thinkingB,
-      sessionMode: this.options.sessionMode,
-      mcp: this.resolvedMcpConfig
-    });
     this.registry.set(bindingA);
-    this.registry.set(bindingB);
-    await this.eventBridge.bind(bindingA);
-    await this.eventBridge.bind(bindingB);
-    this.setUiState("planning", "A");
-    await this.supersedeRecoveredWorkflowOnStartIfNeeded();
+    try {
+      const bindingB = await this.runtimeFactory({
+        role: "B",
+        cwd: this.options.cwd,
+        agentDir: this.options.agentDir,
+        sessionRoot: this.sessionRoot,
+        modelOverride: this.options.modelB,
+        thinkingOverride: this.options.thinkingB,
+        sessionMode: this.options.sessionMode,
+        mcp: this.resolvedMcpConfig
+      });
+      this.registry.set(bindingB);
+      await this.eventBridge.bind(bindingA);
+      await this.eventBridge.bind(bindingB);
+      this.setUiState("planning", "A");
+      await this.supersedeRecoveredWorkflowOnStartIfNeeded();
+    } catch (error) {
+      await this.registry.disposeAll();
+      throw error;
+    }
   }
 
-  public async submitUserInput(text: string): Promise<CoordinatorTurnResult> {
+  public submitUserInput(text: string): Promise<CoordinatorTurnResult> {
+    return this.runOperation(() => this.submitUserInputInternal(text), text);
+  }
+
+  private async submitUserInputInternal(text: string): Promise<CoordinatorTurnResult> {
     this.clearAllActivity();
     const activeWorkflow = this.getActiveWorkflow();
     if (activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)) {
@@ -185,6 +217,7 @@ export class Coordinator {
     const bindingA = this.requireBinding("A");
     const bindingB = this.requireBinding("B");
     const requestId = createRequestId();
+    if (this.operatorTurnId) this.requestTurns.set(requestId, this.operatorTurnId);
     this.eventBridge.setRequestId("A", requestId);
     this.eventBridge.setRequestId("B", requestId);
     this.lastSummary = undefined;
@@ -263,7 +296,11 @@ export class Coordinator {
     }
   }
 
-  public async approvePendingPlan(): Promise<CoordinatorTurnResult> {
+  public approvePendingPlan(): Promise<CoordinatorTurnResult> {
+    return this.runOperation(() => this.approvePendingPlanInternal(), this.pendingPlan?.objective ?? "Approve plan", this.pendingPlan ? this.requestTurns.get(this.pendingPlan.requestId) : undefined);
+  }
+
+  private async approvePendingPlanInternal(): Promise<CoordinatorTurnResult> {
     this.clearAllActivity();
     const activeWorkflow = this.getActiveWorkflow();
     if (activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)) {
@@ -319,6 +356,7 @@ export class Coordinator {
   }
 
   public discardPendingPlan(): void {
+    this.assertIdle();
     if (!this.pendingPlan) {
       return;
     }
@@ -333,16 +371,20 @@ export class Coordinator {
   }
 
   public async replaceRuntime(role: Role, action: RuntimeReplacementAction): Promise<void> {
-    const binding = this.requireBinding(role);
-    const updated = await applyRuntimeOperation(binding, action);
-    this.registry.set(updated);
-    await this.eventBridge.bind(updated);
-    this.pendingPlan = undefined;
-    this.runtimeActivity.delete(role);
-    this.lastToolNames.delete(role);
-    this.coordinatorActivity = undefined;
-    await this.supersedeActiveWorkflowIfNeeded(role, updated);
-    await this.eventBridge.waitForIdle();
+    this.assertIdle();
+    this.beginConfiguration();
+    try {
+      const binding = this.requireBinding(role);
+      const updated = await applyRuntimeOperation(binding, action);
+      this.registry.set(updated);
+      await this.eventBridge.bind(updated);
+      this.pendingPlan = undefined;
+      this.runtimeActivity.delete(role);
+      this.lastToolNames.delete(role);
+      this.coordinatorActivity = undefined;
+      await this.supersedeActiveWorkflowIfNeeded(role, updated);
+      await this.eventBridge.waitForIdle();
+    } finally { this.endConfiguration(); }
   }
 
   public getStatus(): CoordinatorStatusSnapshot {
@@ -364,6 +406,7 @@ export class Coordinator {
     const activeSnapshot = this.runtimeActivity.get(this.uiState.activeRole);
 
     return {
+      operation: { kind: this.operationKind },
       cwd: this.options.cwd,
       conversationMode: this.getConversationMode(),
       phase: this.uiState.phase,
@@ -395,6 +438,7 @@ export class Coordinator {
       lastCompletionSummary: workflow?.latestCompletion?.summary,
       repairCount: workflow?.repairCount ?? 0,
       maxReviewRounds: this.options.maxReviewRounds ?? 3,
+      timeoutMs: this.options.timeoutMs ?? 600_000,
       runtimes: list,
       mcp: {
         enabled: this.resolvedMcpConfig.enabled,
@@ -414,6 +458,107 @@ export class Coordinator {
       },
       metrics: this.metrics.snapshot()
     };
+  }
+
+  public getHistoryEvents() { return loadHistoryEvents(join(this.sessionRoot, "logs", "coordinator.jsonl")); }
+
+  public async getRunArchive(run: Extract<HistoryRecord, { kind: "run" }>) {
+    if (!run.sessionFile) {
+      const binding = this.registry.get(run.role);
+      if (!binding || binding.sessionId !== run.sessionId) throw new Error("Output unavailable: memory session was replaced or restarted.");
+      const entries = binding.session.sessionManager?.getEntries?.() ?? [];
+      const archive = { header: { type: "session", id: run.sessionId, timestamp: run.timestamp }, entries, byId: new Map(entries.map((entry) => [entry.id, entry])) };
+      return archiveRunEntries(archive, run.id);
+    }
+    const directory = await realpath(getRoleSessionDirectory(this.options.cwd, run.role, this.sessionRoot));
+    const canonical = await realpath(run.sessionFile);
+    const candidate = relative(directory, canonical);
+    if (candidate.startsWith("..") || isAbsolute(candidate) || !candidate.endsWith(".jsonl")) throw new Error("History must stay inside this role's private session directory.");
+    const archive = readSessionArchive(canonical);
+    if (archive.header.id !== run.sessionId || archive.header.cwd !== this.options.cwd) throw new Error("Session identity mismatch.");
+    return archiveRunEntries(archive, run.id);
+  }
+
+  public getAvailableModels(role?: Role): Array<{ canonical: string; name: string; reasoning: boolean; thinkingLevels: SupportedThinkingLevel[] }> {
+    return createSecureModelRegistry().getAll()
+      .filter((model) => role ? isRoleModel(role, model) : isRoleModel("A", model) || isRoleModel("B", model))
+      .map((model) => ({ canonical: `${model.provider}/${model.id}`, name: model.name, reasoning: model.reasoning, thinkingLevels: !model.reasoning ? ["off"] : supportsXhigh(model) ? ["off", "minimal", "low", "medium", "high", "xhigh"] : ["off", "minimal", "low", "medium", "high"] }));
+  }
+
+  public async getSavedSessions(role: Role) {
+    if (this.options.sessionMode === "memory") return [];
+    return SessionManager.list(this.options.cwd, getRoleSessionDirectory(this.options.cwd, role, this.sessionRoot));
+  }
+
+  public async getSessionHistory(role: Role, path: string): Promise<AgentMessage[]> {
+    const directory = await realpath(getRoleSessionDirectory(this.options.cwd, role, this.sessionRoot));
+    const canonical = await realpath(path);
+    const candidate = relative(directory, canonical);
+    if (candidate.startsWith("..") || isAbsolute(candidate) || !candidate.endsWith(".jsonl")) throw new Error("History must stay inside this role's private session directory.");
+    return readSessionHistory(canonical).messages;
+  }
+
+  public async configureRole(role: Role, input: { model?: string; thinking?: SupportedThinkingLevel; save: boolean }): Promise<void> {
+    this.assertIdle();
+    this.beginConfiguration();
+    let replacement: RoleRuntimeBinding | undefined;
+    try {
+      const previous = this.requireBinding(role);
+      const model = input.model ?? `${previous.session.model?.provider}/${previous.session.model?.id}`;
+      const selected = this.getAvailableModels(role).find((candidate) => candidate.canonical === model);
+      if (!selected) throw new Error(`Choose ${role === "A" ? "an approved OpenAI Responses" : "a local LM Studio"} model from /model ${role}.`);
+      const thinking = input.thinking ?? selected.thinkingLevels.find((level) => level === previous.session.thinkingLevel) ?? (selected.reasoning ? "high" : "off");
+      if (!selected.thinkingLevels.includes(thinking)) throw new Error(`Supported thinking levels for this model: ${selected.thinkingLevels.join(", ")}`);
+      replacement = await this.runtimeFactory({ role, cwd: this.options.cwd, agentDir: this.options.agentDir,
+        sessionRoot: this.sessionRoot, sessionMode: this.options.sessionMode,
+        modelOverride: model, thinkingOverride: thinking, mcp: this.resolvedMcpConfig,
+        ...(previous.sessionFile ? { initialSessionPath: previous.sessionFile } : {}),
+        ...(this.options.sessionMode === "memory" ? { initialMessages: previous.session.messages } : {}) });
+      await this.eventBridge.bind(replacement);
+      try {
+        if (input.save) {
+          const loaded = await loadCoordinatorConfig();
+          if (loaded.warnings.length) throw new Error("Resolve coordinator config warnings before saving defaults.");
+          await writeCoordinatorConfig({
+            ...loaded.config,
+            version: 1,
+            defaults: {
+              ...loaded.config?.defaults,
+              ...(role === "A" ? { modelA: model, thinkingA: thinking } : { modelB: model, thinkingB: thinking })
+            }
+          });
+        }
+      } catch (error) {
+        await this.eventBridge.bind(previous);
+        throw error;
+      }
+      this.registry.set(replacement);
+      replacement = undefined;
+      if (role === "A") { this.options.modelA = model; this.options.thinkingA = thinking; }
+      else { this.options.modelB = model; this.options.thinkingB = thinking; }
+      this.pendingPlan = undefined;
+      this.clearAllActivity();
+      await previous.dispose();
+    } finally {
+      try { await replacement?.dispose(); }
+      finally { this.endConfiguration(); }
+    }
+  }
+
+  public async configureDefaults(key: "review-rounds" | "timeout-ms", value: number, save: boolean): Promise<void> {
+    this.assertIdle();
+    if (!Number.isSafeInteger(value) || value <= 0 || (key === "timeout-ms" && value > 2_147_483_647)) throw new Error("Use a positive whole number within the supported timer range.");
+    this.beginConfiguration();
+    try {
+      if (save) {
+        const loaded = await loadCoordinatorConfig();
+        if (loaded.warnings.length) throw new Error("Resolve coordinator config warnings before saving defaults.");
+        await writeCoordinatorConfig({ ...loaded.config, version: 1, defaults: { ...loaded.config?.defaults,
+          ...(key === "review-rounds" ? { maxReviewRounds: value } : { timeoutMs: value }) } });
+      }
+      if (key === "review-rounds") this.options.maxReviewRounds = value;
+      else this.options.timeoutMs = value;
+    } finally { this.endConfiguration(); }
   }
 
   public getSessions(): ReturnType<typeof getRuntimeHealth>[] {
@@ -452,9 +597,95 @@ export class Coordinator {
   }
 
   public async dispose(): Promise<void> {
-    this.unsubscribeActivityListener();
-    this.eventBridge.dispose();
-    await this.registry.disposeAll();
+    if (this.disposed) return;
+    this.disposed = true;
+    await cleanupAll([() => this.cancelActive(), () => this.configurationDone,
+      () => this.unsubscribeActivityListener(), () => this.eventBridge.dispose(), () => this.registry.disposeAll()]);
+  }
+
+  public async cancelActive(reason: "cancelled" | "timed_out" = "cancelled"): Promise<void> {
+    const operation = this.activeOperation;
+    if (!operation) return;
+    if (!operation.stopping) {
+      operation.outcome = reason;
+      this.operationKind = "cancelling";
+      operation.controller.abort();
+      operation.stopping = Promise.allSettled(this.registry.list().map(async (binding) => binding.session.abort()));
+    }
+    await operation.stopping;
+    await operation.done;
+  }
+
+  private beginConfiguration(): void {
+    if (this.disposed) throw new Error("Coordinator disposed.");
+    this.configuring = true;
+    this.configurationDone = new Promise<void>((resolve) => { this.finishConfiguration = resolve; });
+  }
+
+  private endConfiguration(): void {
+    this.configuring = false;
+    this.finishConfiguration();
+  }
+
+  private assertIdle(): void {
+    if (this.activeOperation || this.configuring) throw new Error("Work is running. Use /cancel before changing workflow or runtime settings.");
+  }
+
+  private async runOperation(run: () => Promise<CoordinatorTurnResult>, objective: string, originatingTurnId?: string): Promise<CoordinatorTurnResult> {
+    this.assertIdle();
+    if (this.disposed) throw new Error("Coordinator disposed.");
+    const controller = new AbortController();
+    let finish = () => {};
+    const done = new Promise<void>((resolve) => { finish = resolve; });
+    const operation: NonNullable<typeof this.activeOperation> = { controller, id: createRequestId(), done, finish, outcome: "cancelled" };
+    this.activeOperation = operation;
+    this.operationKind = "running";
+    this.operatorTurnId = originatingTurnId ?? randomUUID();
+    this.eventBridge.setOperatorTurn(this.operatorTurnId);
+    const logTurn = (eventType: string, details: Record<string, unknown>) => {
+      const binding = this.requireBinding("A");
+      this.logger.log({ ...normalizeLifecycleEvent({ role: "A", sessionId: binding.sessionId, sessionFile: binding.sessionFile, eventType, details }), operatorTurnId: this.operatorTurnId });
+    };
+    logTurn("ui.turn_started", { objective: safeDisplayText(objective) });
+    this.eventBridge.beginOperation(controller.signal);
+    const timeoutMs = this.options.timeoutMs ?? 600_000;
+    const timer = timeoutMs > 0 ? setTimeout(() => { void this.cancelActive("timed_out"); }, timeoutMs) : undefined;
+    try {
+      const result = await run();
+      this.eventBridge.assertActive();
+      if (result.workflow?.status === "blocked" || result.workflow?.status === "capped") {
+        await Promise.all(this.registry.list().map((binding) => binding.session.abort()));
+      }
+      this.operationKind = result.workflow?.status === "blocked" || result.workflow?.status === "capped" ? "failed" : "completed";
+      return result;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        controller.abort();
+        operation.stopping = Promise.allSettled(this.registry.list().map(async (binding) => binding.session.abort()));
+      }
+      const stopped = await operation.stopping;
+      const cleanupFailed = stopped?.some((result) => result.status === "rejected") ?? false;
+      this.pendingPlan = undefined;
+      const status = !cleanupFailed && error instanceof OperationStoppedError ? operation.outcome : "failed";
+      const workflow = this.getActiveWorkflow();
+      const binding = this.requireBinding(this.uiState.activeRole);
+      await this.ledger.append({ workflowId: workflow?.workflowId ?? operation.id,
+        iteration: workflow?.currentIteration ?? 0, requestId: workflow?.requestId ?? operation.id,
+        status, role: "coordinator", sessionId: binding.sessionId, sessionFile: binding.sessionFile,
+        timestamp: new Date().toISOString(), details: { reason: status, preservedChanges: true } });
+      this.workflowState = await this.recoveryLoader.load();
+      this.operationKind = status;
+      this.lastSummary = `${status === "timed_out" ? "Deadline exceeded" : status === "cancelled" ? "Work cancelled" : "Work failed"}. Completed file changes are preserved. Submit explicitly to run again.`;
+      if (status === "failed") throw cleanupFailed ? new Error("Runtime cancellation cleanup failed. Inspect status and file changes before retrying.") : error;
+      return { mode: "planning", userResponse: this.lastSummary };
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.setUiState("planning", "A");
+      this.clearAllActivity();
+      logTurn("ui.turn_finished", { outcome: this.pendingPlan ? "waiting_approval" : this.operationKind });
+      this.activeOperation = undefined;
+      operation.finish();
+    }
   }
 
   private requireBinding(role: Role): RoleRuntimeBinding {
@@ -568,7 +799,6 @@ export class Coordinator {
     executionPlan: NonNullable<ReturnType<typeof maybeParseExecutionPlanEnvelope>>;
   }) {
     try {
-      this.setUiState("execution", "B");
       return await this.startExecutionFromPlan(options);
     } finally {
       this.setUiState("planning", "A");
@@ -622,6 +852,7 @@ export class Coordinator {
       requestId,
       details
     });
+    event.operatorTurnId = this.operatorTurnId;
     this.logger.log(event);
     this.metrics.observe(event);
   }

@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
@@ -42,6 +42,20 @@ function createConfig(cacheFile: string): ResolvedMcpConfig {
 }
 
 describe("mcp proxy tool", () => {
+  it("cancels an in-flight MCP tool request and keeps the connection usable", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-mcp-cancel-"));
+    const pool = new McpClientPool("B",createConfig(join(root,"cache.json")));
+    try {
+      await pool.ensureMetadata("fixture");
+      const controller = new AbortController();
+      const request = pool.callTool("fixture","slow",{},controller.signal);
+      const assertion = expect(request).rejects.toThrow();
+      const timer = setTimeout(() => controller.abort(),30);
+      try { await assertion; } finally { clearTimeout(timer); }
+      expect(await pool.callTool("fixture","echo",{text:"after cancellation"})).toMatchObject({content:[{text:"echo:after cancellation"}]});
+    } finally { await pool.closeAll(); rmSync(root,{recursive:true,force:true}); }
+  });
+
   it("supports search, describe, call, resources, prompts, cache reuse, and shutdown", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-dual-mcp-proxy-"));
     const cacheFile = join(root, "mcp-cache.json");

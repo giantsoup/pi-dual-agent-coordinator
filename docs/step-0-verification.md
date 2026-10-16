@@ -1,5 +1,8 @@
 # Step 0 verification
 
+This is the historical Step 0 record. Later terminal work is recorded in
+[terminal verification](terminal-verification.md).
+
 Date: 2026-10-16. Scope: credential creation, storage, tool isolation, and API
 connectivity only. Steps 1-6 have not started. No commit, push, or PR was made.
 

@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { Coordinator } from "../../src/coordinator/coordinator.js";
 import type { CreateRoleRuntimeOptions } from "../../src/runtime/create-role-runtime.js";
@@ -356,24 +356,41 @@ Plan draft below.
     expect(coordinator.getStatus().phase).toBe("planning");
     expect(coordinator.getStatus().activeRole).toBe("A");
 
-    const pending = coordinator.submitUserInput("Start execution now.");
-    await waitFor(() => coordinator.getStatus().phase === "execution");
+    const preparedGate = createDeferred<void>();
+    const preparedReady = createDeferred<void>();
+    const append = SessionLedger.prototype.append;
+    const persist = vi.spyOn(SessionLedger.prototype, "append").mockImplementation(async function (this: SessionLedger, record) {
+      if (record.status === "prepared") {
+        preparedReady.resolve();
+        await preparedGate.promise;
+      }
+      return append.call(this, record);
+    });
+    try {
+      const pending = coordinator.submitUserInput("Start execution now.");
+      void pending.catch(() => undefined);
+      await preparedReady.promise;
+      expect(coordinator.getStatus().phase).toBe("planning");
+      expect(coordinator.getStatus().activeWorkflowId).toBeUndefined();
+      preparedGate.resolve();
+      await waitFor(() => coordinator.getStatus().phase === "execution");
 
-    expect(coordinator.getStatus().conversationMode).toBe("executing");
-    expect(coordinator.getStatus().phase).toBe("execution");
-    expect(coordinator.getStatus().activeRole).toBe("B");
-    expect(coordinator.getStatus().activeWorkflowId).toBeTruthy();
-    expect(coordinator.getStatus().currentIteration).toBe(1);
-    expect(coordinator.getStatus().workflowStatus).toBe("running");
+      expect(coordinator.getStatus().conversationMode).toBe("executing");
+      expect(coordinator.getStatus().phase).toBe("execution");
+      expect(coordinator.getStatus().activeRole).toBe("B");
+      expect(coordinator.getStatus().activeWorkflowId).toBeTruthy();
+      expect(coordinator.getStatus().currentIteration).toBe(1);
+      expect(coordinator.getStatus().workflowStatus).toBe("running");
 
-    bGate.resolve();
-    const result = await pending;
-
-    expect(result.workflow?.status).toBe("completed");
-    expect(coordinator.getStatus().phase).toBe("planning");
-    expect(coordinator.getStatus().activeRole).toBe("A");
-
-    await coordinator.dispose();
+      bGate.resolve();
+      const result = await pending;
+      expect(result.workflow?.status).toBe("completed");
+      expect(coordinator.getStatus().phase).toBe("planning");
+      expect(coordinator.getStatus().activeRole).toBe("A");
+    } finally {
+      preparedGate.resolve(); bGate.resolve(); persist.mockRestore();
+      await coordinator.dispose();
+    }
   });
 
   it("reports repair state and live repair counts while a repair prompt is in flight", async () => {

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { ManagedSession } from "../runtime/managed-session.js";
 import { AgentSession } from "@mariozechner/pi-coding-agent";
 import { SMART_MODEL } from "./models.js";
 import { loadCoordinatorConfig, resolveEffectiveModelA } from "../app/coordinator-config.js";
@@ -13,12 +14,12 @@ async function main(): Promise<void> {
   const loaded = await loadCoordinatorConfig();
   const model = resolveEffectiveModelA({}, loaded.config).value ?? SMART_MODEL;
   const thinking = loaded.config?.defaults.thinkingA ?? "high";
-  await assertRuntimeSetupReady({ command: "doctor", cwd, modelA: model, modelB: model, mcpEnabled: false, mcpConfigPaths: [] });
+  await assertRuntimeSetupReady({ command: "doctor", cwd, modelA: model, mcpEnabled: false, mcpConfigPaths: [] });
   const state = mkdtempSync(join(tmpdir(), "pi-dual-smoke-"));
   const binding = await createRoleRuntime({ role: "A", cwd, modelOverride: model, thinkingOverride: thinking,
     sessionMode: "memory", sessionRoot: state, loadProjectResources: false, noTools: true });
   const start = Date.now();
-  if (!(binding.session instanceof AgentSession)) throw new Error("Pi integration unavailable.");
+  if (!(binding.session instanceof ManagedSession) || !(binding.session.piSession instanceof AgentSession)) throw new Error("Pi integration unavailable.");
   const session = binding.session;
   const timer = setTimeout(() => { void session.abort(); }, 45_000);
   try {

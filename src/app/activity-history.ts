@@ -144,7 +144,7 @@ function applyToolStart(
 
   const toolCallId = stringValue(event.details.toolCallId);
   const item: UiRuntimeActivityHistoryItem = {
-    id: toolCallId ?? `${event.role}:${toolName}:${event.timestamp}`,
+    id: (event.runId && toolCallId ? `${event.runId}:${toolCallId}` : toolCallId) ?? `${event.role}:${toolName}:${event.timestamp}`,
     text: snapshot ? renderActivityText(snapshot) : `running ${toolName}`,
     detail: snapshot ? renderReasonText(snapshot) : undefined,
     status: "active",
@@ -154,9 +154,12 @@ function applyToolStart(
     updatedAt: event.timestamp
   };
 
+  if (history.seenCalls?.includes(item.id)) return history;
+
   return {
     ...history,
     totals: incrementToolTotal(history.totals, toolName, snapshot),
+    seenCalls: [...(history.seenCalls ?? []), item.id],
     recent: upsertRecentItem(history.recent, item),
     updatedAt: event.timestamp
   };
@@ -175,15 +178,18 @@ function applyToolEnd(
   const toolCallId = stringValue(event.details.toolCallId);
   const status = event.details.isError === true ? "failed" : "completed";
   const item: UiRuntimeActivityHistoryItem = {
-    id: toolCallId ?? `${event.role}:${toolName}:${event.timestamp}`,
+    id: (event.runId && toolCallId ? `${event.runId}:${toolCallId}` : toolCallId) ?? `${event.role}:${toolName}:${event.timestamp}`,
     text: snapshot ? renderActivityText(snapshot) : `finished ${toolName}`,
     detail: snapshot ? renderReasonText(snapshot) : undefined,
     status,
     toolName,
     toolCallId,
-    startedAt: findExistingStartTimestamp(history.recent, toolCallId) ?? event.timestamp,
+    startedAt: history.recent.find((item) => item.id === (event.runId && toolCallId ? `${event.runId}:${toolCallId}` : toolCallId))?.startedAt ?? event.timestamp,
     updatedAt: event.timestamp
   };
+
+  const existing = history.recent.find((previous) => previous.id === item.id);
+  if (existing && existing.status !== "active") return history;
 
   return {
     ...history,
@@ -248,7 +254,7 @@ function upsertRecentItem(
   recent: UiRuntimeActivityHistoryItem[],
   item: UiRuntimeActivityHistoryItem
 ): UiRuntimeActivityHistoryItem[] {
-  const index = findRecentItemIndex(recent, item.toolCallId, item.toolName);
+  const index = recent.findIndex((previous) => previous.id === item.id);
   if (index === -1) {
     return [...recent, item].slice(-MAX_RECENT_ACTIVITY_ITEMS);
   }
@@ -260,38 +266,6 @@ function upsertRecentItem(
     startedAt: next[index]!.startedAt
   };
   return next.slice(-MAX_RECENT_ACTIVITY_ITEMS);
-}
-
-function findRecentItemIndex(
-  recent: UiRuntimeActivityHistoryItem[],
-  toolCallId?: string | undefined,
-  toolName?: string | undefined
-): number {
-  if (toolCallId) {
-    return recent.findIndex((item) => item.toolCallId === toolCallId);
-  }
-
-  if (!toolName) {
-    return -1;
-  }
-
-  for (let index = recent.length - 1; index >= 0; index -= 1) {
-    if (recent[index]?.toolName === toolName && recent[index]?.status === "active") {
-      return index;
-    }
-  }
-
-  return -1;
-}
-
-function findExistingStartTimestamp(
-  recent: UiRuntimeActivityHistoryItem[],
-  toolCallId?: string | undefined
-): string | undefined {
-  if (!toolCallId) {
-    return undefined;
-  }
-  return recent.find((item) => item.toolCallId === toolCallId)?.startedAt;
 }
 
 function isMcpTool(toolName: string, snapshot?: ActivitySnapshot | undefined): boolean {

@@ -52,7 +52,7 @@ export function createMcpProxyTool(
       arguments: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
       cursor: Type.Optional(Type.String())
     }),
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       switch (params.action as McpProxyAction) {
         case "status":
           return {
@@ -158,7 +158,8 @@ export function createMcpProxyTool(
           const result = await options.clientPool.callTool(
             target.serverName,
             target.toolName,
-            params.arguments
+            params.arguments,
+            signal
           );
           return toPiToolResult(result, {
             action: "call_tool",

@@ -1,7 +1,7 @@
 import type { CompletionRecord, FinalDecisionRecord, HandoffEnvelope, HandoffRecord } from "./handoff.js";
 
 export type ConversationMode = "planning" | "executing";
-export type WorkflowRunStatus = "running" | "completed" | "blocked" | "capped";
+export type WorkflowRunStatus = "running" | "completed" | "blocked" | "capped" | "cancelled" | "timed_out" | "failed";
 
 export interface WorkflowRunResult {
   workflowId: string;
@@ -75,5 +75,5 @@ export interface WorkflowState {
 }
 
 export function isWorkflowTerminal(status: WorkflowRunStatus): boolean {
-  return status === "completed" || status === "blocked" || status === "capped";
+  return status !== "running";
 }

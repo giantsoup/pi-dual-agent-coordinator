@@ -25,7 +25,12 @@ Preparation and checks needed to deliver Step 0 belong to Step 0.
 
 ## Step 0: Create, isolate, and verify API credentials
 
-Status: complete. Secure entry/storage, 284 dummy isolation assertions, required checks, and the live Pi-backed OpenAI API-key request passed. Agent A uses `openai/gpt-6-luna` at high reasoning. See `docs/step-0-verification.md` for evidence and trust limits. Steps 1-6 have not started.
+Status: complete. Secure entry/storage, 284 dummy isolation assertions, required checks, and the live Pi-backed OpenAI API-key request passed. Agent A uses `openai/gpt-6-luna` at high reasoning. See `docs/step-0-verification.md` for evidence and trust limits. Steps 1-6 are implemented; see `docs/terminal-verification.md` for baseline, regression, PTY, isolation, and live workflow evidence.
+
+Follow-up scope: the user subsequently directed Agent B to use local LM Studio,
+while Agent A remains on OpenAI. The final QA includes that provider change and
+the terminal fixes. The original Step 0 evidence above remains historical;
+current combined verification is recorded in `docs/terminal-verification.md`.
 
 ### Define and enforce the credential boundary
 
@@ -95,6 +100,8 @@ If operator key creation or local entry remains pending, leave Step 0 incomplete
 
 ## Step 1: Confirm the completed cleanup and establish a baseline
 
+Status: implemented. Verification and limits are recorded in `docs/terminal-verification.md`.
+
 The terminal cleanup landed in `2290d60`, and `feature/browser-experience` preserves the browser work.
 Do not repeat the removal. Verify the current checkout before starting improvements.
 
@@ -108,6 +115,8 @@ Acceptance: distinguish passing checks from existing failures and unavailable li
 Do not describe unperformed checks as passing.
 
 ## Step 2: Make input and live updates dependable
+
+Status: implemented. Verification and limits are recorded in `docs/terminal-verification.md`.
 
 - Separate submission acceptance from completion of the resulting work.
   Clear the submitted text when accepted, then preserve anything typed during the run.
@@ -132,6 +141,8 @@ failure, and cancellation. Repeated submit attempts do not start concurrent work
 Committed assistant text remains visible exactly once, including when a response has no text deltas.
 
 ## Step 3: Add cancellation and define recovery behavior
+
+Status: implemented. Verification and limits are recorded in `docs/terminal-verification.md`.
 
 - Add a coordinator-owned cancellation operation, exposed through both terminal interfaces and `/cancel`.
   Use the Pi session cancellation API through the runtime abstraction.
@@ -164,6 +175,8 @@ and restore the terminal. Cancellation preserves completed file changes and does
 
 ## Step 4: Improve transcript readability and layout
 
+Status: implemented. Verification and limits are recorded in `docs/terminal-verification.md`.
+
 - Render Markdown and fenced code with the existing terminal toolkit.
 - Give the conversation most of the screen and make diagnostic details optional.
 - Support at least `80x24` and `120x40` terminal sizes with the editor and next action visible.
@@ -188,6 +201,8 @@ Opening an overlay or receiving output must not erase input or move a reader awa
 
 ## Step 5: Finish everyday terminal controls
 
+Status: implemented. Verification and limits are recorded in `docs/terminal-verification.md`.
+
 - Add slash-command completion and prompt history through the existing editor APIs.
   Keep completion suggestions consistent with the commands actually accepted by the shared parser.
   Preserve the current draft when navigating back out of history. In-memory history is sufficient initially.
@@ -210,6 +225,8 @@ Session and model selection are unambiguous, reject changes during a run, and re
 Verify both temporary choices and explicitly saved defaults across restart.
 
 ## Step 6: Verify complete terminal workflows
+
+Status: implemented. Verification and limits are recorded in `docs/terminal-verification.md`.
 
 Verification accompanies every step. Use this final step to check the combined behavior.
 

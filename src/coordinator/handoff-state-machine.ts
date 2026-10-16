@@ -75,7 +75,10 @@ function deriveWorkflowStatus(
     case "superseded":
       return "blocked";
     case "capped":
-      return "capped";
+    case "cancelled":
+    case "timed_out":
+    case "failed":
+      return record.status;
     default:
       return previous ?? "running";
   }

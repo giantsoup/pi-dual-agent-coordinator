@@ -20,8 +20,13 @@ export async function bootstrapTuiRepl(
   const service =
     dependencies.createService?.(options) ??
     new HeadlessInteractiveCoordinatorService(new Coordinator(options));
-  await service.start();
+  try {
+    await service.start();
+    await runTerminal(service, dependencies);
+  } finally { await service.dispose(); }
+}
 
+async function runTerminal(service: InteractiveCoordinatorService, dependencies: BootstrapTuiDependencies): Promise<void> {
   const terminal = dependencies.createTerminal?.() ?? new ProcessTerminal();
   const tui = new TUI(terminal, true);
   let resolveExit: (() => void) | undefined;
@@ -38,22 +43,29 @@ export async function bootstrapTuiRepl(
   tui.setFocus(app);
 
   const unsubscribe = service.subscribeState((state) => {
-    tui.requestRender(true);
+    tui.requestRender();
     if (state.shouldExit) {
       resolveExit?.();
     }
   });
 
+  const shutdown = () => { void service.dispatch({ type: "quit" }).finally(() => resolveExit?.()); };
+  const signals = ["SIGTERM", "SIGHUP", "SIGINT"] as const;
+  for (const signal of signals) process.on(signal, shutdown);
+  const elapsedTimer = setInterval(() => { if (service.getState().operation.kind === "running") tui.requestRender(); }, 1000);
   terminal.write("\u001B[?1049h");
   try {
     tui.start();
     tui.requestRender(true);
     await exitPromise;
   } finally {
+    clearInterval(elapsedTimer);
+    for (const signal of signals) process.off(signal, shutdown);
     unsubscribe();
-    tui.stop();
-    await terminal.drainInput().catch(() => undefined);
-    terminal.write("\u001B[?1049l");
-    await service.dispose();
+    try {
+      // Pi 0.67.68 enables its keyboard fallback after 150 ms, even if startup throws.
+      await terminal.drainInput(1000, 200).catch(() => undefined);
+      tui.stop();
+    } finally { terminal.write("\u001B[?25h\u001B[?1049l"); }
   }
 }

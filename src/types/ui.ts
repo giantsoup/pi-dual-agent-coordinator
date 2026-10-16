@@ -35,11 +35,12 @@ export type UiModalState =
       kind: "none";
     }
   | {
-      kind: "help" | "status" | "sessions" | "handoff";
+      kind: "help" | "status" | "sessions" | "handoff" | "settings" | "history" | "records" | "record_detail";
       title: string;
       content: string;
       format: "text" | "json";
       createdAt: string;
+      choices?: Array<{ label: string; value: string; action: UiAction }> | undefined;
     };
 
 export interface UiRuntimeActivityTotals {
@@ -57,7 +58,7 @@ export interface UiRuntimeActivityHistoryItem {
   id: string;
   text: string;
   detail?: string | undefined;
-  status: "active" | "completed" | "failed";
+  status: "active" | "completed" | "failed" | "cancelled" | "timed_out" | "interrupted";
   toolName?: string | undefined;
   toolCallId?: string | undefined;
   startedAt: string;
@@ -67,6 +68,7 @@ export interface UiRuntimeActivityHistoryItem {
 export interface UiRuntimeActivityHistory {
   sessionId: string;
   totals: UiRuntimeActivityTotals;
+  seenCalls?: string[] | undefined;
   recent: UiRuntimeActivityHistoryItem[];
   updatedAt?: string | undefined;
 }
@@ -165,10 +167,21 @@ export interface InteractiveUiState {
   notifications: UiNotification[];
   notification?: UiNotification | undefined;
   lastError?: UiNotification | undefined;
+  history: import("./history.js").HistorySnapshot;
+  operation: NonNullable<CoordinatorStatusSnapshot["operation"]>;
   shouldExit: boolean;
 }
 
 export type UiAction =
+  | { type: "open_records" }
+  | { type: "inspect_record"; id: string; section?: import("./history.js").HistoryDetail["section"]; offset?: number }
+  | { type: "open_models"; role: Role }
+  | { type: "open_thinking"; role: Role }
+  | { type: "configure_role"; role: Role; model?: string; thinking?: import("../runtime/create-role-runtime.js").SupportedThinkingLevel; save: boolean }
+  | { type: "configure_defaults"; key: "review-rounds" | "timeout-ms"; value: number; save: boolean }
+  | { type: "view_session"; role: Role; sessionPath: string }
+  | { type: "select_choice"; value: string }
+
   | {
       type: "submit_input";
       input: string;
@@ -185,6 +198,7 @@ export type UiAction =
     }
   | {
       type: "open_sessions";
+      role?: Role;
     }
   | {
       type: "open_handoff";
@@ -203,6 +217,9 @@ export type UiAction =
     }
   | {
       type: "close_modal";
+    }
+  | {
+      type: "cancel";
     }
   | {
       type: "quit";

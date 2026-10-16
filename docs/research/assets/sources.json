@@ -1,0 +1,38 @@
+[
+  {
+    "file": "opencode-official.png",
+    "url": "https://raw.githubusercontent.com/anomalyco/opencode/c77e748dbf7c4d2c75515bcc2db7740d0552634b/packages/web/src/assets/lander/screenshot.png",
+    "sha256": "14b01372a2589a120ab0d6a0510868e71bceadcbd1f1278fb099d700a03912cb",
+    "bytes": 470646,
+    "revision": "c77e748dbf7c4d2c75515bcc2db7740d0552634b",
+    "provenance": "https://github.com/anomalyco/opencode/blob/c77e748dbf7c4d2c75515bcc2db7740d0552634b/README.md",
+    "retrieved": "2026-10-16"
+  },
+  {
+    "file": "crush-official-demo.gif",
+    "url": "https://github.com/user-attachments/assets/58280caf-851b-470a-b6f7-d5c4ea8a1968",
+    "sha256": "7d84057e168f710e686c8bcbb48c87897a1908142109314058afa10243691842",
+    "bytes": 8577156,
+    "revision": "78b6edb353f3fb11178c7e38bbac762772dfb8b0",
+    "provenance": "https://github.com/charmbracelet/crush/blob/78b6edb353f3fb11178c7e38bbac762772dfb8b0/README.md",
+    "retrieved": "2026-10-16"
+  },
+  {
+    "file": "gemini-cli-official.png",
+    "url": "https://raw.githubusercontent.com/google-gemini/gemini-cli/ed96faedfd5571f055c44f2c9509d62321d1138d/docs/assets/gemini-screenshot.png",
+    "sha256": "ed39f62116f820da07496b9980c48d9df02aa0835146ea5278e48902c8a3d959",
+    "bytes": 61239,
+    "revision": "ed96faedfd5571f055c44f2c9509d62321d1138d",
+    "provenance": "https://github.com/google-gemini/gemini-cli/blob/ed96faedfd5571f055c44f2c9509d62321d1138d/docs/assets/gemini-screenshot.png",
+    "retrieved": "2026-10-16"
+  },
+  {
+    "file": "crush-official-still.png",
+    "derived_from": "crush-official-demo.gif",
+    "frame_index": 60,
+    "frame_count": 149,
+    "sha256": "211a50a6e518e712650e011297ce41ae8695c5fa1826e32c1c179630dbf08d9c",
+    "bytes": 467182,
+    "retrieved": "2026-10-16"
+  }
+]

@@ -1,3 +1,12 @@
+import { HistoryIndex, type loadHistoryEvents } from "./history.js";
+import { projectHistoryDetail } from "./history-detail.js";
+import type { ArchiveEntry } from "../../runtime/session-history.js";
+import type { HistoryDetail, HistoryRecord } from "../../types/history.js";
+import { safeDisplayText, safeDisplayFields, visibleProse } from "../../security/display-text.js";
+import type { SessionInfo } from "@mariozechner/pi-coding-agent";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import { extractAssistantText } from "../../handoff/handoff-envelope.js";
+import type { SupportedThinkingLevel } from "../../runtime/create-role-runtime.js";
 import { randomUUID } from "node:crypto";
 
 import { buildHelpText } from "../repl-progress.js";
@@ -22,7 +31,8 @@ import type {
   UiAction,
   UiConversationEntryDraft,
   UiEvent,
-  UiNotification
+  UiNotification,
+  UiRuntimeActivityHistoryItem
 } from "../../types/ui.js";
 import type { CoordinatorTurnResult } from "../../types/workflow.js";
 import type { Role } from "../../types/role.js";
@@ -41,13 +51,22 @@ export interface InteractiveCoordinatorLike {
     role: Role,
     action: { type: "new"; role: Role } | { type: "switch"; role: Role; sessionPath: string }
   ): Promise<void>;
+  getHistoryEvents?(): ReturnType<typeof loadHistoryEvents>;
+  getRunArchive?(run: Extract<HistoryRecord, { kind: "run" }>): Promise<ArchiveEntry[]>;
+  getAvailableModels?(role?: Role): Array<{ canonical: string; name: string; reasoning: boolean; thinkingLevels: SupportedThinkingLevel[] }>;
+  getSavedSessions?(role: Role): Promise<SessionInfo[]>;
+  getSessionHistory?(role: Role, path: string): Promise<AgentMessage[]>;
+  configureRole?(role: Role, input: { model?: string; thinking?: SupportedThinkingLevel; save: boolean }): Promise<void>;
+  configureDefaults?(key: "review-rounds" | "timeout-ms", value: number, save: boolean): Promise<void>;
+  cancelActive?(): Promise<void>;
   dispose(): Promise<void>;
 }
 
 export interface InteractiveCoordinatorService {
+  loadHistoryDetail?(id: string, section: HistoryDetail["section"], offset?: number, limit?: number): Promise<HistoryDetail>;
   start(): Promise<void>;
   dispose(): Promise<void>;
-  dispatch(action: UiAction): Promise<void>;
+  dispatch(action: UiAction, onAccepted?: () => void): Promise<void>;
   getState(): InteractiveUiState;
   subscribeState(listener: (state: InteractiveUiState) => void): () => void;
   subscribeUiEvents(listener: (event: UiEvent) => void): () => void;
@@ -68,6 +87,11 @@ export class HeadlessInteractiveCoordinatorService
   private state = createInitialInteractiveUiState(createEmptyStatusSnapshot());
   private started = false;
   private disposed = false;
+  private busy = false;
+  private readonly historyIndex = new HistoryIndex();
+  private helpReturn: InteractiveUiState["modal"] | undefined;
+  private readonly committedMessages = new Set<string>();
+  private operationTexts = new Set<string>();
 
   public constructor(private readonly coordinator: InteractiveCoordinatorLike) {}
 
@@ -82,6 +106,8 @@ export class HeadlessInteractiveCoordinatorService
     await this.coordinator.start();
     this.started = true;
     this.state = createInitialInteractiveUiState(this.coordinator.getStatus());
+    this.historyIndex.restore(this.coordinator.getHistoryEvents?.() ?? { events: [], warnings: [] });
+    this.updateState({ type: "set_history", history: this.historyIndex.snapshot() });
     this.emitStateChanged();
 
     this.unsubscribers.push(
@@ -127,11 +153,41 @@ export class HeadlessInteractiveCoordinatorService
     };
   }
 
-  public async dispatch(action: UiAction): Promise<void> {
+  public async dispatch(action: UiAction, onAccepted?: () => void): Promise<void> {
     this.assertDispatchReady();
 
     try {
+      if (action.type === "submit_input") {
+        const command = parseReplCommand(action.input);
+        if (command.type !== "user_turn") {
+          await this.dispatchReplCommand(command, onAccepted);
+          return;
+        }
+      }
+      if (action.type === "run_repl_command") {
+        await this.dispatchReplCommand(action.command, onAccepted);
+        return;
+      }
+      if (this.busy && ["submit_input", "approve_pending_plan", "discard_pending_plan", "replace_runtime", "configure_role", "configure_defaults"].includes(action.type)) {
+        this.updateState({ type: "set_modal", modal: { kind: "none" } });
+        this.raiseNotification({ level: "info", scope: "operator", code: "operation.busy",
+          message: "Work is running. Keep editing your draft, or use /cancel. Help, status and /quit remain available." });
+        return;
+      }
+      if (!["open_help", "close_modal", "open_records", "inspect_record"].includes(action.type)) {
+        this.updateState({ type: "set_error", error: undefined });
+        this.updateState({ type: "set_notification", notification: undefined });
+      }
+      onAccepted?.();
       switch (action.type) {
+        case "open_records":
+          this.updateState({ type: "set_modal", modal: { kind: "records", title: "Retained history", content: this.state.history.records.map((record) => `${record.kind} [${record.outcome.kind}] ${record.title}\n  /inspect ${record.id}`).join("\n") || "No retained records yet.", format: "text", createdAt: new Date().toISOString() } });
+          return;
+        case "inspect_record": {
+          const detail = await this.loadHistoryDetail(action.id, action.section ?? "output", action.offset ?? 0, 100);
+          this.updateState({ type: "set_modal", modal: { kind: "record_detail", title: "Read-only record inspector", content: `${detail.recordId} | ${detail.section} | lines ${detail.offset + 1}-${detail.offset + detail.lines.length}/${detail.totalLines}\n${detail.reason ?? ""}\n${detail.lines.join("\n")}\n/inspect ID summary|request|output|metadata OFFSET for another range.`, format: "text", createdAt: new Date().toISOString() } });
+          return;
+        }
         case "submit_input": {
           const command = parseReplCommand(action.input);
           if (command.type !== "user_turn") {
@@ -150,15 +206,13 @@ export class HeadlessInteractiveCoordinatorService
             kind: "operator_message",
             text: command.text
           });
-          const result = await this.coordinator.submitUserInput(command.text);
-          this.appendResultEntries(result);
+          await this.runWork(() => this.coordinator.submitUserInput(command.text));
           this.refreshStatus();
           return;
         }
-        case "run_repl_command":
-          await this.dispatchReplCommand(action.command);
-          return;
         case "open_help":
+          if (this.state.modal.kind === "help") { await this.dispatch({ type: "close_modal" }); return; }
+          this.helpReturn = this.state.modal;
           this.updateState({
             type: "set_modal",
             modal: {
@@ -184,6 +238,16 @@ export class HeadlessInteractiveCoordinatorService
           });
           return;
         case "open_sessions": {
+          if (action.role) {
+            const role = action.role;
+            const sessions = await this.coordinator.getSavedSessions?.(role) ?? [];
+            this.updateState({ type: "set_modal", modal: { kind: "sessions", title: `Agent ${role} saved sessions`,
+              content: sessions.length ? "Select to view history. Selecting does not switch the runtime.\n" + sessions.map((session) => `${session.id} | ${session.cwd} | ${session.modified.toISOString()} | ${session.firstMessage.slice(0, 100)}\n${session.path}`).join("\n") : "No saved sessions for this role and project.",
+              format: "text", createdAt: new Date().toISOString(),
+              choices: sessions.map((session) => ({ value: session.path, label: `${session.id} | ${session.cwd} | ${session.modified.toISOString()} | ${session.firstMessage.slice(0, 60)}`,
+                action: { type: "view_session", role, sessionPath: session.path } })) } });
+            return;
+          }
           this.refreshStatus();
           const sessions = this.coordinator.getSessions();
           this.updateState({
@@ -213,7 +277,7 @@ export class HeadlessInteractiveCoordinatorService
           return;
         }
         case "approve_pending_plan": {
-          const result = await this.coordinator.approvePendingPlan();
+          if (!this.state.pendingPlan) throw new Error("No pending plan is available. Ask Agent A for a plan first.");
           this.appendConversationEntry({
             kind: "approval_discard",
             action: "approved",
@@ -229,7 +293,7 @@ export class HeadlessInteractiveCoordinatorService
               "Wait for Agent B to finish the work, then Agent A will review the result.",
             relatedAction: action.type
           });
-          this.appendResultEntries(result);
+          await this.runWork(() => this.coordinator.approvePendingPlan());
           this.refreshStatus();
           return;
         }
@@ -263,7 +327,7 @@ export class HeadlessInteractiveCoordinatorService
           this.refreshStatus();
           return;
         case "replace_runtime":
-          await this.coordinator.replaceRuntime(
+          await this.runControl(() => this.coordinator.replaceRuntime(
             action.role,
             action.mode === "new"
               ? { type: "new", role: action.role }
@@ -272,7 +336,8 @@ export class HeadlessInteractiveCoordinatorService
                   role: action.role,
                   sessionPath: action.sessionPath ?? ""
                 }
-          );
+          ));
+          this.updateState({ type: "set_modal", modal: { kind: "none" } });
           this.appendConversationEntry({
             kind: "runtime_session",
             action: action.mode,
@@ -302,13 +367,72 @@ export class HeadlessInteractiveCoordinatorService
           });
           this.refreshStatus();
           return;
+        case "select_choice": {
+          const modal = this.state.modal;
+          if (modal.kind === "none") return;
+          const choice = modal.choices?.find((item) => item.value === action.value);
+          if (choice) await this.dispatch(choice.action);
+          return;
+        }
+        case "view_session": {
+          const messages = await this.coordinator.getSessionHistory?.(action.role, action.sessionPath) ?? [];
+          const content = messages.flatMap((message) => {
+            if (message.role === "assistant") return [`Agent ${action.role}: ${visibleAssistantText(extractAssistantText(message))}`];
+            if (message.role === "user") return [`Operator: ${typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.type === "text" ? part.text : "").join("\n")}`];
+            return [];
+          }).join("\n\n");
+          this.updateState({ type: "set_modal", modal: { kind: "history", title: `Agent ${action.role} history`,
+            content: `${action.sessionPath}\n${content}\nSwitch restores conversation context only. No workflow will resume.`, format: "text", createdAt: new Date().toISOString(),
+            choices: [{ label: "Switch to this session", value: "switch", action: { type: "replace_runtime", role: action.role, mode: "switch", sessionPath: action.sessionPath } }] } });
+          return;
+        }
+        case "open_models": {
+          const models = this.coordinator.getAvailableModels?.(action.role) ?? [];
+          this.updateState({ type: "set_modal", modal: { kind: "settings", title: `Agent ${action.role} model`,
+            content: `Choose an approved model for this role's current conversation and next operation. Defaults are unchanged.\nTo save explicitly: /model ${action.role} MODEL save\n` + models.map((model) => `${model.canonical} | ${model.name}`).join("\n"),
+            format: "text", createdAt: new Date().toISOString(), choices: models.map((model) => ({ value: model.canonical, label: `${model.name} (${model.canonical})`, action: { type: "configure_role", role: action.role, model: model.canonical, save: false } })) } });
+          return;
+        }
+        case "open_thinking": {
+          const runtime = this.state.status.runtimes.find((item) => item.role === action.role);
+          const model = this.coordinator.getAvailableModels?.().find((item) => item.canonical === runtime?.modelCanonical);
+          const levels: SupportedThinkingLevel[] = model?.thinkingLevels ?? ["off"];
+          this.updateState({ type: "set_modal", modal: { kind: "settings", title: `Agent ${action.role} thinking`,
+            content: `Applies to the current conversation and next operation. Save explicitly with /thinking ${action.role} LEVEL save.\n${levels.join(" | ")}`,
+            format: "text", createdAt: new Date().toISOString(), choices: levels.map((thinking) => ({ value: thinking, label: thinking, action: { type: "configure_role", role: action.role, thinking, save: false } })) } });
+          return;
+        }
+        case "configure_role":
+          const configureRole = this.coordinator.configureRole?.bind(this.coordinator);
+          if (!configureRole) throw new Error("Role configuration unavailable.");
+          await this.runControl(() => configureRole(action.role, { ...(action.model ? { model: action.model } : {}), ...(action.thinking ? { thinking: action.thinking } : {}), save: action.save }));
+          this.refreshStatus();
+          this.updateState({ type: "set_modal", modal: { kind: "none" } });
+          this.raiseNotification({ level: "info", scope: "runtime", code: "runtime.configured", message: `Agent ${action.role} updated for the current conversation and next operation.${action.save ? " Defaults saved." : " Defaults unchanged."} Pending plan cleared; request a new plan before approval.` });
+          return;
+        case "configure_defaults":
+          const configureDefaults = this.coordinator.configureDefaults?.bind(this.coordinator);
+          if (!configureDefaults) throw new Error("Coordinator configuration unavailable.");
+          await this.runControl(() => configureDefaults(action.key, action.value, action.save));
+          this.refreshStatus();
+          this.raiseNotification({ level: "info", scope: "operator", code: "defaults.configured", message: `${action.key} = ${action.value} for the next operation.${action.save ? " Defaults saved." : " Defaults unchanged."}` });
+          return;
         case "close_modal":
           this.updateState({
             type: "set_modal",
-            modal: { kind: "none" }
+            modal: this.state.modal.kind === "help" ? this.helpReturn ?? { kind: "none" } : { kind: "none" }
           });
+          this.helpReturn = undefined;
+          return;
+        case "cancel":
+          if (this.state.operation.kind === "running" || this.state.operation.kind === "cancelling") {
+            this.updateState({ type: "set_operation", operation: { kind: "cancelling" } });
+            await this.coordinator.cancelActive?.();
+            this.refreshStatus();
+          }
           return;
         case "quit":
+          await this.coordinator.cancelActive?.();
           this.updateState({
             type: "set_should_exit",
             value: true
@@ -321,7 +445,8 @@ export class HeadlessInteractiveCoordinatorService
   }
 
   private async dispatchReplCommand(
-    command: ReturnType<typeof parseReplCommand>
+    command: ReturnType<typeof parseReplCommand>,
+    onAccepted?: () => void
   ): Promise<void> {
     switch (command.type) {
       case "user_turn":
@@ -329,33 +454,46 @@ export class HeadlessInteractiveCoordinatorService
           await this.dispatch({
             type: "submit_input",
             input: command.text
-          });
+          }, onAccepted);
         }
         return;
+      case "history":
+        await this.dispatch({ type: "open_records" }, onAccepted); return;
+      case "inspect":
+        await this.dispatch({ type: "inspect_record", id: command.id, section: command.section, offset: command.offset }, onAccepted); return;
       case "help":
-        await this.dispatch({ type: "open_help" });
+        await this.dispatch({ type: "open_help" }, onAccepted);
         return;
       case "status":
-        await this.dispatch({ type: "open_status" });
+        await this.dispatch({ type: "open_status" }, onAccepted);
         return;
       case "approve":
-        await this.dispatch({ type: "approve_pending_plan" });
+        await this.dispatch({ type: "approve_pending_plan" }, onAccepted);
         return;
       case "discard":
-        await this.dispatch({ type: "discard_pending_plan" });
+        await this.dispatch({ type: "discard_pending_plan" }, onAccepted);
         return;
       case "sessions":
-        await this.dispatch({ type: "open_sessions" });
+        await this.dispatch({ type: "open_sessions", ...(command.role ? { role: command.role } : {}) }, onAccepted);
+        return;
+      case "model":
+        await this.dispatch(command.model ? { type: "configure_role", role: command.role, model: command.model, save: command.save } : { type: "open_models", role: command.role }, onAccepted);
+        return;
+      case "thinking":
+        await this.dispatch(command.thinking ? { type: "configure_role", role: command.role, thinking: command.thinking, save: command.save } : { type: "open_thinking", role: command.role }, onAccepted);
+        return;
+      case "config":
+        await this.dispatch({ type: "configure_defaults", key: command.key, value: command.value, save: command.save }, onAccepted);
         return;
       case "handoff":
-        await this.dispatch({ type: "open_handoff" });
+        await this.dispatch({ type: "open_handoff" }, onAccepted);
         return;
       case "new":
         await this.dispatch({
           type: "replace_runtime",
           role: command.role,
           mode: "new"
-        });
+        }, onAccepted);
         return;
       case "switch":
         await this.dispatch({
@@ -363,10 +501,13 @@ export class HeadlessInteractiveCoordinatorService
           role: command.role,
           mode: "switch",
           sessionPath: command.sessionPath
-        });
+        }, onAccepted);
+        return;
+      case "cancel":
+        await this.dispatch({ type: "cancel" }, onAccepted);
         return;
       case "quit":
-        await this.dispatch({ type: "quit" });
+        await this.dispatch({ type: "quit" }, onAccepted);
         return;
     }
   }
@@ -375,7 +516,10 @@ export class HeadlessInteractiveCoordinatorService
     if (this.disposed) {
       return;
     }
+    if (this.historyIndex.observe(event)) this.updateState({ type: "set_history", history: this.historyIndex.snapshot() });
+    event = { ...event, details: safeDisplayFields(event.details) };
     const status = this.coordinator.getStatus();
+    if (status.operation) this.updateState({ type: "set_operation", operation: status.operation });
     const update = deriveActivityUpdate(event, status);
     this.updateState({
       type: "replace_status",
@@ -421,15 +565,17 @@ export class HeadlessInteractiveCoordinatorService
   }
 
   private handleRuntimeUiEvent(event: RuntimeUiBridgeEvent): void {
-    if (this.disposed) {
+    if (this.disposed || this.state.operation.kind === "cancelling" || this.state.operation.kind === "cancelled" || this.state.operation.kind === "timed_out") {
       return;
     }
+    const currentSession = this.coordinator.getStatus().runtimes.find((runtime) => runtime.role === event.role)?.sessionId;
+    if (currentSession && currentSession !== event.sessionId) return;
     if (event.type === "assistant_text_delta") {
       this.updateState({
         type: "append_stream_delta",
         role: event.role,
         sessionId: event.sessionId,
-        delta: event.delta,
+        delta: safeDisplayText(event.delta),
         timestamp: event.timestamp
       });
       this.emitUiEvent({
@@ -442,11 +588,13 @@ export class HeadlessInteractiveCoordinatorService
       return;
     }
 
-    const committedText =
-      this.state.liveStream?.role === event.role &&
-      this.state.liveStream.sessionId === event.sessionId
-        ? this.state.liveStream.text
-        : event.text;
+    const committedText = visibleAssistantText(event.text);
+    const key = `${event.role}:${event.sessionId}:${event.messageId ?? event.timestamp}`;
+    if (committedText && !this.committedMessages.has(key)) {
+      this.committedMessages.add(key);
+      this.operationTexts.add(committedText);
+      this.appendConversationEntry({ kind: "assistant_planning_response", role: event.role, text: committedText });
+    }
 
     this.updateState({
       type: "commit_stream",
@@ -462,9 +610,62 @@ export class HeadlessInteractiveCoordinatorService
     });
   }
 
+  public async loadHistoryDetail(id: string, section: HistoryDetail["section"], offset = 0, limit = 100): Promise<HistoryDetail> {
+    const record = this.historyIndex.get(id);
+    if (!record) throw new Error("History record unavailable: unknown ID.");
+    const run = record.kind === "tool" ? this.historyIndex.get(record.parentId) : record;
+    let entries: ArchiveEntry[] = [];
+    let reason: string | undefined;
+    if ((section === "output" || section === "request") && run?.kind === "run") {
+      try {
+        if (!this.coordinator.getRunArchive) throw new Error("This runtime has no retained archive reader.");
+        entries = await this.coordinator.getRunArchive(run);
+      } catch (error) { reason = `Output unavailable: ${error instanceof Error ? error.message : "archive could not be read"}`; }
+    }
+    return projectHistoryDetail(record, this.state.history.records, entries, section, offset, limit, reason);
+  }
+
+  private async runControl(run: () => Promise<void>): Promise<void> {
+    this.busy = true;
+    try { await run(); }
+    finally { this.busy = false; this.refreshStatus(); }
+  }
+
+  private async runWork(run: () => Promise<CoordinatorTurnResult>): Promise<CoordinatorTurnResult> {
+    this.busy = true;
+    this.operationTexts = new Set();
+    this.updateState({ type: "set_operation", operation: { kind: "running" } });
+    try {
+      const result = await run();
+      this.appendResultEntries(result);
+      const kind = this.coordinator.getStatus().operation?.kind ?? (result.workflow?.status === "blocked" || result.workflow?.status === "capped" ? "failed" : "completed");
+      this.updateState({ type: "set_operation", operation: { kind } });
+      return result;
+    } catch (error) {
+      this.updateState({ type: "set_operation", operation: { kind: "failed" } });
+      throw error;
+    } finally {
+      const stream = this.state.liveStream;
+      if (stream) {
+        const text = visibleAssistantText(stream.text);
+        if (text) this.appendConversationEntry({ kind: "assistant_planning_response", role: stream.role, text: `[Interrupted] ${text}` });
+        this.updateState({ type: "commit_stream", role: stream.role, sessionId: stream.sessionId });
+      }
+      const history = { ...this.state.activity.history };
+      const terminalStatus: UiRuntimeActivityHistoryItem["status"] = this.state.operation.kind === "cancelled" ? "cancelled" : this.state.operation.kind === "timed_out" ? "timed_out" : this.state.operation.kind === "failed" ? "failed" : "interrupted";
+      for (const role of ["A", "B"] as const) {
+        const previous = history[role];
+        if (previous) history[role] = { ...previous, recent: previous.recent.map((item) => item.status === "active" ? { ...item, status: terminalStatus } : item) };
+      }
+      this.updateState({ type: "replace_activity", activity: { history, runtimes: {} } });
+      this.busy = false;
+      this.refreshStatus();
+    }
+  }
+
   private appendResultEntries(result: CoordinatorTurnResult): void {
-    const prose = result.userResponse.trim();
-    if (prose) {
+    const prose = visibleAssistantText(result.userResponse);
+    if (prose && !this.operationTexts.has(prose)) {
       this.appendConversationEntry(
         result.workflow
           ? {
@@ -496,14 +697,14 @@ export class HeadlessInteractiveCoordinatorService
   ): void {
     this.updateState({
       type: "append_entry",
-      entry: createConversationEntry(entry)
+      entry: createConversationEntry({ ...entry, text: safeDisplayText(entry.text) })
     });
   }
 
   private raiseNotification(
     notification: Omit<UiNotification, "id" | "createdAt">
   ): void {
-    const completeNotification = createUiNotification(notification);
+    const completeNotification = createUiNotification({ ...notification, message: safeDisplayText(notification.message) });
     const action: InteractiveStoreAction =
       completeNotification.level === "error"
         ? {
@@ -531,9 +732,8 @@ export class HeadlessInteractiveCoordinatorService
       title: "PI Dual could not complete that action",
       message,
       nextStep:
-        "Try the action again. If it keeps failing, exit the coordinator and run `pi-dual doctor` before restarting.",
-      detail: error instanceof Error && error.stack ? error.stack : undefined,
-      fatal: true
+        "Review the error and retry the action. Use /status to inspect current work.",
+      fatal: false
     });
     this.updateState({
       type: "set_error",
@@ -560,6 +760,10 @@ export class HeadlessInteractiveCoordinatorService
   private updateState(action: InteractiveStoreAction): void {
     if (this.disposed) {
       return;
+    }
+    if (action.type === "set_modal" && action.modal.kind !== "none") {
+      action = { ...action, modal: { ...action.modal, title: safeDisplayText(action.modal.title), content: safeDisplayText(action.modal.content),
+        ...(action.modal.choices ? { choices: action.modal.choices.map((choice) => ({ ...choice, label: safeDisplayText(choice.label) })) } : {}) } };
     }
     this.state = interactiveUiReducer(this.state, action);
     this.emitStateChanged();
@@ -619,7 +823,13 @@ function createUiNotification(
 ): UiNotification {
   return {
     ...notification,
+    message: safeDisplayText(notification.message),
+    ...(notification.detail ? { detail: safeDisplayText(notification.detail) } : {}),
     id: randomUUID(),
     createdAt: new Date().toISOString()
   };
+}
+
+export function visibleAssistantText(text: string): string {
+  return visibleProse(text);
 }

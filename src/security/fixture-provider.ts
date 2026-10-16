@@ -11,3 +11,20 @@ export function fixtureResponse(text: string): Response {
   ];
   return new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
 }
+
+export function fixtureChatResponse(text: string): Response {
+  return fixtureChatChunks([{ content: text }, {}], "stop");
+}
+
+export function fixtureChatToolResponse(name: string, args: unknown, callId = "call_fixture"): Response {
+  return fixtureChatChunks([{ tool_calls: [{ index: 0, id: callId, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, {}], "tool_calls");
+}
+
+function fixtureChatChunks(deltas: unknown[], finishReason: string): Response {
+  const chunks = deltas.map((delta, index) => ({
+    id: "chat_fixture", object: "chat.completion.chunk", created: 1,
+    choices: [{ index: 0, delta, finish_reason: index === deltas.length - 1 ? finishReason : null }],
+    ...(index === deltas.length - 1 ? { usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } } : {})
+  }));
+  return new Response(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "Content-Type": "text/event-stream" } });
+}

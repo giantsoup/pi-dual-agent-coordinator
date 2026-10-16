@@ -14,9 +14,14 @@ npm run build
 npm run check
 npm test
 npm run verify:isolation
+npm run verify:terminal
 ```
 
-Use the separate trusted installation for interactive testing, with approved `openai` Responses models for both roles. Agent A defaults to GPT-6 Luna with high reasoning. API-key authentication is required; environment keys, plaintext Pi auth, and subscription auth are not accepted.
+Use the separate trusted installation for interactive testing, with an approved OpenAI Responses model for Agent A and an approved local LM Studio model for Agent B. Agent A defaults to GPT-6 Luna with high reasoning; B defaults to Qwen3.6 35B A3B with API thinking off. Agent A requires API-key authentication; environment keys, plaintext Pi auth, and subscription auth are not accepted. Start LM Studio and load the selected executor before running doctor or the REPL. See the [local executor setup](README.md).
+
+The PTY verifier requires Python 3. It drives both interfaces with real Pi runtimes,
+dummy provider responses, and isolated mutation workspaces. Live API verification
+is separate. See [terminal verification](docs/terminal-verification.md).
 
 ## Change expectations
 

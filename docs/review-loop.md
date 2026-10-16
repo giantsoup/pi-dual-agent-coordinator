@@ -2,12 +2,12 @@
 
 ## Lifecycle
 
-Each execution start becomes a workflow with a stable `workflowId`. Planning-only turns stay outside the workflow ledger until Agent A explicitly starts execution.
+Each execution start becomes a workflow with a stable `workflowId`. Successful planning-only turns stay outside the workflow ledger. Failed, cancelled, or timed-out planning requests record their terminal outcome.
 
 1. The coordinator begins in planning mode and prompts Agent A with the operator’s input.
 2. Agent A may reply with plain prose and no machine block for as many planning turns as needed.
-3. When execution should start, Agent A must emit exactly one `pi-execute` block at `turn_end`.
-4. The coordinator creates the workflow, persists `prepared`, renders a deterministic B handoff prompt, persists `delivered`, and waits for Agent B.
+3. A concrete plan ends with one `pi-plan` block and waits for `/approve`. An explicit request to start immediately may emit one `pi-execute` block at `turn_end`.
+4. The coordinator creates the workflow, persists `prepared`, and submits a deterministic B handoff prompt. It records delivery after the runtime returns.
 5. Agent B must emit exactly one `pi-completion` block at `turn_end`.
 6. The coordinator persists `completed`, renders a deterministic review prompt for Agent A, and repeats until A emits `pi-final`, a repair fails, or the round cap is reached.
 7. If the cap is reached and A still wants more execution work, the coordinator sends a control prompt requiring a terminal blocked `pi-final`.
@@ -22,6 +22,9 @@ Workflow ledger record categories:
 - `capped`
 - `repair_requested`
 - `superseded`
+- `cancelled`
+- `timed_out`
+- `failed`
 
 Recovery replays the append-only JSONL ledger in order and reconstructs the latest workflow snapshot from durable records only. A truncated final JSONL line is ignored during replay.
 
@@ -94,26 +97,19 @@ Agent A final:
 ```
 ````
 
-## Compatibility notes
+## Provider and retry policy
 
-- Model A should remain the higher-quality review/planning model.
-- Model B should remain the cheaper execution model.
-- Local provider quirks belong in `~/.pi/agent/models.json`, not in coordinator logic.
-- OpenAI-compatible local Qwen endpoints work as long as they can follow Pi tool protocol and return stable fenced JSON machine blocks.
-
-Useful provider compatibility flags include:
-
-- `supportsDeveloperRole: false`
-- `supportsReasoningEffort: false`
-- `supportsStrictMode: false`
-- `maxTokensField: "max_tokens"`
-- `thinkingFormat: "qwen"` or `"qwen-chat-template"`
+The secure runtime uses approved OpenAI Responses models with API-key
+authentication. Arbitrary provider endpoints and executable Pi resources remain
+disabled. Pi automatic retries are disabled in the secure settings. The
+coordinator never reruns a workflow automatically after failure or cancellation.
+See [terminal controls](terminal-experience.md) for cancellation and deadline limits.
 
 ## Troubleshooting
 
-- A emits `pi-handoff`, `pi-final`, or `pi-completion` during planning mode: the coordinator sends a planning repair prompt requiring either prose-only output or exactly one valid `pi-execute` block.
+- A emits `pi-handoff`, `pi-final`, or `pi-completion` during planning mode: the coordinator sends a planning repair prompt requiring prose-only output, one valid `pi-plan` block, or one valid `pi-execute` block.
 - Missing or malformed machine block: the coordinator sends one deterministic repair prompt for the expected block type. If the repair still fails, the workflow is blocked.
 - A keeps asking for more work after the cap: the coordinator sends a control prompt requiring `pi-final` with `decision: "blocked"`.
 - B cannot follow tool protocol: expect malformed or missing `pi-completion` blocks, repair prompts, and eventually a blocked workflow.
-- Restart after interruption: restart recovery replays the ledger and reconstructs the latest non-terminal workflow state.
-- Starting fresh after recovery: the coordinator refuses to start a new task while a recovered workflow is still active. Rebinding either runtime supersedes that workflow and records the invalidation durably.
+- Restart after interruption: recovery replays the ledger and supersedes unfinished workflows with fresh sessions.
+- Viewing or switching saved sessions restores conversation context without resuming coordinator work.

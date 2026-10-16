@@ -172,13 +172,15 @@ export class McpClientPool {
   public async callTool(
     serverName: string,
     toolName: string,
-    args: Record<string, unknown> | undefined
+    args: Record<string, unknown> | undefined,
+    signal?: AbortSignal
   ) {
     const client = await this.ensureConnected(this.requireEntry(serverName));
+    signal?.throwIfAborted();
     const result = await client.callTool({
       name: toolName,
       arguments: redactValue(args)
-    });
+    }, undefined, { ...(signal ? { signal } : {}) });
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
     return redactValue(result);
   }

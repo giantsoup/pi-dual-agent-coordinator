@@ -1,9 +1,11 @@
 import type { Terminal } from "@mariozechner/pi-tui";
 
-import { parseReplCommand } from "./cli.js";
+import { HeadlessInteractiveCoordinatorService } from "./interactive/service.js";
 import type { ReplCliOptions } from "./cli.js";
 import {
   bootstrapPlainRepl,
+  runPlainReplLoop,
+  adaptLegacyCoordinator,
   isReplTerminationError,
   type LegacyCoordinatorLike,
   type PlainReplDependencies,
@@ -68,88 +70,11 @@ export async function runReplLoop(
   },
   ui: ReplUiLike
 ): Promise<void> {
+  const service = new HeadlessInteractiveCoordinatorService(adaptLegacyCoordinator(coordinator));
   try {
-    let running = true;
-    while (running) {
-      let input: string;
-      try {
-        input = await rl.question(ui.getPrompt());
-      } catch (error) {
-        if (isReplTerminationError(error)) {
-          break;
-        }
-        throw error;
-      }
-
-      try {
-        const command = parseReplCommand(input);
-
-        switch (command.type) {
-          case "user_turn": {
-            if (!command.text) {
-              break;
-            }
-            const result = await coordinator.submitUserInput(command.text);
-            ui.beforeTextOutput();
-            io.stdout.write(renderTurnResult(result));
-            break;
-          }
-          case "help":
-            ui.beforeTextOutput();
-            ui.renderHelp();
-            break;
-          case "status":
-            ui.beforeTextOutput();
-            io.stdout.write(`${JSON.stringify(coordinator.getStatus(), null, 2)}\n`);
-            break;
-          case "approve": {
-            const result = await coordinator.approvePendingPlan();
-            ui.beforeTextOutput();
-            io.stdout.write(renderTurnResult(result));
-            break;
-          }
-          case "discard": {
-            const hadPendingPlan = coordinator.getStatus().pendingPlanReady;
-            coordinator.discardPendingPlan();
-            ui.beforeTextOutput();
-            io.stdout.write(
-              hadPendingPlan
-                ? "Discarded the pending plan.\n"
-                : "No pending plan to discard.\n"
-            );
-            break;
-          }
-          case "sessions":
-            ui.beforeTextOutput();
-            io.stdout.write(`${JSON.stringify(coordinator.getSessions(), null, 2)}\n`);
-            break;
-          case "handoff":
-            ui.beforeTextOutput();
-            io.stdout.write(`${JSON.stringify(await coordinator.getLastHandoff(), null, 2)}\n`);
-            break;
-          case "new":
-            await coordinator.replaceRuntime(command.role, command);
-            ui.beforeTextOutput();
-            io.stdout.write(`Created new session for role ${command.role}\n`);
-            break;
-          case "switch":
-            await coordinator.replaceRuntime(command.role, command);
-            ui.beforeTextOutput();
-            io.stdout.write(`Switched role ${command.role} to ${command.sessionPath}\n`);
-            break;
-          case "quit":
-            running = false;
-            break;
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        io.stderr.write(`Error: ${message}\n`);
-      }
-    }
-  } finally {
-    rl.close();
-    await coordinator.dispose();
-  }
+    await service.start();
+    await runPlainReplLoop(service, rl, io, ui);
+  } finally { await service.dispose(); }
 }
 
 export function renderTurnResult(result: CoordinatorTurnResult): string {

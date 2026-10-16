@@ -3,6 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
 import { protectSecret, redactText } from "./redact.js";
 import { loadCredential } from "./credentials.js";
+import { LM_STUDIO_BASE_URL } from "./models.js";
 
 export const trustedProviderEndpoint = "https://api.openai.com/v1/responses";
 export function assertProviderEndpoint(value: string): void {
@@ -21,6 +22,7 @@ export interface ProviderBroker {
 }
 
 export async function createProviderBroker(options: {
+  provider?: "openai" | "lm-studio" | undefined;
   cwd: string;
   modelIds: string[];
   load?: (() => Promise<string>) | undefined;
@@ -30,21 +32,26 @@ export async function createProviderBroker(options: {
   timeoutMs?: number | undefined;
 }): Promise<ProviderBroker> {
   assertSafeProviderEnvironment();
-  const key = await (options.load ?? (() => loadCredential(options.cwd)))();
+  const local = options.provider === "lm-studio";
+  const operation = local ? "/v1/chat/completions" : "/v1/responses";
+  const endpoint = local ? `${LM_STUDIO_BASE_URL}/chat/completions` : trustedProviderEndpoint;
+  const key = local ? "lm-studio" : await (options.load ?? (() => loadCredential(options.cwd)))();
   if (!key || /[\r\n]/.test(key)) throw new Error("Secure credential unavailable.");
   const token = randomBytes(32).toString("hex");
-  const releaseKey = protectSecret(key);
+  const releaseKey = local ? () => {} : protectSecret(key);
   const releaseToken = protectSecret(token);
   const request = options.request ?? fetch;
   let requests = 0;
   const controllers = new Set<AbortController>();
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
+    // Pi's OpenAI SDK retries HTTP failures independently of session retry settings.
+    res.setHeader("x-should-retry", "false");
     const authorization = req.headers.authorization ?? "";
     const expected = `Bearer ${token}`;
     if (Buffer.byteLength(authorization) !== Buffer.byteLength(expected) || !timingSafeEqual(Buffer.from(authorization), Buffer.from(expected))) {
       res.writeHead(403).end('{"error":{"message":"Provider capability rejected"}}'); return;
     }
-    if (req.method !== "POST" || req.url !== "/v1/responses") {
+    if (req.method !== "POST" || req.url !== operation) {
       res.writeHead(400).end('{"error":{"message":"Provider operation rejected"}}'); return;
     }
     const controller = new AbortController();
@@ -62,19 +69,21 @@ export async function createProviderBroker(options: {
           || "url" in parsed || "base_url" in parsed || "headers" in parsed) throw new Error("Rejected request");
       if (options.maxRequests !== undefined && requests >= options.maxRequests) throw new Error("Request budget exceeded");
       if (options.maxOutputTokens !== undefined) {
-        if (!("max_output_tokens" in parsed) || typeof parsed.max_output_tokens !== "number" || parsed.max_output_tokens > options.maxOutputTokens) throw new Error("Output budget required");
+        const limit = local && "max_tokens" in parsed ? parsed.max_tokens : "max_output_tokens" in parsed ? parsed.max_output_tokens : undefined;
+        if (typeof limit !== "number" || limit > options.maxOutputTokens) throw new Error("Output budget required");
         if ("tools" in parsed && Array.isArray(parsed.tools) && parsed.tools.length > 0) throw new Error("Smoke test tools forbidden");
       }
       requests++;
-      assertProviderEndpoint(trustedProviderEndpoint);
-      const upstream = await request(trustedProviderEndpoint, {
+      if (local) body = JSON.stringify({ ...parsed, reasoning_effort: "none" });
+      if (!local) assertProviderEndpoint(endpoint);
+      const upstream = await request(endpoint, {
         method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body, redirect: "error", signal: controller.signal
       });
       if (!upstream.ok || !upstream.body || upstream.redirected) {
         await upstream.body?.cancel();
         res.writeHead(upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502,
-          { "Content-Type": "application/json" }).end('{"error":{"message":"OpenAI request failed; check credential, permissions, quota, and model access."}}');
+          { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message: local ? "LM Studio request failed; start the local server and load the selected model with 65536 context tokens." : "OpenAI request failed; check credential, permissions, quota, and model access." } }));
         return;
       }
       res.writeHead(200, { "Content-Type": "text/event-stream" });
@@ -94,7 +103,7 @@ export async function createProviderBroker(options: {
       res.end(redactText(pending + decoder.decode()));
     } catch {
       if (res.headersSent) res.destroy();
-      else res.writeHead(502, { "Content-Type": "application/json" }).end('{"error":{"message":"Trusted provider request unavailable or rejected."}}');
+      else res.writeHead(502, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message: local ? "LM Studio request unavailable or rejected. Start the local server and load the selected model. No cloud fallback." : "Trusted provider request unavailable or rejected." } }));
     } finally { clearTimeout(timer); controllers.delete(controller); }
   };
   const server = createServer((req, res) => { void handle(req, res); });
