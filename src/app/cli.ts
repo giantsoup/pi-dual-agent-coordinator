@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { Role } from "../types/role.js";
 
 export type ReplThinkingLevel = "off" | "low" | "medium" | "high";
-export type HelpTopic = "general" | "repl" | "portal" | "doctor" | "setup" | "auth";
+export type HelpTopic = "general" | "repl" | "doctor" | "setup" | "auth";
 
 export interface ReplCliOptions {
   command: "repl";
@@ -21,24 +21,6 @@ export interface ReplCliOptions {
   maxReviewRounds: number;
   mcpEnabled?: boolean;
   mcpConfigPaths?: string[];
-}
-
-export interface PortalCliOptions {
-  command: "portal";
-  cwd: string;
-  agentDir?: string;
-  sessionRoot?: string;
-  sessionMode: "persistent" | "memory";
-  jsonLogs: boolean;
-  verbose: boolean;
-  modelA?: string;
-  modelB?: string;
-  thinkingA?: ReplThinkingLevel;
-  thinkingB?: ReplThinkingLevel;
-  maxReviewRounds: number;
-  mcpEnabled?: boolean;
-  mcpConfigPaths?: string[];
-  port: number;
 }
 
 export interface DoctorCliOptions {
@@ -74,7 +56,6 @@ export interface VersionCliOptions {
 
 export type CliOptions =
   | ReplCliOptions
-  | PortalCliOptions
   | DoctorCliOptions
   | SetupCliOptions
   | AuthCliOptions
@@ -102,48 +83,40 @@ export function parseCliArgs(
   baseCwd = process.env.INIT_CWD ? resolve(process.env.INIT_CWD) : process.cwd()
 ): CliOptions {
   const [command, ...rest] = argv;
-  const normalizedCommand = command === "web" ? "portal" : command;
 
-  if (!normalizedCommand || HELP_FLAGS.has(normalizedCommand) || normalizedCommand === "help") {
+  if (!command || HELP_FLAGS.has(command) || command === "help") {
     return {
       command: "help",
       topic: parseHelpTopic(rest[0])
     };
   }
 
-  if (VERSION_FLAGS.has(normalizedCommand) || normalizedCommand === "version") {
+  if (VERSION_FLAGS.has(command) || command === "version") {
     return { command: "version" };
   }
 
-  if (normalizedCommand === "repl") {
+  if (command === "repl") {
     if (rest.some((arg) => isHelpFlag(arg))) {
       return { command: "help", topic: "repl" };
     }
     return parseReplOptions(rest, baseCwd);
   }
 
-  if (normalizedCommand === "portal") {
-    if (rest.some((arg) => isHelpFlag(arg))) {
-      return { command: "help", topic: "portal" };
-    }
-    return parsePortalOptions(rest, baseCwd);
-  }
-
-  if (normalizedCommand === "doctor") {
+  if (command === "doctor") {
     if (rest.some((arg) => isHelpFlag(arg))) {
       return { command: "help", topic: "doctor" };
     }
     return parseDoctorOptions(rest, baseCwd);
   }
 
-  if (normalizedCommand === "setup") {
+  if (command === "setup") {
     if (rest.some((arg) => isHelpFlag(arg))) {
       return { command: "help", topic: "setup" };
     }
     return parseSetupOptions(rest, baseCwd);
   }
 
-  if (normalizedCommand === "auth") {
+  if (command === "auth") {
     if (rest.some((arg) => isHelpFlag(arg))) {
       return { command: "help", topic: "auth" };
     }
@@ -177,38 +150,6 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
       "  --plain",
       "  --json-logs",
       "  --verbose",
-      ""
-    ].join("\n");
-  }
-
-  if (topic === "portal") {
-    return [
-      "Usage:",
-      "  pi-dual portal [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--port PORT] [--json-logs] [--verbose]",
-      "  pi-dual web [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--port PORT] [--json-logs] [--verbose]",
-      "",
-      "Examples:",
-      "  npm run web -- .",
-      "  pi-dual web .",
-      "  npm run web -- . --port 4317",
-      "  pi-dual portal . --model-a openai/gpt-5.4 --model-b local-qwen/qwen3-coder-next",
-      "",
-      "Flags:",
-      "  --model-a MODEL",
-      "  --model-b MODEL",
-      "  --thinking-a off|low|medium|high",
-      "  --thinking-b off|low|medium|high",
-      "  --max-review-rounds N",
-      "  --agent-dir PATH",
-      "  --session-root PATH",
-      "  --mcp-config PATH   repeatable",
-      "  --no-mcp",
-      "  --no-session",
-      "  --port PORT         defaults to 0 (pick any free localhost port)",
-      "  --json-logs",
-      "  --verbose",
-      "",
-      "The web interface stays on localhost, prints a launch link that works in any browser on this computer, and keeps the health-check URL as a secondary detail.",
       ""
     ].join("\n");
   }
@@ -265,13 +206,11 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
     "  setup     Guided first-run setup for auth and defaults",
     "  auth      Change or repair Agent A auth/defaults",
     "  repl      Start the interactive coordinator REPL",
-    "  web       Alias for portal so you can launch the web interface from any linked install",
-    "  portal    Start the local web interface on localhost",
     "  doctor    Check whether this machine is ready to run the coordinator",
     "  help      Show help",
     "  version   Show the installed version",
     "",
-    "Run `pi-dual help repl`, `pi-dual help portal`, `pi-dual help doctor`, `pi-dual help setup`, or `pi-dual help auth` for command-specific help.",
+    "Run `pi-dual help repl`, `pi-dual help doctor`, `pi-dual help setup`, or `pi-dual help auth` for command-specific help.",
     ""
   ].join("\n");
 }
@@ -380,76 +319,6 @@ function parseDoctorOptions(argv: string[], baseCwd: string): DoctorCliOptions {
         break;
       default:
         throw new Error(`Unknown argument: ${arg}\n\n${formatCliHelp("doctor")}`);
-    }
-  }
-
-  return options;
-}
-
-function parsePortalOptions(argv: string[], baseCwd: string): PortalCliOptions {
-  const [maybeCwd, ...rest] = argv;
-  const options: PortalCliOptions = {
-    command: "portal",
-    cwd: maybeCwd && !maybeCwd.startsWith("--") ? resolve(baseCwd, maybeCwd) : baseCwd,
-    sessionMode: "persistent",
-    jsonLogs: false,
-    verbose: false,
-    maxReviewRounds: 3,
-    mcpEnabled: true,
-    mcpConfigPaths: [],
-    port: 0
-  };
-
-  const args = normalizeArgs(maybeCwd, rest);
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (!arg) {
-      continue;
-    }
-
-    switch (arg) {
-      case "--model-a":
-        options.modelA = requireValue(arg, args[++i]);
-        break;
-      case "--model-b":
-        options.modelB = requireValue(arg, args[++i]);
-        break;
-      case "--thinking-a":
-        options.thinkingA = parseThinking(arg, requireValue(arg, args[++i]));
-        break;
-      case "--thinking-b":
-        options.thinkingB = parseThinking(arg, requireValue(arg, args[++i]));
-        break;
-      case "--max-review-rounds":
-        options.maxReviewRounds = parsePositiveInt(arg, requireValue(arg, args[++i]));
-        break;
-      case "--agent-dir":
-        options.agentDir = resolve(baseCwd, requireValue(arg, args[++i]));
-        break;
-      case "--session-root":
-        options.sessionRoot = resolve(baseCwd, requireValue(arg, args[++i]));
-        break;
-      case "--no-session":
-        options.sessionMode = "memory";
-        break;
-      case "--port":
-        options.port = parsePort(arg, requireValue(arg, args[++i]));
-        break;
-      case "--json-logs":
-        options.jsonLogs = true;
-        break;
-      case "--verbose":
-        options.verbose = true;
-        break;
-      case "--no-mcp":
-        options.mcpEnabled = false;
-        break;
-      case "--mcp-config":
-        (options.mcpConfigPaths ??= []).push(resolve(baseCwd, requireValue(arg, args[++i])));
-        break;
-      default:
-        throw new Error(`Unknown argument: ${arg}\n\n${formatCliHelp("portal")}`);
     }
   }
 
@@ -575,14 +444,6 @@ function parsePositiveInt(flag: string, value: string): number {
   return parsed;
 }
 
-function parsePort(flag: string, value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65_535) {
-    throw new Error(`Invalid value for ${flag}: ${value}`);
-  }
-  return parsed;
-}
-
 function isRole(value: string): boolean {
   return value.toLowerCase() === "a" || value.toLowerCase() === "b";
 }
@@ -598,13 +459,8 @@ function isHelpFlag(value: string | undefined): boolean {
 }
 
 function parseHelpTopic(value: string | undefined): HelpTopic {
-  if (value === "web") {
-    return "portal";
-  }
-
   if (
     value === "repl" ||
-    value === "portal" ||
     value === "doctor" ||
     value === "setup" ||
     value === "auth"

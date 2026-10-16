@@ -10,7 +10,7 @@ import {
   ModelRegistry
 } from "@mariozechner/pi-coding-agent";
 
-import type { DoctorCliOptions, PortalCliOptions, ReplCliOptions } from "./cli.js";
+import type { DoctorCliOptions, ReplCliOptions } from "./cli.js";
 import {
   loadCoordinatorConfig,
   resolveEffectiveModelA,
@@ -149,7 +149,7 @@ export async function inspectRuntimeSetup(
 }
 
 export async function assertRuntimeSetupReady(
-  options: DoctorCliOptions | ReplCliOptions | PortalCliOptions
+  options: DoctorCliOptions | ReplCliOptions
 ): Promise<void> {
   const report = await inspectRuntimeSetup(options);
   const failures = report.checks.filter((check) => check.status === "fail");
@@ -531,7 +531,7 @@ function formatStatus(status: RuntimeSetupCheck["status"]): string {
 }
 
 function formatRecommendedDoctorArgs(
-  options: DoctorCliOptions | ReplCliOptions | PortalCliOptions
+  options: DoctorCliOptions | ReplCliOptions
 ): string {
   const parts: string[] = [];
   if (options.cwd) {

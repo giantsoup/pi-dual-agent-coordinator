@@ -13,7 +13,6 @@
 npm run build
 npm run check
 npm test
-npm run ci
 ```
 
 Use `npm run repl -- . --model-a ... --model-b ...` for interactive testing.

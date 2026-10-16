@@ -124,15 +124,7 @@ npm run repl -- . \
   --max-review-rounds 3
 ```
 
-If you prefer the local web interface instead of the terminal UI:
-
-```bash
-npm run web -- .
-```
-
-That command only works when your terminal is open in this repo, because it uses this repo's `package.json`.
-
-If you want to launch PI Dual from any project directory, link the local binary once:
+To launch the terminal UI from any project directory, link the local binary once:
 
 ```bash
 cd /absolute/path/to/pi-dual-agent-coordinator
@@ -142,10 +134,8 @@ npm link
 Then from any project:
 
 ```bash
-pi-dual web .
+pi-dual repl .
 ```
-
-Both commands start the same localhost-only web UI, print a launch link that works in any browser on this computer, and keep the health-check URL as a secondary detail.
 
 ### 7. Optional: add a `pdual` shell shortcut
 
@@ -195,8 +185,6 @@ Replace `/absolute/path/to/pi-dual-agent-coordinator` with the location where yo
 - `npm run auth -- .`: switch or repair Agent A auth/defaults
 - `npm run doctor -- .`: validate setup with saved defaults
 - `npm run repl -- .`: start the REPL with saved defaults
-- `npm run web -- .`: start the local web interface when your terminal is in this repo
-- `pi-dual web .`: start the local web interface from any project after `npm link`
 - `npm test`: run the test suite
 - `npm run check`: run the TypeScript checker
 
@@ -224,29 +212,6 @@ Useful slash commands:
 - `/switch A <session-path>`
 - `/switch B <session-path>`
 - `/quit`
-
-## Browser portal basics
-
-The portal uses the same shared coordinator service and slash-command contract as the TUI.
-
-- Start it with `npm run web -- .`
-- Or, after `npm link`, start it from any project with `pi-dual web .`
-- The server binds to `127.0.0.1` only
-- The launch URL includes a per-process auth token
-- The terminal tells you to open that exact link in any browser on this computer
-- One browser tab holds the controller lock for mutations; additional tabs are observers
-- The React/Vite operations console renders the transcript, live stream, workflow inspector, runtime health, MCP status, metrics, command dock, sessions drawer, handoff drawer, and status drawer
-- SSE events include event ids, timestamps, heartbeat comments, and bounded replay; the browser falls back to `/api/state` if it detects a replay gap
-- MCP status is read-only in the portal and shows config sources, per-role server lists, transport, connection state, direct tool counts, metadata sync time, and last errors
-
-Frontend development and QA:
-
-```bash
-npm run web:build
-npm run web:e2e
-```
-
-`npm run web:e2e` builds the project and runs Playwright against a mock portal server. If Playwright was just installed, run `npx playwright install chromium` once on the machine.
 
 ## Config examples
 
@@ -315,6 +280,12 @@ npm run check
 npm test
 npm run build
 ```
+
+## Project scope
+
+The main branch contains the terminal UI and plain terminal fallback. The browser interface,
+including its in-progress changes, is preserved on `feature/browser-experience`.
+See [TERMINAL_EXPERIENCE_PLAN.md](./TERMINAL_EXPERIENCE_PLAN.md) for the terminal work plan.
 
 ## Additional docs
 

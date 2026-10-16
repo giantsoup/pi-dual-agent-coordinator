@@ -1,80 +1,34 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  renderConfigSaveNotice,
-  renderNoticeText,
-  renderProjectLaunchBlockedNotice,
-  renderProjectLaunchSuccessNotice,
-  renderProjectValidationNotice,
-  renderRecoveryNotice,
-  renderStartupInstructions,
-  renderThreadLaunchNotice
-} from "../../src/app/presentation/notices.js";
+import { renderNotificationText } from "../../src/app/presentation/notices.js";
 
-describe("presentation notices", () => {
-  it("renders startup instructions with clear next steps", () => {
-    const output = renderStartupInstructions({
-      browserOpenStatus: "failed",
-      healthCheckUrl: "http://127.0.0.1:4317/healthz",
-      launchUrl: "http://127.0.0.1:4317/?token=secret-token",
-      projectPath: "/tmp/project"
-    });
+describe("terminal notification formatting", () => {
+  const notification = {
+    id: "notice-1",
+    level: "error",
+    scope: "service",
+    code: "dispatch.failed",
+    message: "The model could not be reached.",
+    createdAt: "2026-10-16T00:00:00.000Z"
+  } as const;
 
-    expect(output.lines).toEqual(
-      expect.arrayContaining([
-        "PI Dual web interface is ready.",
-        "Open this link in any browser on this computer: http://127.0.0.1:4317/?token=secret-token",
-        "If the link does not open automatically, copy and paste it into Chrome, Safari, Firefox, or another local browser.",
-        "This interface is only available on this machine because the server listens on localhost.",
-        "Project loaded: /tmp/project"
-      ])
-    );
+  it("includes the title, detail, and next action", () => {
+    expect(renderNotificationText({
+      ...notification,
+      title: "Action failed",
+      detail: "Connection refused.",
+      nextStep: "Run pi-dual doctor."
+    })).toBe("Action failed.\nThe model could not be reached.\nConnection refused.\nRun pi-dual doctor.");
   });
 
-  it("includes restart guidance in config save notices", () => {
-    const notice = renderConfigSaveNotice({
-      activeThreadsNeedRestart: true,
-      scope: "project",
-      targetName: "/tmp/project"
-    });
-
-    expect(notice.message).toContain("project settings");
-    expect(notice.nextStep).toContain("restart active threads");
+  it("does not repeat a title that matches the message", () => {
+    expect(renderNotificationText({
+      ...notification,
+      title: notification.message
+    })).toBe(notification.message);
   });
 
-  it("includes project, model, and first action in thread launch notices", () => {
-    const notice = renderThreadLaunchNotice({
-      firstAction: "Agent A is preparing the implementation plan",
-      modelA: "openai/gpt-5.4",
-      modelB: "local-qwen/qwen3-coder-next",
-      projectPath: "/tmp/project"
-    });
-
-    expect(notice.message).toContain("openai/gpt-5.4");
-    expect(notice.message).toContain("local-qwen/qwen3-coder-next");
-    expect(notice.message).toContain("/tmp/project");
-    expect(notice.nextStep).toContain("First step");
-  });
-
-  it("explains recovery actions plainly", () => {
-    const notice = renderRecoveryNotice({
-      projectPath: "/tmp/project",
-      resumable: true
-    });
-
-    expect(renderNoticeText(notice)).toContain("Resume it");
-    expect(renderNoticeText(notice)).toContain("/tmp/project");
-  });
-
-  it("renders project launcher notices with explicit guidance", () => {
-    expect(renderNoticeText(renderProjectLaunchBlockedNotice("pending_plan"))).toContain(
-      "Approve it, discard it"
-    );
-    expect(renderProjectLaunchSuccessNotice("/tmp/project-b").message).toContain(
-      "/tmp/project-b"
-    );
-    expect(renderProjectValidationNotice("Project path was not valid: directory does not exist.").message).toContain(
-      "directory does not exist"
-    );
+  it("renders a message without an optional title", () => {
+    expect(renderNotificationText(notification)).toBe(notification.message);
   });
 });

@@ -12,28 +12,13 @@ import type {
   UiActivityState,
   UiConversationEntry,
   UiConversationEntryDraft,
-  UiSettingsState,
-  UiTimelineItem,
   UiModalState,
-  UiNotification,
-  UiWorkspaceState
+  UiNotification
 } from "../../types/ui.js";
 
 interface StoreActionMap {
   replace_status: {
     status: CoordinatorStatusSnapshot;
-  };
-  replace_workspace: {
-    workspace: UiWorkspaceState;
-  };
-  replace_timeline: {
-    timeline: UiTimelineItem[];
-  };
-  replace_settings: {
-    settings: UiSettingsState;
-  };
-  set_active_view: {
-    activeView: InteractiveUiState["activeView"];
   };
   append_entry: {
     entry: UiConversationEntry;
@@ -67,9 +52,6 @@ interface StoreActionMap {
   set_error: {
     error?: UiNotification | undefined;
   };
-  set_command_palette: {
-    open: boolean;
-  };
   set_should_exit: {
     value: boolean;
   };
@@ -87,16 +69,6 @@ export function createInitialInteractiveUiState(
   return {
     status,
     conversation: [],
-    workspace: {
-      projects: [],
-      recentProjects: [],
-      threads: [],
-      activeThreadId: status.threadId,
-      selectedThreadId: status.threadId
-    },
-    timeline: [],
-    activeView: "thread",
-    settings: createEmptySettingsState(),
     activity: {
       runtimes: {},
       history: {}
@@ -108,9 +80,6 @@ export function createInitialInteractiveUiState(
         }
       : undefined,
     modal: { kind: "none" },
-    commandPalette: {
-      open: false
-    },
     notifications: [],
     shouldExit: false
   };
@@ -129,29 +98,9 @@ export function interactiveUiReducer(
         pendingPlan: action.status.pendingPlan
           ? {
               plan: action.status.pendingPlan,
-            nextActionHint: action.status.nextActionHint
-          }
+              nextActionHint: action.status.nextActionHint
+            }
           : undefined
-      };
-    case "replace_workspace":
-      return {
-        ...state,
-        workspace: action.workspace
-      };
-    case "replace_timeline":
-      return {
-        ...state,
-        timeline: action.timeline
-      };
-    case "replace_settings":
-      return {
-        ...state,
-        settings: action.settings
-      };
-    case "set_active_view":
-      return {
-        ...state,
-        activeView: action.activeView
       };
     case "append_entry":
       return {
@@ -222,13 +171,6 @@ export function interactiveUiReducer(
         ...state,
         notifications: updateNotifications(state.notifications, action.error),
         lastError: action.error
-      };
-    case "set_command_palette":
-      return {
-        ...state,
-        commandPalette: {
-          open: action.open
-        }
       };
     case "set_should_exit":
       return {
@@ -303,48 +245,6 @@ export function cloneActivitySnapshot(
 
   return {
     ...activity
-  };
-}
-
-function createEmptySettingsState(): UiSettingsState {
-  return {
-    activeScope: "global",
-    effective: {
-      values: {},
-      sources: {
-        modelA: "legacy",
-        modelB: "legacy",
-        thinkingA: "legacy",
-        thinkingB: "legacy",
-        mcpEnabled: "legacy"
-      }
-    },
-    scopes: {
-      global: {
-        scope: "global",
-        label: "Global defaults",
-        available: true,
-        hasOverrides: false,
-        values: {}
-      },
-      project: {
-        scope: "project",
-        label: "Project overrides",
-        available: false,
-        hasOverrides: false,
-        values: {}
-      },
-      thread: {
-        scope: "thread",
-        label: "Thread overrides",
-        available: false,
-        hasOverrides: false,
-        values: {}
-      }
-    },
-    providers: [],
-    catalogByProvider: {},
-    providerOperation: undefined
   };
 }
 

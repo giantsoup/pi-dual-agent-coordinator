@@ -27,10 +27,6 @@ export interface RuntimeStatusSnapshot {
 }
 
 export interface CoordinatorStatusSnapshot {
-  threadId: string;
-  threadTitle: string;
-  threadStartedAt: string;
-  threadUpdatedAt: string;
   cwd: string;
   conversationMode: ConversationMode;
   phase: CoordinatorUiPhase;

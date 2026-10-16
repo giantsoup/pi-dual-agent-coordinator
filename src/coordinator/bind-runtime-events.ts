@@ -21,62 +21,14 @@ export type RuntimeUiBridgeEvent =
       role: Role;
       sessionId: string;
       sessionFile?: string | undefined;
-      requestId?: string | undefined;
-      turnIndex?: number | undefined;
       timestamp: string;
       delta: string;
-    }
-  | {
-      type: "assistant_thinking_delta";
-      role: Role;
-      sessionId: string;
-      sessionFile?: string | undefined;
-      requestId?: string | undefined;
-      turnIndex?: number | undefined;
-      timestamp: string;
-      delta: string;
-      summary?: string | undefined;
-    }
-  | {
-      type: "tool_call_started";
-      role: Role;
-      sessionId: string;
-      sessionFile?: string | undefined;
-      requestId?: string | undefined;
-      turnIndex?: number | undefined;
-      timestamp: string;
-      toolName: string;
-      argsPreview?: string | undefined;
-    }
-  | {
-      type: "tool_call_delta";
-      role: Role;
-      sessionId: string;
-      sessionFile?: string | undefined;
-      requestId?: string | undefined;
-      turnIndex?: number | undefined;
-      timestamp: string;
-      toolName?: string | undefined;
-      deltaPreview?: string | undefined;
-    }
-  | {
-      type: "tool_call_completed";
-      role: Role;
-      sessionId: string;
-      sessionFile?: string | undefined;
-      requestId?: string | undefined;
-      turnIndex?: number | undefined;
-      timestamp: string;
-      toolName?: string | undefined;
-      argsPreview?: string | undefined;
     }
   | {
       type: "assistant_turn_committed";
       role: Role;
       sessionId: string;
       sessionFile?: string | undefined;
-      requestId?: string | undefined;
-      turnIndex?: number | undefined;
       timestamp: string;
       text: string;
     };
@@ -261,9 +213,6 @@ export class RuntimeEventBridge {
     binding: RoleRuntimeBinding,
     event: AgentSessionEvent
   ): void {
-    const requestId = this.requestIds.get(binding.role);
-    const turnIndex = this.correlation.getTurnIndex(this.sessionKey(binding));
-
     if (
       event.type === "message_update" &&
       event.assistantMessageEvent.type === "text_delta"
@@ -273,78 +222,8 @@ export class RuntimeEventBridge {
         role: binding.role,
         sessionId: binding.sessionId,
         sessionFile: binding.sessionFile,
-        requestId,
-        turnIndex,
         timestamp: new Date().toISOString(),
         delta: event.assistantMessageEvent.delta
-      });
-      return;
-    }
-
-    if (
-      event.type === "message_update" &&
-      event.assistantMessageEvent.type === "thinking_delta"
-    ) {
-      this.emitUiEvent({
-        type: "assistant_thinking_delta",
-        role: binding.role,
-        sessionId: binding.sessionId,
-        sessionFile: binding.sessionFile,
-        requestId,
-        turnIndex,
-        timestamp: new Date().toISOString(),
-        delta: event.assistantMessageEvent.delta,
-        summary: "Streaming internal reasoning"
-      });
-      return;
-    }
-
-    if (
-      event.type === "message_update" &&
-      event.assistantMessageEvent.type === "toolcall_delta"
-    ) {
-      this.emitUiEvent({
-        type: "tool_call_delta",
-        role: binding.role,
-        sessionId: binding.sessionId,
-        sessionFile: binding.sessionFile,
-        requestId,
-        turnIndex,
-        timestamp: new Date().toISOString(),
-        deltaPreview: event.assistantMessageEvent.delta
-      });
-      return;
-    }
-
-    if (
-      event.type === "message_update" &&
-      event.assistantMessageEvent.type === "toolcall_end"
-    ) {
-      this.emitUiEvent({
-        type: "tool_call_completed",
-        role: binding.role,
-        sessionId: binding.sessionId,
-        sessionFile: binding.sessionFile,
-        requestId,
-        turnIndex,
-        timestamp: new Date().toISOString(),
-        toolName: event.assistantMessageEvent.toolCall.name,
-        argsPreview: JSON.stringify(event.assistantMessageEvent.toolCall.arguments)
-      });
-      return;
-    }
-
-    if (event.type === "tool_execution_start") {
-      this.emitUiEvent({
-        type: "tool_call_started",
-        role: binding.role,
-        sessionId: binding.sessionId,
-        sessionFile: binding.sessionFile,
-        requestId,
-        turnIndex,
-        timestamp: new Date().toISOString(),
-        toolName: event.toolName,
-        argsPreview: JSON.stringify(event.args)
       });
       return;
     }
@@ -358,8 +237,6 @@ export class RuntimeEventBridge {
       role: binding.role,
       sessionId: binding.sessionId,
       sessionFile: binding.sessionFile,
-      requestId,
-      turnIndex,
       timestamp: new Date().toISOString(),
       text: event.message.role === "assistant" ? extractAssistantText(event.message) : ""
     });

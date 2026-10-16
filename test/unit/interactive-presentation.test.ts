@@ -21,7 +21,7 @@ describe("interactive presentation", () => {
         sessionFile: "/tmp/sessions/B.jsonl",
         timestamp: "2026-04-20T00:00:00.000Z",
         completion: {
-          summary: "Updated the UI state wiring and verified the portal flow."
+          summary: "Updated the UI state wiring and verified the terminal flow."
         }
       }
     });
@@ -36,6 +36,6 @@ describe("interactive presentation", () => {
     expect(output).toContain("Actor: B");
     expect(output).toContain("Session: B-session-9");
     expect(output).toContain("Summary:");
-    expect(output).toContain("Updated the UI state wiring and verified the portal flow.");
+    expect(output).toContain("Updated the UI state wiring and verified the terminal flow.");
   });
 });

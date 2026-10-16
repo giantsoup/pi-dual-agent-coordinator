@@ -6,7 +6,6 @@ import { dirname, join } from "node:path";
 import type {
   AuthCliOptions,
   DoctorCliOptions,
-  PortalCliOptions,
   ReplCliOptions,
   ReplThinkingLevel,
   SetupCliOptions
@@ -42,7 +41,6 @@ export interface EffectiveValue<T> {
 
 type OptionsWithCoordinatorDefaults =
   | ReplCliOptions
-  | PortalCliOptions
   | DoctorCliOptions
   | SetupCliOptions
   | AuthCliOptions;
@@ -112,7 +110,7 @@ export async function writeCoordinatorConfig(
 }
 
 export function resolveEffectiveModelA(
-  options: Pick<DoctorCliOptions | ReplCliOptions | PortalCliOptions, "modelA">,
+  options: Pick<DoctorCliOptions | ReplCliOptions, "modelA">,
   config?: CoordinatorConfigV1
 ): EffectiveValue<string> {
   if (options.modelA) {
@@ -125,7 +123,7 @@ export function resolveEffectiveModelA(
 }
 
 export function resolveEffectiveModelB(
-  options: Pick<DoctorCliOptions | ReplCliOptions | PortalCliOptions, "modelB">,
+  options: Pick<DoctorCliOptions | ReplCliOptions, "modelB">,
   config?: CoordinatorConfigV1
 ): EffectiveValue<string> {
   if (options.modelB) {
@@ -138,7 +136,7 @@ export function resolveEffectiveModelB(
 }
 
 export function resolveEffectiveThinkingA(
-  options: Pick<ReplCliOptions | PortalCliOptions, "thinkingA">,
+  options: Pick<ReplCliOptions, "thinkingA">,
   config?: CoordinatorConfigV1
 ): EffectiveValue<ReplThinkingLevel> {
   if (options.thinkingA) {
@@ -151,7 +149,7 @@ export function resolveEffectiveThinkingA(
 }
 
 export function resolveEffectiveThinkingB(
-  options: Pick<ReplCliOptions | PortalCliOptions, "thinkingB">,
+  options: Pick<ReplCliOptions, "thinkingB">,
   config?: CoordinatorConfigV1
 ): EffectiveValue<ReplThinkingLevel> {
   if (options.thinkingB) {
@@ -167,10 +165,6 @@ export function applyCoordinatorDefaultsToCliOptions(
   options: ReplCliOptions,
   config?: CoordinatorConfigV1
 ): ReplCliOptions;
-export function applyCoordinatorDefaultsToCliOptions(
-  options: PortalCliOptions,
-  config?: CoordinatorConfigV1
-): PortalCliOptions;
 export function applyCoordinatorDefaultsToCliOptions(
   options: DoctorCliOptions,
   config?: CoordinatorConfigV1
@@ -189,7 +183,6 @@ export function applyCoordinatorDefaultsToCliOptions(
 ): OptionsWithCoordinatorDefaults {
   if (
     options.command !== "repl" &&
-    options.command !== "portal" &&
     options.command !== "doctor"
   ) {
     return options;
@@ -209,17 +202,6 @@ export function applyCoordinatorDefaultsToCliOptions(
 
   const resolvedThinkingA = resolveEffectiveThinkingA(options, config);
   const resolvedThinkingB = resolveEffectiveThinkingB(options, config);
-
-  if (options.command === "portal") {
-    const resolved: PortalCliOptions = {
-      ...options,
-      ...(resolvedModelA.value ? { modelA: resolvedModelA.value } : {}),
-      ...(resolvedModelB.value ? { modelB: resolvedModelB.value } : {}),
-      ...(resolvedThinkingA.value ? { thinkingA: resolvedThinkingA.value } : {}),
-      ...(resolvedThinkingB.value ? { thinkingB: resolvedThinkingB.value } : {})
-    };
-    return resolved;
-  }
 
   const resolved: ReplCliOptions = {
     ...options,

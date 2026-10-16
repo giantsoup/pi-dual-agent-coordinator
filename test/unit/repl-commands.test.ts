@@ -3,6 +3,14 @@ import { describe, expect, it } from "vitest";
 import { formatCliHelp, parseCliArgs, parseReplCommand } from "../../src/app/cli.js";
 
 describe("repl commands", () => {
+  it.each(["web", "portal"])("rejects the removed %s command", (command) => {
+    expect(() => parseCliArgs([command])).toThrow();
+    expect(() => parseCliArgs([command, "--help"])).toThrow();
+    expect(parseCliArgs(["help", command])).toEqual({
+      command: "help",
+      topic: "general"
+    });
+  });
   it("parses non-slash input as a planning user turn", () => {
     expect(parseReplCommand("ship it")).toEqual({ type: "user_turn", text: "ship it" });
   });
@@ -81,25 +89,6 @@ describe("repl commands", () => {
     });
   });
 
-  it("parses portal arguments", () => {
-    const parsed = parseCliArgs(["portal", ".", "--port", "4317", "--no-session"]);
-    expect(parsed).toMatchObject({
-      command: "portal",
-      cwd: process.cwd(),
-      port: 4317,
-      sessionMode: "memory"
-    });
-  });
-
-  it("parses web as a portal alias", () => {
-    const parsed = parseCliArgs(["web", ".", "--port", "4317"]);
-    expect(parsed).toMatchObject({
-      command: "portal",
-      cwd: process.cwd(),
-      port: 4317
-    });
-  });
-
   it("defaults cwd to INIT_CWD when no path is provided", () => {
     const previous = process.env.INIT_CWD;
     process.env.INIT_CWD = "/tmp/operator-project";
@@ -157,39 +146,15 @@ describe("repl commands", () => {
     });
   });
 
-  it("treats portal --help as help output", () => {
-    expect(parseCliArgs(["portal", "--help"])).toEqual({
-      command: "help",
-      topic: "portal"
-    });
-  });
-
-  it("treats web --help as portal help output", () => {
-    expect(parseCliArgs(["web", "--help"])).toEqual({
-      command: "help",
-      topic: "portal"
-    });
-  });
-
   it("includes setup and auth in general help", () => {
     const help = formatCliHelp("general");
     expect(help).toContain("setup     Guided first-run setup for auth and defaults");
     expect(help).toContain("auth      Change or repair Agent A auth/defaults");
-    expect(help).toContain(
-      "web       Alias for portal so you can launch the web interface from any linked install"
-    );
-    expect(help).toContain("portal    Start the local web interface on localhost");
+    expect(help).not.toMatch(/\b(?:web|portal)\b/);
   });
 
   it("includes the plain flag in repl help", () => {
     expect(formatCliHelp("repl")).toContain("--plain");
   });
 
-  it("includes the port flag in portal help", () => {
-    const help = formatCliHelp("portal");
-    expect(help).toContain("npm run web -- .");
-    expect(help).toContain("pi-dual web .");
-    expect(help).toContain("--port PORT");
-    expect(help).toContain("works in any browser on this computer");
-  });
 });

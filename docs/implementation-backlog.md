@@ -39,7 +39,7 @@ The primary remaining gap is live end-to-end validation against real Pi SDK sess
 - Multi-writer file mutation
 - Dynamic agent counts
 - Cross-language orchestration via RPC
-- Production UI
+- Browser UI
 - Pluggable arbitration strategies beyond the default lease-based coordinator
 
 ## Phase Plan

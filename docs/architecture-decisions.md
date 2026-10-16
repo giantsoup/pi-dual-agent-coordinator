@@ -31,6 +31,6 @@ The coordinator is the only component allowed to observe both Pi runtimes, persi
 
 ## Current Scope
 
-- Plain readline REPL only.
+- Full-screen terminal UI by default on a TTY, with a plain readline fallback.
 - Automatic capped workflow loop: task -> A plan/final -> B execution -> A review -> ... -> A final.
 - Recovery, replacement, logging, repair prompts, and append-only workflow replay are part of the ship surface because they materially affect correctness.

@@ -96,12 +96,11 @@ describe("coordinator config", () => {
     expect(resolved.modelA).toBe("openai/gpt-5.4");
   });
 
-  it("applies saved thinking defaults to portal runs", () => {
+  it("applies saved thinking defaults to terminal runs", () => {
     const resolved = applyCoordinatorDefaultsToCliOptions(
       {
-        command: "portal",
+        command: "repl",
         cwd: "/tmp/project",
-        port: 0,
         sessionMode: "memory",
         jsonLogs: false,
         verbose: false,
@@ -117,7 +116,7 @@ describe("coordinator config", () => {
     );
 
     expect(resolved).toMatchObject({
-      command: "portal",
+      command: "repl",
       modelA: "openai/gpt-5.4",
       thinkingA: "high"
     });

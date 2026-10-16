@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
 import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
@@ -87,10 +87,6 @@ export class Coordinator {
   private readonly workflowOrchestrator: WorkflowOrchestrator;
   private readonly runtimeFactory: typeof createRoleRuntime;
   private readonly eventBridge: RuntimeEventBridge;
-  private readonly threadId = randomUUID();
-  private readonly threadStartedAt = new Date().toISOString();
-  private threadUpdatedAt = this.threadStartedAt;
-  private threadTitle: string;
   private resolvedMcpConfig: ResolvedMcpConfig = {
     enabled: false,
     projectRoot: "",
@@ -112,7 +108,6 @@ export class Coordinator {
 
   public constructor(private readonly options: CoordinatorOptions) {
     this.sessionRoot = options.sessionRoot ?? getDefaultSessionRoot(options.cwd);
-    this.threadTitle = basename(options.cwd) || options.cwd;
     const paths = createPersistencePaths(this.sessionRoot);
     this.ledger = new SessionLedger(paths.ledgerFile);
     this.logger = new TelemetryLogger({
@@ -179,7 +174,6 @@ export class Coordinator {
   }
 
   public async submitUserInput(text: string): Promise<CoordinatorTurnResult> {
-    this.touchThread();
     this.clearAllActivity();
     const activeWorkflow = this.getActiveWorkflow();
     if (activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)) {
@@ -270,7 +264,6 @@ export class Coordinator {
   }
 
   public async approvePendingPlan(): Promise<CoordinatorTurnResult> {
-    this.touchThread();
     this.clearAllActivity();
     const activeWorkflow = this.getActiveWorkflow();
     if (activeWorkflow && !isWorkflowTerminal(activeWorkflow.status)) {
@@ -329,7 +322,6 @@ export class Coordinator {
     if (!this.pendingPlan) {
       return;
     }
-    this.touchThread();
     const bindingA = this.registry.get("A");
     const requestId = this.pendingPlan.requestId;
     this.pendingPlan = undefined;
@@ -341,7 +333,6 @@ export class Coordinator {
   }
 
   public async replaceRuntime(role: Role, action: RuntimeReplacementAction): Promise<void> {
-    this.touchThread();
     const binding = this.requireBinding(role);
     const updated = await applyRuntimeOperation(binding, action);
     this.registry.set(updated);
@@ -373,10 +364,6 @@ export class Coordinator {
     const activeSnapshot = this.runtimeActivity.get(this.uiState.activeRole);
 
     return {
-      threadId: this.threadId,
-      threadTitle: this.threadTitle,
-      threadStartedAt: this.threadStartedAt,
-      threadUpdatedAt: this.threadUpdatedAt,
       cwd: this.options.cwd,
       conversationMode: this.getConversationMode(),
       phase: this.uiState.phase,
@@ -716,7 +703,6 @@ export class Coordinator {
   }
 
   private observeActivityEvent(event: NormalizedTelemetryEvent): void {
-    this.touchThread(event.timestamp);
     if (
       (event.eventType === "pi.tool_execution_start" ||
         event.eventType === "pi.tool_execution_update" ||
@@ -754,10 +740,6 @@ export class Coordinator {
   private clearAllActivity(): void {
     this.runtimeActivity.clear();
     this.coordinatorActivity = undefined;
-  }
-
-  private touchThread(timestamp = new Date().toISOString()): void {
-    this.threadUpdatedAt = timestamp;
   }
 }
 

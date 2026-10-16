@@ -9,8 +9,6 @@ import {
 } from "./app/coordinator-config.js";
 import { assertRuntimeSetupReady, runDoctor } from "./app/doctor.js";
 import { bootstrapRepl } from "./app/bootstrap.js";
-import { applyScopedSettingsToCliOptions } from "./app/settings-store.js";
-import { bootstrapPortal } from "./app/portal/bootstrap.js";
 import { runAuthWizard, runSetupWizard } from "./app/setup.js";
 
 async function main(): Promise<void> {
@@ -35,23 +33,11 @@ async function main(): Promise<void> {
     case "repl": {
       const loadedConfig = await loadCoordinatorConfig();
       const resolvedOptions = applyCoordinatorDefaultsToCliOptions(
-        await applyScopedSettingsToCliOptions(options),
+        options,
         loadedConfig.config
       );
       await assertRuntimeSetupReady(resolvedOptions);
       await bootstrapRepl(resolvedOptions);
-      return;
-    }
-    case "portal": {
-      const loadedConfig = await loadCoordinatorConfig();
-      const resolvedOptions = applyCoordinatorDefaultsToCliOptions(
-        await applyScopedSettingsToCliOptions(options),
-        loadedConfig.config
-      );
-      await assertRuntimeSetupReady(resolvedOptions);
-      await bootstrapPortal(resolvedOptions, {
-        launchOptions: options
-      });
       return;
     }
   }
