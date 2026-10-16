@@ -1,222 +1,26 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdtempSync } from "node:fs";
-
-import { afterEach, describe, expect, it } from "vitest";
-
+import { expect, it } from "vitest";
 import { inspectRuntimeSetup, renderSetupReport } from "../../src/app/doctor.js";
 
-function createTempRoot(): string {
-  return mkdtempSync(join(tmpdir(), "pi-dual-doctor-"));
-}
-
-describe("setup doctor", () => {
-  const previousHome = process.env.PI_DUAL_COORDINATOR_HOME;
-
-  afterEach(() => {
-    delete process.env.OPENAI_API_KEY;
-    if (previousHome === undefined) {
-      delete process.env.PI_DUAL_COORDINATOR_HOME;
-    } else {
-      process.env.PI_DUAL_COORDINATOR_HOME = previousHome;
-    }
-  });
-
-  it("reports a ready setup when valid API auth and models exist", async () => {
-    const root = createTempRoot();
-    process.env.PI_DUAL_COORDINATOR_HOME = root;
-    const projectDir = join(root, "project");
-    const agentDir = join(root, "agent");
-    mkdirSync(projectDir, { recursive: true });
-    mkdirSync(agentDir, { recursive: true });
-
-    writeFileSync(
-      join(agentDir, "auth.json"),
-      JSON.stringify({
-        openai: {
-          type: "api_key",
-          key: "sk-test-123"
-        }
-      })
-    );
-    writeFileSync(
-      join(agentDir, "models.json"),
-      JSON.stringify({
-        providers: {
-          "local-qwen": {
-            baseUrl: "http://127.0.0.1:1234/v1",
-            api: "openai-completions",
-            apiKey: "lm-studio",
-            compat: {
-              supportsDeveloperRole: false,
-              supportsReasoningEffort: false
-            },
-            models: [
-              {
-                id: "qwen3-coder-next",
-                name: "Qwen3 Coder Next (LM Studio)",
-                reasoning: false,
-                input: ["text"],
-                contextWindow: 131072,
-                maxTokens: 16384,
-                cost: {
-                  input: 0,
-                  output: 0,
-                  cacheRead: 0,
-                  cacheWrite: 0
-                }
-              }
-            ]
-          }
-        }
-      })
-    );
-
-    const report = await inspectRuntimeSetup({
-      cwd: projectDir,
-      agentDir,
-      modelA: "openai/gpt-5.4",
-      modelB: "local-qwen/qwen3-coder-next",
-      mcpEnabled: false
-    });
-
-    expect(report.ok).toBe(true);
-    expect(renderSetupReport(report)).toContain("Result: ready to run.");
-    expect(report.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "Agent A model", status: "pass" }),
-        expect.objectContaining({ name: "Agent A auth", status: "pass" }),
-        expect.objectContaining({ name: "Agent B model", status: "pass" })
-      ])
-    );
-  });
-
-  it("fails with setup guidance when a saved openai-codex default lacks OAuth auth", async () => {
-    const root = createTempRoot();
-    process.env.PI_DUAL_COORDINATOR_HOME = root;
-    const projectDir = join(root, "project");
-    const agentDir = join(root, "agent");
-    mkdirSync(projectDir, { recursive: true });
-    mkdirSync(agentDir, { recursive: true });
-    mkdirSync(join(root, "dual-agent-coordinator"), { recursive: true });
-
-    writeFileSync(
-      join(root, "dual-agent-coordinator", "config.json"),
-      JSON.stringify({
-        version: 1,
-        defaults: {
-          modelA: "openai-codex/gpt-5.4"
-        }
-      })
-    );
-
-    const report = await inspectRuntimeSetup({
-      cwd: projectDir,
-      agentDir,
-      mcpEnabled: false
-    });
-
+it("reports isolation and missing secure credentials without accepting an environment key", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-doctor-"));
+  try {
+    const report = await inspectRuntimeSetup({ cwd, agentDir: cwd, modelA: "openai/gpt-5.4", modelB: "openai/gpt-5.4", mcpEnabled: false });
     expect(report.ok).toBe(false);
-    expect(report.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "Agent A model", status: "pass" }),
-        expect.objectContaining({
-          name: "Agent A auth",
-          status: "fail",
-          detail: expect.stringContaining("browser window will open for ChatGPT login")
-        })
-      ])
-    );
-  });
-
-  it("fails with setup guidance when openai auth is missing", async () => {
-    const root = createTempRoot();
-    process.env.PI_DUAL_COORDINATOR_HOME = root;
-    const projectDir = join(root, "project");
-    const agentDir = join(root, "agent");
-    mkdirSync(projectDir, { recursive: true });
-    mkdirSync(agentDir, { recursive: true });
-
-    const report = await inspectRuntimeSetup({
-      cwd: projectDir,
-      agentDir,
-      modelA: "openai/gpt-5.4",
-      mcpEnabled: false
-    });
-
-    expect(report.ok).toBe(false);
-    expect(report.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "Agent A auth",
-          status: "fail",
-          detail: expect.stringContaining("Run `pi-dual setup`")
-        })
-      ])
-    );
-  });
-
-  it("passes when valid subscription auth exists", async () => {
-    const root = createTempRoot();
-    process.env.PI_DUAL_COORDINATOR_HOME = root;
-    const projectDir = join(root, "project");
-    const agentDir = join(root, "agent");
-    mkdirSync(projectDir, { recursive: true });
-    mkdirSync(agentDir, { recursive: true });
-
-    writeFileSync(
-      join(agentDir, "auth.json"),
-      JSON.stringify({
-        "openai-codex": {
-          type: "oauth",
-          access: "token",
-          refresh: "refresh",
-          expires: Date.now() + 60_000,
-          accountId: "acct_123"
-        }
-      })
-    );
-
-    const report = await inspectRuntimeSetup({
-      cwd: projectDir,
-      agentDir,
-      modelA: "openai-codex/gpt-5.4",
-      mcpEnabled: false
-    });
-
-    expect(report.ok).toBe(true);
-    expect(report.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "Agent A auth", status: "pass" })
-      ])
-    );
-  });
-
-  it("warns instead of crashing when the coordinator config is invalid", async () => {
-    const root = createTempRoot();
-    process.env.PI_DUAL_COORDINATOR_HOME = root;
-    const projectDir = join(root, "project");
-    const agentDir = join(root, "agent");
-    mkdirSync(projectDir, { recursive: true });
-    mkdirSync(agentDir, { recursive: true });
-    mkdirSync(join(root, "dual-agent-coordinator"), { recursive: true });
-
-    writeFileSync(join(root, "dual-agent-coordinator", "config.json"), "{not-json", "utf8");
-
-    const report = await inspectRuntimeSetup({
-      cwd: projectDir,
-      agentDir,
-      mcpEnabled: false
-    });
-
-    expect(report.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "Coordinator config",
-          status: "warn"
-        })
-      ])
-    );
-  });
+    expect(report.checks.find((check) => check.name === "Agent A OS isolation")?.status).toBe("pass");
+    expect(report.checks.find((check) => check.name === "OpenAI Keychain credential")?.status).toBe("fail");
+    expect(renderSetupReport(report)).toContain("missing, locked, or unavailable");
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+it("rejects subscription models and legacy auth without evaluating secret commands", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-doctor-legacy-"));
+  try {
+    await writeFile(join(cwd, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "!echo never-evaluate-this" } }));
+    const report = await inspectRuntimeSetup({ cwd, agentDir: cwd, modelA: "openai-codex/gpt-5.4", modelB: "openai/gpt-5.4", mcpEnabled: false });
+    expect(report.checks.find((check) => check.name === "Agent A model")?.status).toBe("fail");
+    expect(report.checks.find((check) => check.name === "Legacy OpenAI auth")?.status).toBe("fail");
+    expect(renderSetupReport(report)).not.toContain("never-evaluate-this");
+  } finally { await rm(cwd, { recursive: true, force: true }); }
 });

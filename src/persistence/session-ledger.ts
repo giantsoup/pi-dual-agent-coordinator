@@ -1,3 +1,4 @@
+import { redactText } from "../security/redact.js";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -8,7 +9,7 @@ export class SessionLedger {
 
   public async append(record: HandoffRecord): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
-    await appendFile(this.filePath, `${JSON.stringify(record)}\n`, "utf8");
+    await appendFile(this.filePath, `${redactText(JSON.stringify(record))}\n`, "utf8");
   }
 
   public async listByHandoffId(id: string): Promise<HandoffRecord[]> {

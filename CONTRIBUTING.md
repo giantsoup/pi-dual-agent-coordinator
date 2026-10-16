@@ -4,8 +4,8 @@
 
 1. Install Node.js `>=20.6.0`.
 2. Run `npm install`.
-3. Copy the example Pi config files from [`examples/pi-agent/`](./examples/pi-agent/) if you need a local working setup.
-4. Run `npm run doctor -- . --no-mcp` to confirm the local environment is wired correctly.
+3. On macOS, install Apple Command Line Tools. Run `npm run verify:isolation` with an unlocked Keychain and a logged-in desktop. Only dummy secrets are used.
+4. Prepare a trusted installation outside the target workspace with `npm run secure:install -- /new/trusted/path`. Follow [secure setup](docs/secure-setup.md). Do not run credential-backed sessions from code the agents can edit.
 
 ## Common commands
 
@@ -13,9 +13,10 @@
 npm run build
 npm run check
 npm test
+npm run verify:isolation
 ```
 
-Use `npm run repl -- . --model-a ... --model-b ...` for interactive testing.
+Use the separate trusted installation for interactive testing, with approved `openai` Responses models for both roles. Agent A defaults to GPT-6 Luna with high reasoning. API-key authentication is required; environment keys, plaintext Pi auth, and subscription auth are not accepted.
 
 ## Change expectations
 

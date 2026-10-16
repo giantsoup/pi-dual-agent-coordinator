@@ -1,3 +1,6 @@
+import { ToolIsolation } from "../security/isolation.js";
+import { redactText, redactValue } from "../security/redact.js";
+import { realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -51,6 +54,7 @@ const CLIENT_INFO = {
 
 export class McpClientPool {
   private readonly cacheStore: McpCacheStore;
+  private isolation: ToolIsolation | undefined;
   private readonly entries = new Map<string, PoolEntry>();
 
   public constructor(
@@ -146,7 +150,7 @@ export class McpClientPool {
         instructions: client.getInstructions()
       };
 
-      entry.metadata = snapshot;
+      entry.metadata = redactValue(snapshot);
       entry.state.lastMetadataSync = new Date().toISOString();
       entry.state.lastError = undefined;
 
@@ -154,7 +158,7 @@ export class McpClientPool {
         serverName: entry.config.name,
         fingerprint: entry.config.fingerprint,
         updatedAt: entry.state.lastMetadataSync,
-        ...snapshot
+        ...redactValue(snapshot)
       };
       await this.cacheStore.set(cacheEntry);
       this.scheduleIdleDisconnect(entry);
@@ -173,10 +177,10 @@ export class McpClientPool {
     const client = await this.ensureConnected(this.requireEntry(serverName));
     const result = await client.callTool({
       name: toolName,
-      arguments: args
+      arguments: redactValue(args)
     });
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
-    return result;
+    return redactValue(result);
   }
 
   public async listResources(serverName: string, cursor?: string | undefined) {
@@ -216,7 +220,7 @@ export class McpClientPool {
     const client = await this.ensureConnected(this.requireEntry(serverName));
     const result = await client.getPrompt({
       name,
-      arguments: args
+      arguments: redactValue(args)
     });
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
     return result;
@@ -224,6 +228,8 @@ export class McpClientPool {
 
   public async closeAll(): Promise<void> {
     await Promise.all([...this.entries.values()].map((entry) => this.closeEntry(entry)));
+    this.isolation?.dispose();
+    this.isolation = undefined;
   }
 
   public getStatusSnapshot(): RoleMcpStatusSnapshot {
@@ -313,72 +319,29 @@ export class McpClientPool {
       };
     }
 
-    if (!entry.config.url) {
-      throw new Error(`HTTP MCP server ${entry.config.name} is missing a URL.`);
-    }
+    throw new Error("Secure MCP currently supports sandboxed stdio servers only. HTTP/SSE peers cannot be verified as isolated; no unsandboxed fallback is available.");
 
-    if (entry.config.transport === "sse") {
-      const transport = new SSEClientTransport(
-        new URL(entry.config.url),
-        this.buildTransportRequestOptions(entry.config)
-      );
-      await client.connect(transport as any);
-      return {
-        transport,
-        transportType: "sse"
-      };
-    }
-
-    const streamableTransport = new StreamableHTTPClientTransport(
-      new URL(entry.config.url),
-      this.buildTransportRequestOptions(entry.config)
-    );
-
-    try {
-      await client.connect(streamableTransport as any);
-      return {
-        transport: streamableTransport,
-        transportType: "streamable-http"
-      };
-    } catch (error) {
-      await streamableTransport.close().catch(() => undefined);
-      const errorCode = error instanceof StreamableHTTPError ? (error.code ?? 0) : 0;
-      if (!(error instanceof StreamableHTTPError) || errorCode < 400 || errorCode >= 500) {
-        throw error;
-      }
-
-      const fallbackTransport = new SSEClientTransport(
-        new URL(entry.config.url),
-        this.buildTransportRequestOptions(entry.config)
-      );
-      await client.connect(fallbackTransport as any);
-      return {
-        transport: fallbackTransport,
-        transportType: "sse"
-      };
-    }
   }
 
   private buildStdioParams(config: ResolvedMcpServerConfig): StdioServerParameters {
+    this.isolation ??= new ToolIsolation(this.resolvedConfig.projectRoot, this.role);
+    this.isolation.verify();
+    const allowed = new Set(["PATH", "LANG", "LC_ALL", "TZ"]);
+    for (const name of Object.keys(config.env ?? {})) {
+      if (!allowed.has(name)) throw new Error("MCP environment contains a non-allowlisted variable. Secure mode accepts PATH, LANG, LC_ALL, and TZ only.");
+    }
+    if (config.cwd && realpathSync(config.cwd) !== this.isolation.cwd) {
+      throw new Error("Secure MCP launch must use the project workspace as cwd.");
+    }
+    const launch = this.isolation.command(config.command ?? "", config.args);
+    const env = { ...launch.env, ...config.env };
     return {
-      command: config.command ?? "",
-      args: config.args,
-      ...(config.env ? { env: config.env } : {}),
-      ...(config.cwd ? { cwd: config.cwd } : {}),
+      command: launch.command,
+      args: [...launch.args.slice(0, 2), "/usr/bin/env", "-i", ...Object.entries(env).map(([key, value]) => `${key}=${value}`), ...launch.args.slice(2)],
+      env: launch.env,
+      cwd: launch.cwd,
       stderr: "pipe"
     };
-  }
-
-  private buildTransportRequestOptions(
-    config: ResolvedMcpServerConfig
-  ): { requestInit?: RequestInit } {
-    return config.headers && Object.keys(config.headers).length > 0
-      ? {
-          requestInit: {
-            headers: config.headers
-          }
-        }
-      : {};
   }
 
   private attachStdioStderr(entry: PoolEntry, transport: StdioClientTransport): void {
@@ -387,7 +350,7 @@ export class McpClientPool {
       return;
     }
     stderr.on("data", (chunk) => {
-      entry.stderrChunks.push(String(chunk));
+      entry.stderrChunks.push(redactText(String(chunk)));
       if (entry.stderrChunks.length > 20) {
         entry.stderrChunks.shift();
       }
@@ -455,7 +418,7 @@ export class McpClientPool {
   private recordError(entry: PoolEntry, error: unknown): void {
     const suffix = entry.stderrChunks.join("").trim();
     const message = error instanceof Error ? error.message : String(error);
-    entry.state.lastError = suffix ? `${message}\n${suffix}` : message;
+    entry.state.lastError = redactText(suffix ? `${message}\n${suffix}` : message);
   }
 
   private requireEntry(serverName: string): PoolEntry {

@@ -1,3 +1,4 @@
+import { redactText, redactValue } from "../security/redact.js";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
 import { sanitizeToolArgs, summarizeToolActivity } from "../app/activity-summary.js";
@@ -98,7 +99,7 @@ function normalizeEventDetails(event: AgentSessionEvent): Record<string, unknown
       return {
         toolName: event.toolName,
         toolCallId: event.toolCallId,
-        toolArgs: event.args,
+        toolArgs: safeToolArgs(event.toolName, event.args),
         activityPreview: summary.target
           ? `${summary.label} ${summary.target}`
           : summary.label
@@ -108,7 +109,7 @@ function normalizeEventDetails(event: AgentSessionEvent): Record<string, unknown
       return {
         toolName: event.toolName,
         toolCallId: event.toolCallId,
-        toolArgs: event.args,
+        toolArgs: safeToolArgs(event.toolName, event.args),
         partialResultPreview: extractResultPreview(event.partialResult),
         streamState: "streaming"
       };
@@ -168,4 +169,10 @@ function sanitizePreview(value: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function safeToolArgs(name: string, args: unknown): Record<string, unknown> {
+  const safe = sanitizeToolArgs(name, args);
+  if (isRecord(args) && typeof args.path === "string") safe.path = redactText(args.path);
+  return redactValue(safe);
 }

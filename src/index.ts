@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { redactText } from "./security/redact.js";
 import { readFile } from "node:fs/promises";
 
 import { formatCliHelp, parseCliArgs } from "./app/cli.js";
@@ -45,7 +46,7 @@ async function main(): Promise<void> {
 
 main().catch((error) => {
   const message = error instanceof Error ? error.stack ?? error.message : String(error);
-  process.stderr.write(`${message}\n`);
+  process.stderr.write(`${redactText(message)}\n`);
   process.exitCode = 1;
 });
 

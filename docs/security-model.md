@@ -1,33 +1,146 @@
-# Security Model
+# Security model
 
-## Trust Boundary
+## Credential boundary
 
-The coordinator owns the trust boundary. It decides which runtime receives which tools, which prompts are coordinator-authored, and which state transitions become durable ledger records.
+The coordinator and its OpenAI credential broker are trusted. Agent-generated
+instructions, workspace contents, tool arguments, stdio MCP servers, and tool
+subprocesses are untrusted. Both agent roles receive tools whose executable code
+runs in a macOS Seatbelt sandbox, launched with `/usr/bin/sandbox-exec`. Kernel
+policy, rather than command matching, limits their access.
 
-## Compatibility Mode
+The private native helper uses `SecItemAdd`, `SecItemUpdate`, and
+`SecItemCopyMatching`. Entry uses `NSSecureTextField` and writes directly to
+Keychain. Retrieval goes through a dedicated anonymous pipe on descriptor 3.
+The helper never writes a credential to stdout or stderr and refuses a terminal
+or regular file as its credential-return descriptor. Status and errors contain
+no credential values. There is no public credential-export command.
 
-V1 loads Pi project-local resources by default so local `AGENTS.md`, prompts, skills, and extensions remain compatible with standard Pi behavior. This improves adoption but expands the trust surface to repository-local Pi resources.
+The trusted broker holds the project key in memory. Pi receives a fresh random
+broker capability in an in-memory `AuthStorage`, never the project key. Its
+built-in OpenAI Responses provider sends requests to the broker. The broker
+replaces authentication, constructs its own headers, and forwards only
+`POST https://api.openai.com/v1/responses` for the selected approved model.
+Redirects are forbidden. Endpoint, proxy, TLS, and Node injection overrides fail
+closed. Neither `auth.json` nor `models.json` is evaluated for authentication.
 
-Implications:
+The broker discards upstream error bodies and response headers. Whole SSE lines
+are redacted before returning to Pi, including credential strings split across
+transport chunks. Registered secrets and their common encodings are redacted
+before tool exposure, telemetry output, subscriber notification, MCP metadata
+persistence, and ledger writes. Redaction is an additional safeguard, not the
+credential boundary. A key never belongs in prompts or repository content.
 
-- A malicious or incorrect project-local Pi resource can influence either role.
-- The coordinator does not attempt to sandbox project-local prompt content in V1.
-- The app-specific ledger remains coordinator-owned and separate from Pi’s auth/settings root.
+## Tool isolation
 
-## Mutation Policy
+The sandbox denies operations by default. It grants reads for the specific
+workspace, trusted installation, selected system runtime directories, and a
+fresh scratch directory. Agent B may write inside its workspace. Agent A may
+write only its disposable scratch directory. Normal Agent A reads, searches,
+and listings remain available. Agent B retains Pi's read, write, edit, and bash
+tools, including workspace test commands.
 
-- Agent A receives read-only tools only.
-- Agent B is the only role allowed to receive mutation-capable tools.
-- Mutation-capable tool invocations are wrapped so path-bearing arguments are normalized to canonical absolute paths before coordinator-side recording.
+The policy denies access to the real home and Keychain directories, outside
+credential files, other processes' information, Mach service lookup and task
+privileges, IPC, signals to other processes, terminal devices, and network
+access. Subprocesses inherit the kernel restrictions, including nested shells,
+native credential-store calls, and attempts to launch a weaker sandbox.
+Symlinks, traversal, absolute paths, and hardlinks do not grant extra access.
+Startup probes require both a running sandboxed Node process and an actual
+permission denial for an existing protected file. Failure never falls back to
+local execution.
 
-## Cross-Runtime Safety
+Tool processes receive a fixed environment with a disposable HOME and TMPDIR.
+They do not inherit the coordinator environment. MCP stdio launch additionally
+uses `env -i` because the installed MCP transport merges a default inherited
+environment. Configured overrides are limited to PATH, LANG, LC_ALL, and TZ.
+No OpenAI key is supplied in tool environments, arguments, input, or results.
 
-- There is no direct A/B messaging channel.
-- Only the coordinator can deliver work between roles.
-- Only validated handoff envelopes and completion records affect coordinator state.
+Workspace tools cannot access network services, including local automation
+servers that could act as an unsandboxed deputy. Network-dependent test commands
+and stdio MCP servers that require networking will fail under this policy.
+HTTP and SSE MCP peers are rejected because this app cannot verify their local
+execution boundary. Sandboxed stdio MCP discovery, direct tools, proxy tools,
+resources, prompts, caching, and role policy remain supported. A server's
+`readOnlyHint` cannot bypass Agent A's filesystem restrictions. Read-only hints
+are still assertions by the server about external side effects, not proofs.
 
-## Failure Policy
+## Trusted code and runtime replacement
 
-- Invalid handoffs are rejected and never delivered.
-- Duplicate handoff ids are ignored after first persistence.
-- Runtime replacement invalidates prior subscriptions immediately; rebinding is mandatory before further coordination.
+A writable workspace cannot contain the trusted installation, its dependencies,
+or its native helper. It also cannot include `~/.pi` or `~/Library`. The
+`secure:install` command creates a separate runtime snapshot. Each tool launch
+uses that snapshot, and agents cannot modify it through their sandbox. The Node
+runtime and system toolchain are part of the trusted installation assumptions.
+Do not manually run agent-modified app code with credentials afterward.
+
+Global and project Pi extensions, packages, skills, prompt templates, themes,
+workspace/global custom model definitions, executable auth references, and shell startup files
+are not loaded in the trusted runtime. Resource discovery occurs in a fresh
+empty trusted directory. Workspace `AGENTS.md` is read as text through the
+isolated read tool, so a symlink to a protected credential cannot turn the
+resource loader into a credential reader. Coordinator-authored role prompts and
+the built-in MCP extension are the only executable extensions.
+The fixed trusted model catalog adds the official `gpt-6-luna` descriptor to Pi's
+built-in OpenAI models. This does not accept endpoint or model data from files.
+High reasoning is checked in the actual installed provider's serialized request;
+the no-tools live smoke uses the saved Agent A reasoning level and a 1,024-token
+cap that includes reasoning.
+
+Pi 0.67.68's high-level session factory uses `tools` for name selection, then
+rebuilds built-ins. Supplying wrapped tools there does not isolate execution.
+This app uses Pi's public `AgentSession` constructor with `baseToolsOverride`.
+The entire tool registry contains only sandboxed role tools and the trusted MCP
+adapter. The same construction runs on each coordinator-owned replacement.
+Session switching is limited to that role's private session directory and cannot
+change its workspace. Coordinator state must remain outside the workspace.
+
+Agent A plans and reviews. Agent B executes. The coordinator alone can deliver
+validated handoffs, replace runtimes, and persist workflow decisions. Machine
+blocks affect workflow state only at stable `turn_end` boundaries. Rendering
+never triggers transitions. Persistence and session subscriptions remain
+coordinator-owned.
+
+## Verification and failure policy
+
+`npm run verify:isolation` builds the actual worker and native helper, then runs
+`dist/src/security/verify-isolation.js` and the focused security tests. The
+verifier uses fresh dummy secrets and a temporary Keychain account. It checks
+both roles' actual tools, permitted operations, protected paths, environment
+inheritance, subprocesses, process inspection, Keychain commands, nested
+sandboxes, MCP launches, direct and proxy tools exposed by Pi, project extension
+suppression, session replacement, endpoint rejection, startup failure, invalid
+credentials, model-visible results, logs, sessions, caches, and ledger files.
+It reports assertion counts, not secret values, and deletes its fixtures.
+The locked-store error case uses an injected failing backend; the verifier never
+locks the operator's login Keychain. Native missing-store and actual unlocked
+Keychain operations are tested separately.
+
+Setup requires successful dummy verification before real entry. Doctor checks
+both role sandboxes, credential retrieval status, legacy auth, model selection,
+and MCP compatibility. Doctor does not make an inference request or certify the
+full suite. `smoke:api` performs the separately bounded, no-tools live Pi request.
+No live request or unavailable isolation means Step 0 remains incomplete.
+
+## Trust limits
+
+This boundary protects credentials from agent-controlled tools and repository
+instructions. It does not protect against a compromised coordinator, broker,
+native helper, installed Pi/OpenAI dependencies, Node runtime, OS sandbox or
+kernel, privileged administrator, or other unsandboxed software running under
+the operator's account. It does not promise memory zeroization in JavaScript,
+protection from swap or host crash diagnostics, or isolation from host debugging
+and screen-capture software. Operator entry must occur outside recording and
+agent capture. Sandbox workers cannot read broker memory, dump its environment,
+or signal/debug it under the tested policy.
+
+Workspace files are intentionally available to tools. Do not place credentials
+there. The sandbox is not a general confidential-workspace guarantee, a resource
+usage quota, or a guarantee that malicious tools cannot damage Agent B's allowed
+workspace. External MCP side effects remain subject to the server's own policy.
+Long-lived background descendants may retain their sandbox until they exit.
+
+Seatbelt profiles and `sandbox-exec` are macOS-specific system interfaces that
+can change. Verification must run on each deployment host and after OS, Pi,
+Node, helper, or policy updates. Other operating systems fail closed. Keychain
+availability depends on the current login session and macOS access decisions.
+There is no plaintext, environment-key, subscription, or unrestricted fallback.

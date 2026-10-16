@@ -1,0 +1,138 @@
+# Set up isolated OpenAI API authentication
+
+Use macOS, Node.js >=20.6, npm, and Apple Command Line Tools. Keep the trusted
+installation outside every workspace that agents can edit. Secure mode supports
+approved `openai` Responses models for both roles, with API-key authentication.
+
+## Prepare without a real key
+
+1. Run `npm install` in the source checkout.
+2. Run `npm run check`, `npm test`, and `npm run verify:isolation`.
+3. Confirm that verification reports `outcome: passed` and assertion counts. It
+   creates unique dummy credentials, checks the native secure entry dialog, and
+   deletes its temporary Keychain item. A logged-in desktop and unlocked Keychain
+   are required. Never waive a failed or unavailable check.
+4. Prepare a fresh trusted installation outside the target workspace:
+
+   ```sh
+   npm run secure:install -- "$HOME/.local/share/pi-dual/runtime-1"
+   ```
+
+   Existing installation directories are never overwritten. Use a new directory
+   when updating. Do not let an agent run against this installation or its parent
+   as its workspace. The copy includes the compiled app, native helper, and dependencies.
+5. Run doctor from that installation against the target workspace:
+
+   ```sh
+   node "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" doctor /absolute/project --no-mcp
+   ```
+
+   Missing credentials are expected before entry. Other failed checks need repair.
+   Credential availability does not prove live API access.
+
+## Create a dedicated project key
+
+1. Create or select a dedicated project in [OpenAI Platform settings](https://platform.openai.com/settings/).
+2. Create a project API key, with restricted permissions. Allow the permission
+   needed to create responses at `POST /v1/responses`, and deny unrelated endpoints.
+   The app uses Pi's built-in model catalog plus a fixed trusted GPT-6 Luna entry and does not need to list models,
+   upload files, manage assistants, or administer the organization. Ensure that
+   the owning identity's project role permits model requests and Responses access.
+3. Set an expiration date. Record the key's dashboard identifier and expiry, never
+   its literal value, in your operator records.
+4. Review project model access, rate limits, and billing. Configure spend alerts
+   for notifications. To stop traffic at a configured cap, enable an available
+   **hard spend limit** explicitly. Alerts alone do not stop requests. Enforcement
+   can lag tracked spend, so even a hard limit is not an exact instantaneous cap.
+
+These instructions follow OpenAI's [production guidance](https://developers.openai.com/api/docs/guides/production-best-practices),
+[permission model](https://developers.openai.com/api/docs/guides/rbac), and
+[spend controls](https://developers.openai.com/api/docs/guides/spend-limits).
+
+## Enter the key privately
+
+Close terminal recording, screen sharing, and screenshots before entry. Use your
+own local terminal, outside an agent-controlled capture. Do not enter the key in
+chat, a shell argument, shell history, an environment variable, or a file.
+
+Run this non-secret command from your own terminal:
+
+```sh
+node "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" setup /absolute/project
+```
+
+Setup reruns dummy isolation verification before opening a native macOS dialog.
+Paste the real key only into that dialog's `NSSecureTextField`, then select
+**Store in Keychain**. The native helper stores the key directly. The terminal
+receives only a success or failure message. Cancel leaves the previous item intact.
+Piped entry and noninteractive entry fail closed. Fixture entry modes accept only
+strings beginning with `dummy-`; they cannot store a real OpenAI key.
+
+The Keychain service is `com.pi-dual.openai.v1`. Its account is the SHA-256 hash of
+the workspace's canonical path. Moving the workspace requires setup for the new
+path. `auth.json` is never written. Non-secret coordinator defaults are saved in
+`~/.pi/dual-agent-coordinator/config.json`. Existing unrelated credentials stay intact.
+
+## Verify live access
+
+Run doctor again. Then run the bounded smoke check from the trusted installation:
+
+```sh
+node "$HOME/.local/share/pi-dual/runtime-1/dist/src/security/smoke.js" /absolute/project
+```
+
+The smoke check uses the saved Agent A model and reasoning level, Pi 0.67.68's OpenAI Responses
+provider, and the same private credential broker as normal runtimes. It disables
+all tools, MCP, project resources, compaction, and coordinator workflow execution.
+It permits one upstream request, at most 1,024 output tokens including reasoning, a 40-second broker
+request deadline, and a 45-second session abort deadline. SDK retries cannot
+create another authenticated upstream request. It reports only provider, model,
+outcome, expected-response match, token counts, and elapsed time.
+
+Step 0 is complete only when isolation checks pass and the live result is `passed`
+with `expectedResponseReceived: true`. A missing key, inaccessible Keychain, failed
+sandbox, or unavailable live request leaves Step 0 incomplete. Do not start later
+terminal-plan steps on the strength of a mocked request.
+
+## Migrate legacy plaintext credentials
+
+Secure mode ignores Pi auth entries and blocks setup when `auth.json` contains an
+`openai` entry. No auth command or `!` shell reference is evaluated.
+
+1. Revoke any old literal OpenAI key that was stored in `auth.json`, a workspace,
+   shell files, `.env`, logs, or transcripts. Remove copies privately.
+2. Remove only the `openai` entry from `auth.json` using your own local editor.
+   Preserve other provider entries. Do not print the file into an agent session.
+3. Remove OpenAI API keys and endpoint overrides from the environment that starts
+   this app. Do not unset or rewrite unrelated credentials.
+4. Repeat dummy verification and private setup with a new project key.
+
+Old `openai-codex` subscription entries remain untouched but are not used. Custom
+`models.json` endpoints and executable auth references are not supported by this
+secure path. The old model examples are reference material for standalone Pi,
+not instructions for this app's secure setup.
+
+## Rotate, revoke, and monitor
+
+Create a replacement before expiry and run `auth /absolute/project` from the
+trusted installation. Verify the replacement with the smoke check, then revoke
+the old key in the OpenAI dashboard. Review per-key project usage in the
+[usage dashboard](https://platform.openai.com/usage). Revoke immediately if exposure
+is suspected. Delete a retired project's item using the macOS Keychain Access UI,
+identified by service and the non-secret project account hash. The app provides
+no secret-export command.
+
+See [the security model](security-model.md) for supported tools and trust limits.
+
+## Agent A model for Step 0
+
+Agent A, the planner and reviewer, uses `openai/gpt-6-luna` with `thinkingA: "high"`.
+The [official Luna model page](https://developers.openai.com/api/docs/models/gpt-6-luna)
+identifies `gpt-6-luna` as the current snapshot and supports high reasoning through
+Responses. Pi 0.67.68's provider serializes that reasoning level, but its bundled
+catalog lacks the ID. `src/security/models.ts` supplies the fixed official model
+metadata without loading arbitrary `models.json` entries or endpoint overrides.
+The descriptor's cost fields are Standard short-context estimates from the
+[official pricing page](https://developers.openai.com/api/docs/pricing), not an
+exact long-context bill. Smoke output reports tokens rather than estimated cost.
+Luna requests disable the old SDK's optional legacy cache-retention settings.

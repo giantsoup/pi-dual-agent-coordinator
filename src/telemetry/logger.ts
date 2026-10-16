@@ -1,3 +1,4 @@
+import { redactText, redactValue } from "../security/redact.js";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -23,6 +24,7 @@ export class TelemetryLogger {
   }
 
   public log(event: NormalizedTelemetryEvent): void {
+    event = redactValue(event);
     const line = JSON.stringify(event);
     appendFileSync(this.options.filePath, `${line}\n`, "utf8");
     if (this.options.jsonLogs) {
@@ -38,7 +40,7 @@ export class TelemetryLogger {
         listener(event);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.stderr.write(`Telemetry listener error: ${message}\n`);
+        this.stderr.write(`Telemetry listener error: ${redactText(message)}\n`);
       }
     }
   }

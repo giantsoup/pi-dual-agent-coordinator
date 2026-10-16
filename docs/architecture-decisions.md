@@ -18,7 +18,8 @@ The coordinator is the only component allowed to observe both Pi runtimes, persi
 
 ## Persistence
 
-- Pi auth, models, and project-local resources continue to resolve through Pi’s normal `agentDir`.
+- Secure mode keeps credentials in Keychain behind the trusted broker. Pi uses in-memory broker authentication and approved OpenAI models, including the fixed trusted GPT-6 Luna descriptor. Executable Pi resources and auth references are disabled.
+- Tool and stdio MCP execution use macOS Seatbelt. The trusted installation and coordinator state must be outside the writable workspace. See `security-model.md`.
 - Coordinator-owned state lives under the dual-agent session root and is append-only where practical.
 - Handoff ledger state must be reconstructable after restart without coordinator memory.
 

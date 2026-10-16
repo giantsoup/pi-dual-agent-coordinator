@@ -1,189 +1,55 @@
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-
-import { openBrowser, runAuthWizard, runSetupWizard } from "../../src/app/setup.js";
+import { runSetupWizard, runAuthWizard } from "../../src/app/setup.js";
 import type { CoordinatorConfigV1 } from "../../src/app/coordinator-config.js";
 
-class FakeAuthStorage {
-  public readonly entries: Record<string, unknown>;
-  private readonly errors: Error[] = [];
-
-  public constructor(entries: Record<string, unknown> = {}) {
-    this.entries = { ...entries };
-  }
-
-  public set(provider: string, credential: unknown): void {
-    this.entries[provider] = credential;
-  }
-
-  public async login(
-    provider: string,
-    callbacks: {
-      onAuth(info: { url: string }): void;
-      onProgress?(message: string): void;
-    }
-  ): Promise<void> {
-    callbacks.onAuth({ url: "https://example.com/auth" });
-    callbacks.onProgress?.("Waiting for browser login");
-    this.entries[provider] = {
-      type: "oauth",
-      access: "token",
-      refresh: "refresh",
-      expires: Date.now() + 60_000,
-      accountId: "acct_123"
-    };
-  }
-
-  public drainErrors(): Error[] {
-    return this.errors.splice(0);
-  }
-}
-
-function createPromptRuntime(responses: string[]) {
-  let index = 0;
-  return {
-    promptChoice: async () => responses[index++] ?? "",
-    promptText: async () => responses[index++] ?? "",
-    promptSecret: async () => responses[index++] ?? "",
-    promptCancellableText: () => ({
-      promise: Promise.resolve(""),
-      cancel() {}
-    }),
-    close() {}
-  };
-}
-
-describe("setup wizard", () => {
-  it("writes the API-key preset and preserves unrelated auth entries", async () => {
-    const authStorage = new FakeAuthStorage({
-      anthropic: {
-        type: "api_key",
-        key: "ANTHROPIC_API_KEY"
-      }
-    });
-    let writtenConfig: CoordinatorConfigV1 | undefined;
-
-    await expect(
-      runSetupWizard(
-        {
-          command: "setup",
-          cwd: "/tmp/project"
-        },
-        {
-          createAuthStorage: () => authStorage as never,
-          createPrompts: () => createPromptRuntime([
-            "openai-api-key",
-            "paste-now",
-            "sk-test-123"
-          ]),
-          loadConfig: async () => ({
-            path: "/tmp/config.json",
-            exists: false,
-            warnings: []
-          }),
-          writeConfig: async (config) => {
-            writtenConfig = config;
-          },
-          stdout: { write: (_chunk: string) => true }
-        }
-      )
-    ).resolves.toBe(0);
-
-    expect(authStorage.entries.anthropic).toEqual({
-      type: "api_key",
-      key: "ANTHROPIC_API_KEY"
-    });
-    expect(authStorage.entries.openai).toEqual({
-      type: "api_key",
-      key: "sk-test-123"
-    });
-    expect(writtenConfig?.defaults.modelA).toBe("openai/gpt-5.4");
-    expect(writtenConfig?.onboarding?.lastSelectedAgentAAuthFlow).toBe("openai-api-key");
+describe("secure setup", () => {
+  it("verifies isolation before private entry and leaves unrelated credentials intact", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-setup-"));
+    const cwd = join(root, "workspace"), agentDir = join(root, "agent");
+    await mkdir(cwd); await mkdir(agentDir);
+    const auth = JSON.stringify({ unrelated: { type: "api_key", key: "PRESERVE_THIS_REFERENCE" } });
+    await writeFile(join(agentDir, "auth.json"), auth);
+    const calls: string[] = [];
+    let config: CoordinatorConfigV1 | undefined;
+    try {
+      expect(await runSetupWizard({ command: "setup", cwd, agentDir }, {
+        stdout: { write: () => true },
+        verify: async () => { calls.push("verify"); return { assertions: 200, categories: {} }; },
+        enter: async () => { calls.push("private-entry"); },
+        loadConfig: async () => ({ path: "config", exists: false, warnings: [] }),
+        writeConfig: async (value) => { config = value; }
+      })).toBe(0);
+      expect(calls).toEqual(["verify", "private-entry"]);
+      expect(config?.defaults).toEqual({ modelA: "openai/gpt-6-luna", modelB: "openai/gpt-5.4", thinkingA: "high" });
+      expect(await readFile(join(agentDir, "auth.json"), "utf8")).toBe(auth);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
-
-  it("writes the subscription preset after a mocked OAuth login", async () => {
-    const authStorage = new FakeAuthStorage();
-    let writtenConfig: CoordinatorConfigV1 | undefined;
-
-    await expect(
-      runSetupWizard(
-        {
-          command: "setup",
-          cwd: "/tmp/project"
-        },
-        {
-          createAuthStorage: () => authStorage as never,
-          createPrompts: () => createPromptRuntime(["openai-chatgpt-subscription"]),
-          loadConfig: async () => ({
-            path: "/tmp/config.json",
-            exists: false,
-            warnings: []
-          }),
-          writeConfig: async (config) => {
-            writtenConfig = config;
-          },
-          browserOpener: async () => true,
-          stdout: { write: (_chunk: string) => true },
-          stderr: { write: (_chunk: string) => true }
-        }
-      )
-    ).resolves.toBe(0);
-
-    expect(authStorage.entries["openai-codex"]).toBeTruthy();
-    expect(writtenConfig?.defaults.modelA).toBe("openai-codex/gpt-5.4");
+  it("does not open private entry when isolation is unavailable", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "pi-setup-fail-"));
+    let entered = false, message = "";
+    try {
+      expect(await runAuthWizard({ command: "auth", cwd, agentDir: join(cwd, "missing") }, {
+        stdout: { write: () => true }, stderr: { write: (text: string) => { message += text; return true; } },
+        verify: async () => { throw new Error("Isolation unavailable"); },
+        enter: async () => { entered = true; }
+      })).toBe(1);
+      expect(entered).toBe(false); expect(message).toContain("Isolation unavailable");
+    } finally { await rm(cwd, { recursive: true, force: true }); }
   });
-
-  it("lets auth switch the saved default after a previous setup", async () => {
-    const authStorage = new FakeAuthStorage();
-    let writtenConfig: CoordinatorConfigV1 | undefined;
-
-    await expect(
-      runAuthWizard(
-        {
-          command: "auth",
-          cwd: "/tmp/project"
-        },
-        {
-          createAuthStorage: () => authStorage as never,
-          createPrompts: () => createPromptRuntime([
-            "openai-chatgpt-subscription"
-          ]),
-          loadConfig: async () => ({
-            path: "/tmp/config.json",
-            exists: true,
-            warnings: [],
-            config: {
-              version: 1,
-              defaults: {
-                modelA: "openai/gpt-5.4"
-              },
-              onboarding: {
-                lastSelectedAgentAAuthFlow: "openai-api-key"
-              }
-            }
-          }),
-          writeConfig: async (config) => {
-            writtenConfig = config;
-          },
-          browserOpener: async () => true,
-          stdout: { write: (_chunk: string) => true },
-          stderr: { write: (_chunk: string) => true }
-        }
-      )
-    ).resolves.toBe(0);
-
-    expect(writtenConfig?.defaults.modelA).toBe("openai-codex/gpt-5.4");
-    expect(writtenConfig?.onboarding?.lastSelectedAgentAAuthFlow).toBe(
-      "openai-chatgpt-subscription"
-    );
-  });
-
-  it("falls back cleanly when opening the browser fails", async () => {
-    const opened = await openBrowser("https://example.com", {
-      spawnImpl: (() => {
-        throw new Error("spawn failed");
-      }) as never
-    });
-
-    expect(opened).toBe(false);
+  it("rejects legacy plaintext auth without modifying it or repeating its value", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "pi-setup-legacy-"));
+    const legacy = JSON.stringify({ openai: { type: "api_key", key: "legacy-dummy-secret" }, other: {} });
+    await writeFile(join(cwd, "auth.json"), legacy);
+    let output = "";
+    try {
+      expect(await runAuthWizard({ command: "auth", cwd, agentDir: cwd }, {
+        stderr: { write: (text: string) => { output += text; return true; } }
+      })).toBe(1);
+      expect(output).toContain("Legacy openai"); expect(output).not.toContain("legacy-dummy-secret");
+      expect(await readFile(join(cwd, "auth.json"), "utf8")).toBe(legacy);
+    } finally { await rm(cwd, { recursive: true, force: true }); }
   });
 });

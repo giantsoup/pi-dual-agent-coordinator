@@ -94,4 +94,4 @@ export function buildRolePromptAppendix(role: Role): string[] {
 }
 
 export const TRUST_POLICY_SUMMARY =
-  "Project-local Pi resources are loaded by default for compatibility; the coordinator remains the only cross-runtime control plane.";
+  "Workspace AGENTS.md is loaded as text through isolated tools. Executable Pi resources are disabled; the coordinator owns cross-runtime control.";

@@ -1,3 +1,4 @@
+import { redactText } from "../security/redact.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -31,7 +32,7 @@ export class McpCacheStore {
       const cache = await this.readCache();
       cache.entries[this.getKey(entry.serverName, entry.fingerprint)] = entry;
       await mkdir(dirname(this.filePath), { recursive: true });
-      await writeFile(this.filePath, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
+      await writeFile(this.filePath, `${redactText(JSON.stringify(cache, null, 2))}\n`, "utf8");
     });
   }
 

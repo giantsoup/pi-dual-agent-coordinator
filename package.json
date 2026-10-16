@@ -36,7 +36,7 @@
   },
   "scripts": {
     "auth": "node ./dist/src/index.js auth",
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node scripts/build-native.mjs",
     "check": "tsc --noEmit -p tsconfig.check.json",
     "doctor": "node ./dist/src/index.js doctor",
     "repl": "node ./dist/src/index.js repl",
@@ -44,7 +44,10 @@
     "prepare": "npm run build",
     "start": "node ./dist/src/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:isolation": "npm run build && node dist/src/security/verify-isolation.js && vitest run test/security",
+    "secure:install": "node scripts/prepare-secure-runtime.mjs",
+    "smoke:api": "node dist/src/security/smoke.js"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

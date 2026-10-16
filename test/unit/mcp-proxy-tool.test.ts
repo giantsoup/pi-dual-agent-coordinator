@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -20,7 +20,7 @@ const FIXTURE_SERVER_PATH = join(
 function createConfig(cacheFile: string): ResolvedMcpConfig {
   return {
     enabled: true,
-    projectRoot: process.cwd(),
+    projectRoot: dirname(cacheFile),
     cacheFile,
     configSources: [],
     servers: [

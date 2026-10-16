@@ -133,7 +133,7 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
       "  pi-dual repl [cwd] [--model-a MODEL] [--model-b MODEL] [--thinking-a LEVEL] [--thinking-b LEVEL] [--max-review-rounds N] [--agent-dir PATH] [--session-root PATH] [--mcp-config PATH]... [--no-mcp] [--no-session] [--plain] [--json-logs] [--verbose]",
       "",
       "Examples:",
-      "  pi-dual repl . --model-a openai/gpt-5.4 --model-b local-qwen/qwen3-coder-next",
+      "  pi-dual repl . --model-a openai/gpt-5.4 --model-b openai/gpt-5.4",
       "  npm run repl -- . --no-session",
       "",
       "Flags:",
@@ -160,7 +160,7 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
       "  pi-dual doctor [cwd] [--model-a MODEL] [--model-b MODEL] [--agent-dir PATH] [--mcp-config PATH]... [--no-mcp]",
       "",
       "Examples:",
-      "  pi-dual doctor . --model-a openai/gpt-5.4 --model-b local-qwen/qwen3-coder-next",
+      "  pi-dual doctor . --model-a openai/gpt-5.4 --model-b openai/gpt-5.4",
       "  npm run doctor -- . --model-b local-qwen/qwen3-coder-next",
       "",
       "The doctor command validates Node.js, your Pi config files, model overrides, and any MCP config paths before you launch the REPL.",
@@ -177,7 +177,7 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
       "  pi-dual setup",
       "  pi-dual setup . --agent-dir ~/.pi/agent",
       "",
-      "The setup command walks you through ChatGPT subscription login or OpenAI API key setup for Agent A, then saves a coordinator default model for future runs.",
+      "Setup verifies dummy-secret isolation, then opens a private macOS Keychain entry dialog for an OpenAI project API key. Run from a separate trusted installation.",
       ""
     ].join("\n");
   }
@@ -191,7 +191,7 @@ export function formatCliHelp(topic: HelpTopic = "general"): string {
       "  pi-dual auth",
       "  pi-dual auth . --agent-dir ~/.pi/agent",
       "",
-      "The auth command re-runs the Agent A authentication flow and updates the saved coordinator default without changing unrelated credentials.",
+      "Auth reruns dummy isolation verification and private macOS Keychain entry for the project OpenAI API key. Unrelated credentials remain intact.",
       ""
     ].join("\n");
   }
