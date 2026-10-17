@@ -9,6 +9,13 @@ describe("trust policy", () => {
     expect(prompt).toContain("When the operator wants a concrete implementation plan");
     expect(prompt).toContain("break work into small explicit phases with clear end states");
     expect(prompt).toContain("Make each phase independently verifiable");
+    expect(prompt).toContain("exact files and symbols");
+    expect(prompt).toContain("representative inputs and outputs");
+    expect(prompt).toContain("inside executionPlan, acceptanceCriteria, relevantPaths, or constraints");
+    expect(prompt).toContain("expected result");
+    expect(prompt).toContain("clear stop condition");
+    expect(prompt).toContain("does not guarantee success");
+    expect(prompt).toContain("pi-check-in response format");
     expect(prompt).toContain("```pi-plan");
     expect(prompt).toContain("```pi-execute");
     expect(prompt).toContain("`pi-plan` and `pi-execute` are mutually exclusive");
@@ -21,6 +28,13 @@ describe("trust policy", () => {
     expect(prompt).toContain('schemaVersion` must be the integer `1`');
     expect(prompt).toContain("```pi-handoff");
     expect(prompt).toContain('"schemaVersion":1');
+    const examples = [...prompt.matchAll(/```pi-(?:plan|execute)\n([^\n]+)\n```/g)];
+    expect(examples).toHaveLength(2);
+    for (const example of examples) {
+      const plan = JSON.parse(example[1] ?? "");
+      expect(plan.acceptanceCriteria.join(" ")).toContain('parseRetryLimit("3") returns 3');
+      expect(plan.executionPlan.join(" ")).toContain("npm run check");
+    }
   });
 
   it("tells Agent B to use an integer schema version with an example completion block", () => {

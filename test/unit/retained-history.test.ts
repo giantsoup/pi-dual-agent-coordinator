@@ -11,6 +11,23 @@ import type { NormalizedTelemetryEvent } from "../../src/types/telemetry.js";
 const time = "2026-10-16T12:00:00.000Z";
 const event = (eventType: string, details: Record<string, unknown> = {}, extra: Partial<NormalizedTelemetryEvent> = {}): NormalizedTelemetryEvent => ({ eventType, details, operatorTurnId: "turn", runId: "run", role: "B", sessionId: "session", requestId: "request", timestamp: time, ...extra });
 describe("retained history identities and recovery", () => {
+  it("retains supervisor turn counts across replay and resets them for the next handoff", () => {
+    const index = new HistoryIndex();
+    const progress = { workflowId: "workflow", handoffId: "handoff-1", iteration: 1,
+      completedTurns: 10, checkIn: { kind: "checking", afterTurn: 10 } };
+    const events = [event("ui.turn_started"), event("runtime.run_started"), event("workflow.execution_progress", progress)];
+    index.restore({ events, warnings: [] });
+    expect(index.get("turn")).toMatchObject({ execution: progress });
+    const revision = index.snapshot().revision;
+    index.observe(event("workflow.execution_progress", progress));
+    expect(index.snapshot().revision).toBe(revision);
+    index.observe(event("workflow.execution_progress", { ...progress, completedTurns: -1 }));
+    expect(index.get("turn")).toMatchObject({ execution: progress });
+    const next = { ...progress, handoffId: "handoff-2", iteration: 2, completedTurns: 0,
+      checkIn: { kind: "scheduled", afterTurn: 10 } };
+    index.observe(event("workflow.execution_progress", next));
+    expect(index.get("turn")).toMatchObject({ execution: next });
+  });
   it("keeps more than eight calls, preserves failures, ignores duplicates and scopes reused IDs by session and run", () => {
     const index = new HistoryIndex();
     const events = [event("ui.turn_started", { objective: "Task" }), event("runtime.run_started", { provenance: "coordinator_handoff" })];

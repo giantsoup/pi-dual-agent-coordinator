@@ -116,6 +116,29 @@ class FakeCoordinator {
 }
 
 describe("interactive coordinator service", () => {
+  it("loads check-in details for readable output and explicit metadata inspection", async () => {
+    const checkIn = { schemaVersion: 1, workflowId: "workflow", handoffId: "handoff", iteration: 1,
+      turnCount: 10, decision: "redirect", reason: "Finish verification before more edits.", nextSteps: ["Run the focused tests."] };
+    const text = "```pi-check-in\n" + JSON.stringify(checkIn) + "\n```";
+    const timestamp = "2026-10-17T00:00:00.000Z";
+    const coordinator = Object.assign(new FakeCoordinator(), { getRunArchive: vi.fn(async () => [{
+      type: "message", id: "message", parentId: null, timestamp,
+      message: { role: "assistant", content: [{ type: "text", text }] }
+    }]) });
+    const service = new HeadlessInteractiveCoordinatorService(coordinator);
+    await service.start();
+    try {
+      for (const eventType of ["ui.turn_started", "runtime.run_started"]) coordinator.emitTelemetryEvent({
+        eventType, timestamp, role: "A", sessionId: "session", operatorTurnId: "turn", runId: "check-in",
+        details: { provenance: "coordinator_check_in" }
+      });
+      expect((await service.loadHistoryDetail("check-in", "output")).lines.join("\n")).toContain("Progress check after turn 10: Adjusting course");
+      const metadata = await service.loadHistoryDetail("check-in", "metadata");
+      expect(JSON.parse(metadata.lines.join("\n")).checkIn).toEqual(checkIn);
+      expect(coordinator.getRunArchive).toHaveBeenCalledTimes(2);
+    } finally { await service.dispose(); }
+  });
+
   it("notifies terminal subscribers about streaming before the prompt completes", async () => {
     const coordinator = new FakeCoordinator();
     const service = new HeadlessInteractiveCoordinatorService(coordinator);
@@ -169,6 +192,7 @@ describe("interactive coordinator service", () => {
     expect(service.getState().operation.kind).toBe("running");
     await service.dispatch({ type: "submit_input", input: "draft" }, rejected);
     await service.dispatch({ type: "submit_input", input: "/new A" }, rejected);
+    await service.dispatch({ type: "submit_input", input: "/new" }, rejected);
     expect(rejected).not.toHaveBeenCalled();
     expect(submit).toHaveBeenCalledOnce();
     expect(service.getState().notification?.code).toBe("operation.busy");

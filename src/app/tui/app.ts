@@ -190,17 +190,17 @@ export class CoordinatorTuiApp implements Component, Focusable {
       this.focused && state.modal.kind === "none" && this.paneFocus === "editor";
 
     const live = liveIdentity(state);
-    const headerLines = [padLine(`pi-dual  ${safeDisplayText(state.status.cwd)} | ${state.status.phaseLabel}`, width),
-      paintRole(padLine(this.workspace.pointer(state), width), live.role)];
+    const headerLines = [padLine(`pi-dual  ${safeDisplayText(state.status.cwd)} | ${state.status.phaseLabel}`, width)];
+    const liveLine = paintRole(padLine(this.workspace.pointer(state), width), live.role);
     const footerLines = renderFooter(state, width, this.transientHint, this.paneFocus);
     const editorLines = this.editor.render(width);
-    const availableMainHeight = Math.max(1, this.terminal.rows - headerLines.length - footerLines.length - editorLines.length);
+    const availableMainHeight = Math.max(1, this.terminal.rows - headerLines.length - footerLines.length - editorLines.length - 1);
     const activityHeight = this.showActivity ? Math.min(8, Math.max(3, Math.floor(availableMainHeight * .27))) : 0;
     const bodyHeight = Math.max(1, availableMainHeight - activityHeight);
     this.historyRailVisible = width >= 104 && bodyHeight >= 14;
-    const mainLines = [...this.workspace.render(state, width, bodyHeight), ...(this.showActivity ? frame(`Activity${this.paneFocus === "activity" ? " [focus]" : ""}`, selectPanelViewport(renderActivity(state, width - 2), activityHeight, "top", this.activityScrollOffset).lines, width, activityHeight) : [])];
+    const mainLines = [...this.workspace.render(state, width, bodyHeight), ...(this.showActivity ? frame(`Activity${this.paneFocus === "activity" ? " [focus]" : ""}`, selectPanelViewport(renderActivity(state, width - 2), activityHeight, "bottom", this.activityScrollOffset).lines, width, activityHeight) : [])];
 
-    let lines = [...headerLines, ...mainLines, ...editorLines, ...footerLines];
+    let lines = [...headerLines, ...mainLines, liveLine, ...editorLines, ...footerLines];
     lines = normalizeScreen(lines, width, this.terminal.rows);
 
     if (width < 80 || this.terminal.rows < 24) {
@@ -324,7 +324,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
 
   private handlePaneInput(data: string, state: InteractiveUiState): boolean {
     if (this.paneFocus !== "activity") return this.workspace.handleInput(data, state, this.historyRailVisible);
-    const next = getNextScrollOffset(data, this.activityScrollOffset, Math.max(0, renderActivity(state, this.terminal.columns - 2).length - 4), widthSafePageSize(this.terminal.rows), "top");
+    const next = getNextScrollOffset(data, this.activityScrollOffset, Math.max(0, renderActivity(state, this.terminal.columns - 2).length - 4), widthSafePageSize(this.terminal.rows), "bottom");
     if (next !== undefined) this.activityScrollOffset = next;
     return true;
   }
@@ -346,13 +346,6 @@ function renderFooter(
 function renderActivity(state: InteractiveUiState, width: number): string[] {
   const lines: string[] = [];
   const summary = selectPrimaryActivitySummary(state);
-  if (summary) {
-    lines.push(`Now: ${summary.activity}`);
-    if (summary.reason) {
-      lines.push(...wrapBlock(`Why: ${summary.reason}`, width));
-    }
-    lines.push("");
-  }
 
   if (state.pendingPlan) {
     lines.push(...wrapBlock(renderPendingPlan(state.pendingPlan.plan, state.pendingPlan.nextActionHint), width));
@@ -378,6 +371,11 @@ function renderActivity(state: InteractiveUiState, width: number): string[] {
       lines.push("  - no recent tool activity");
     }
     lines.push("");
+  }
+
+  if (summary) {
+    if (summary.reason) lines.push(...wrapBlock(`Why: ${summary.reason}`, width));
+    lines.push(`Now: ${summary.activity}`);
   }
 
   if (lines.length === 0) {

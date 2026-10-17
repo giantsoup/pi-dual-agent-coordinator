@@ -20,7 +20,7 @@ describe("repl progress renderer", () => {
     expect(buildPromptLabel(status)).toBe(
       "pi-dual [Planning · GPT-5.4 (openai/gpt-5.4)]> "
     );
-    expect(buildHelpText(false)).toContain("/help /status /approve /discard /sessions /handoff /cancel /new A|B /switch A|B /quit");
+    expect(buildHelpText(false)).toContain("/help /status /approve /discard /sessions /handoff /cancel /new [A|B] /switch A|B /quit");
   });
 
   it("groups same-context progress under one header and compacts reason lines", () => {

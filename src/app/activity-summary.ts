@@ -251,6 +251,18 @@ function deriveWorkflowUpdate(
   const workflowId = stringValue(event.details.workflowId);
 
   switch (event.eventType) {
+    case "workflow.check_in_started":
+    case "workflow.check_in_completed":
+    case "workflow.check_in_failed":
+      return {
+        role: "coordinator",
+        snapshot: {
+          role: "coordinator", phase: "review", kind: "workflow",
+          label: event.eventType === "workflow.check_in_started" ? "Agent A checking execution progress" : event.details.decision === "blocked" ? "Agent A blocked execution" : event.eventType === "workflow.check_in_completed" ? "Agent A completed process check-in" : "Agent A process check-in stopped execution",
+          reason: stringValue(event.details.reason) ?? "checking for loops and drift while Agent B is paused",
+          workflowId, iteration, startedAt: event.timestamp
+        }
+      };
     case "workflow.iteration_prepared":
       return {
         role: "coordinator",

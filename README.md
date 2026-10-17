@@ -89,6 +89,28 @@ Inside the REPL:
 - Agent B performs the execution work automatically.
 - Agent A reviews the result and either finalizes or sends another handoff.
 
+To start a new conversation, enter `/new`. This resets both agent contexts and
+opens an empty current view. Previous work remains available in History. Use
+`/new A` or `/new B` to reset only one agent. Cancel active work first with `/cancel`.
+
+During an ongoing handoff, Agent B pauses after every 10 completed model turns
+for a brief Agent A process check-in. One turn includes the model response and
+its tool results. A checks progress, repeated attempts, and drift against the
+approved plan, then tells B to continue, gives specific next steps, or blocks
+execution. Guidance reaches B before its next model request. A final response
+on turn 10 goes directly to the normal completion review.
+
+Check-ins keep the current handoff and iteration. A normal completion review
+resets the counter for the next handoff. Check-ins use the existing operation
+deadline and appear in activity and retained history. Invalid check-in responses
+stop execution. `/cancel` also stops a paused check-in.
+
+Agent A's planning instructions require concrete files and symbols, behavior
+examples, edge cases, constraints, verification commands, expected results, and
+stop conditions. Essential details go inside the structured plan fields that B
+receives. These instructions improve reliability; they do not guarantee a
+successful model run. See [the check-in design](docs/execution-check-ins.md).
+
 Useful slash commands:
 
 - `/help`
@@ -99,6 +121,7 @@ Useful slash commands:
 - `/sessions`
 - `/handoff`
 - `/cancel`
+- `/new`
 - `/sessions A` and `/sessions B` to select saved conversations
 - `/model A` and `/model B`
 - `/thinking A` and `/thinking B`

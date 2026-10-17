@@ -14,7 +14,10 @@ export function safeDisplayText(text: string): string {
     .replace(/\r/g, "");
 }
 export function visibleProse(text: string): string {
-  return safeDisplayText(text).replace(/```pi-(?:plan|execute|handoff|completion|final)\b[\s\S]*?(?:```|$)/g, "").trim();
+  return safeDisplayText(text)
+    .replace(/```pi-[\s\S]*?(?:```|$)/g, "")
+    .replace(/```pi?$/, "")
+    .trim();
 }
 
 export function safeDisplayFields(fields: Record<string, unknown>): Record<string, unknown> {

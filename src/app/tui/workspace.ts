@@ -54,6 +54,7 @@ export class CurrentWorkspace {
   private unread = 0;
   private streamAtRead: { key: string; length: number } | undefined;
   private generation = 0;
+  private resetId: string | undefined;
   private height = 10;
   private width = 80;
   private readonly clocks = new Map<string, { start: number; elapsed: number }>();
@@ -82,13 +83,11 @@ export class CurrentWorkspace {
   private rows(state: InteractiveUiState): HistoryRecord[] {
     const records = state.history.records;
     const turnId = this.viewedTurnId ?? state.history.currentTurnId;
-    const result: HistoryRecord[] = [];
-    if (turnId && this.collapsedTurns.has(turnId)) return result;
-    for (const run of children(records, turnId ?? "")) {
-      result.push(run);
-      if (!this.collapsedRuns.has(run.id)) result.push(...children(records, run.id));
-    }
-    return result;
+    if (turnId && this.collapsedTurns.has(turnId)) return [];
+    const runs = new Set(children(records, turnId ?? "").map((run) => run.id));
+    // Insertion order follows events, including B resuming after an A check-in.
+    return records.filter((record) => record.kind === "run" ? runs.has(record.id)
+      : record.kind === "tool" && runs.has(record.parentId) && !this.collapsedRuns.has(record.parentId));
   }
   private select(records: HistoryRecord[], id: string | undefined): HistoryRecord | undefined { return records.find((record) => record.id === id) ?? records.at(-1); }
   private current(state: InteractiveUiState): void {
@@ -195,6 +194,13 @@ export class CurrentWorkspace {
   }
   public render(state: InteractiveUiState, width: number, height: number): string[] {
     this.height = height; this.width = width;
+    if (state.history.resetId !== this.resetId) {
+      this.resetId = state.history.resetId;
+      this.generation++;
+      this.inspector = undefined;
+      this.focus = "editor";
+      this.current(state);
+    }
     if (!this.following) {
       const stream = state.liveStream;
       const newProse = stream && (this.streamAtRead?.key !== `${stream.role}:${stream.sessionId}:${stream.startedAt}` || stream.text.length > this.streamAtRead.length) ? 1 : 0;
@@ -211,23 +217,35 @@ export class CurrentWorkspace {
     const current = state.history.records.find((record) => record.id === (this.viewedTurnId ?? state.history.currentTurnId));
     const live = liveIdentity(state);
     const turnNumber = current ? turns.findIndex((turn) => turn.id === current.id) + 1 : undefined;
-    const title = `${this.viewedTurnId ? "HISTORY TURN" : "CURRENT TURN"}${turnNumber ? ` ${turnNumber}` : ""} | ${this.viewedTurnId ? current?.outcome.kind ?? "unavailable" : live.text}${this.focus === "transcript" ? " [focus]" : ""}`;
+    const title = `${this.viewedTurnId ? "HISTORY REQUEST" : "CURRENT REQUEST"}${turnNumber ? ` ${turnNumber}` : ""} | ${this.viewedTurnId ? current?.outcome.kind ?? "unavailable" : live.phase}${this.focus === "transcript" ? " [focus]" : ""}`;
     const bodyWidth = Math.max(1, currentWidth - 4);
     const rows = this.rows(state);
     if (this.following) this.workspaceSelection = rows.at(-1)?.id ?? current?.id;
     const selected = this.workspaceSelection === current?.id ? current : this.select(rows, this.workspaceSelection);
-    const maxRows = Math.max(1, mainHeight - 8);
+    const progress = current?.kind === "turn" ? current.execution : undefined;
+    const checkIn = progress?.checkIn;
+    const checkStopped = current?.outcome.kind !== "running" && (checkIn?.kind === "scheduled" || checkIn?.kind === "checking");
+    const checkLabel = checkStopped ? "checks stopped" : checkIn?.kind === "scheduled" ? `A check at ${checkIn.afterTurn}`
+      : checkIn?.kind === "checking" ? `A checking turn ${checkIn.afterTurn}`
+      : checkIn?.kind === "final_review" ? "final review" : "check stopped";
+    const progressLine = progress ? `B turns: ${progress.completedTurns} completed / ${checkLabel}` : undefined;
+    const statusLines = [
+      ...(progressLine ? [progressLine] : []),
+      `\x1b[1;4m>> ${this.viewedTurnId ? selected?.title ?? "Retained records" : live.phase.toUpperCase()} / ${this.viewedTurnId ? current?.outcome.kind : state.pendingPlan ? "waiting approval" : state.operation.kind === "running" || state.operation.kind === "cancelling" ? state.operation.kind : current?.outcome.kind ?? state.operation.kind}\x1b[0m`
+    ];
+    const contentBudget = Math.max(0, mainHeight - 2 - statusLines.length - 1);
+    const maxRows = Math.max(0, contentBudget - 2);
     const selectedIndex = selected ? rows.indexOf(selected) : 0;
-    const start = Math.max(0, selectedIndex - Math.floor(maxRows / 2));
-    const body = [current && this.workspaceSelection === current.id ? `> Operator turn: ${current.title} / ${recordSummary(current, state.history.records)}` : current?.title ?? "Send a request to Agent A, or use /help.",
-      `\x1b[1;4m>> ${this.viewedTurnId ? selected?.title ?? "Retained records" : live.phase.toUpperCase()} / ${this.viewedTurnId ? current?.outcome.kind : state.pendingPlan ? "waiting approval" : state.operation.kind === "running" || state.operation.kind === "cancelling" ? state.operation.kind : current?.outcome.kind ?? state.operation.kind}\x1b[0m`,
-      ...(!this.viewedTurnId ? [this.pointer(state)] : []), ""];
+    const start = this.following ? Math.max(0, rows.length - maxRows) : Math.max(0, selectedIndex - Math.floor(maxRows / 2));
+    const body = [current && this.workspaceSelection === current.id ? `> Operator turn: ${current.title} / ${recordSummary(current, state.history.records)}` : current?.title ?? (state.history.resetId ? "New conversation. Send a request to Agent A." : "Send a request to Agent A, or use /help."), ""];
+    const recordLines: string[] = [];
     for (const record of rows.slice(start, start + maxRows)) {
       const marker = selected?.id === record.id ? ">" : " ";
       const label = `${marker} ${this.expanded.has(record.id) ? "-" : "+"} ${record.kind === "tool" ? "  " : ""}${record.kind === "turn" ? "" : roleLabel(record.role)} [${record.outcome.kind}] ${record.title} / ${this.duration(record)} ${recordSummary(record, state.history.records)}`;
-      body.push(paintRole(pad(label, bodyWidth), record.kind === "turn" ? undefined : record.role));
-      if (this.expanded.has(record.id) && record.kind === "tool") body.push(...wrap(record.preview ? `Preview (up to 120 chars): ${record.preview}` : "Preview unavailable; Enter inspects retained output.", bodyWidth).slice(0, 2));
+      recordLines.push(paintRole(pad(label, bodyWidth), record.kind === "turn" ? undefined : record.role));
+      if (this.expanded.has(record.id) && record.kind === "tool") recordLines.push(...wrap(record.preview ? `Preview (up to 120 chars): ${record.preview}` : "Preview unavailable; Enter inspects retained output.", bodyWidth).slice(0, 2));
     }
+    if (maxRows) body.push(...(this.following ? recordLines.slice(-maxRows) : recordLines.slice(0, maxRows)));
     const latestRun = children(state.history.records, current?.id ?? "").at(-1);
     if (latestRun?.kind === "run") {
       const cacheKey = `${latestRun.id}:${latestRun.outcome.kind}`;
@@ -248,9 +266,12 @@ export class CurrentWorkspace {
         const boundedProse = prose.slice(-24000).split("\n").slice(-80).join("\n");
         const lines = cached?.content === prose ? cached.lines : new Markdown(boundedProse, 0, 0, theme).render(bodyWidth);
         this.proseCache.clear(); this.proseCache.set(key, { width: bodyWidth, content: prose, lines });
-        body.push("", ...lines.slice(-Math.max(1, mainHeight - body.length - 3)));
+        const proseBudget = Math.max(0, contentBudget - body.length - 1);
+        if (proseBudget) body.push("", ...lines.slice(-proseBudget));
       }
     }
+    while (body.length < contentBudget + 1) body.push("");
+    body.push(...statusLines);
     const frameRole = live.role ?? (latestRun?.kind === "run" ? latestRun.role : undefined);
     const main = frame(title, body, currentWidth, mainHeight, this.viewedTurnId ? undefined : frameRole);
     if (!wide) return [pad(`History / ${turns.filter((turn) => turn.id !== state.history.currentTurnId).length} past turns${this.focus === "history" ? " [focus]" : ""} | F6 then Enter opens | ${this.unread} unread | End current`, width), ...main];
@@ -265,8 +286,13 @@ export class CurrentWorkspace {
     return `${live.text} / ${live.phase}${run && state.operation.kind === "running" ? ` / ${this.duration(run)}` : ""} / ${activity}${this.unread ? ` | ${this.unread} unread, End current` : ""}`;
   }
   private historyRows(state: InteractiveUiState): HistoryRecord[] {
-    return state.history.records.filter((record) => record.kind === "turn" && record.id !== state.history.currentTurnId).flatMap((turn) => [turn,
-      ...(this.expanded.has(turn.id) ? children(state.history.records, turn.id).flatMap((run) => [run, ...(this.expanded.has(run.id) ? children(state.history.records, run.id) : [])]) : [])]);
+    const records = state.history.records;
+    return records.filter((record) => record.kind === "turn" && record.id !== state.history.currentTurnId).flatMap((turn) => {
+      if (!this.expanded.has(turn.id)) return [turn];
+      const runs = new Set(children(records, turn.id).map((run) => run.id));
+      return [turn, ...records.filter((record) => record.kind === "run" ? runs.has(record.id)
+        : record.kind === "tool" && runs.has(record.parentId) && this.expanded.has(record.parentId))];
+    });
   }
   private renderHistory(state: InteractiveUiState, width: number, height: number): string[] {
     const rows = this.historyRows(state);

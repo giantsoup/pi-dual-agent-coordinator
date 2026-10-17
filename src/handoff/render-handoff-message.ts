@@ -14,6 +14,7 @@ export function renderHandoffMessage(envelope: HandoffEnvelope): string {
     "Use your write-authoritative tools to execute the request.",
     "Do not assume access to any raw Agent A text beyond this rendered handoff.",
     "Keep your completion record concrete and implementation-specific.",
+    "The coordinator pauses ongoing execution for an Agent A process check-in every 10 completed model turns. Apply its guidance within this handoff's scope and keep the same completion identifiers.",
     "`pi-completion` is the fence label for your final JSON block. It is not a tool name, command, or function call.",
     "",
     `Workflow ID: ${envelope.workflowId}`,

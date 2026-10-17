@@ -78,6 +78,7 @@ export type ParsedReplCommand =
   | { type: "config"; key: "review-rounds" | "timeout-ms"; value: number; save: boolean }
   | { type: "handoff" }
   | { type: "new"; role: Role }
+  | { type: "new_conversation" }
   | { type: "switch"; role: Role; sessionPath: string }
   | { type: "cancel" }
   | { type: "quit" };
@@ -441,7 +442,8 @@ export function parseReplCommand(input: string): ParsedReplCommand {
   if (parts[0] === "/config" && (parts[1] === "review-rounds" || parts[1] === "timeout-ms") && parts[2] && parts.length === (save ? 4 : 3)) {
     return { type: "config", key: parts[1], value: parsePositiveInt("/config", parts[2]), save };
   }
-  if (parts[0] === "/new" && parts[1] && isRole(parts[1])) {
+  if (parts[0] === "/new" && parts.length === 1) return { type: "new_conversation" };
+  if (parts[0] === "/new" && parts.length === 2 && parts[1] && isRole(parts[1])) {
     return { type: "new", role: parts[1].toUpperCase() as Role };
   }
   if (parts[0] === "/switch" && parts[1] && isRole(parts[1]) && parts[2]) {
@@ -510,7 +512,7 @@ export const REPL_COMPLETION_COMMANDS = [
   { name: "approve", description: "Execute the pending plan" }, { name: "discard", description: "Clear pending plan" },
   { name: "cancel", description: "Cancel active work" }, { name: "quit", description: "Cancel and exit" },
   { name: "sessions", description: "Saved sessions: /sessions A|B" }, { name: "handoff", description: "Latest workflow" },
-  { name: "new", description: "Fresh session: /new A|B" }, { name: "switch", description: "Restore context: /switch A|B PATH" },
+  { name: "new", description: "New conversation: /new; one role: /new A|B" }, { name: "switch", description: "Restore context: /switch A|B PATH" },
   { name: "model", description: "Choose model: /model A|B [MODEL] [save]" },
   { name: "thinking", description: "Choose reasoning: /thinking A|B [LEVEL] [save]" },
   { name: "config", description: "Defaults: /config review-rounds|timeout-ms N [save]" }

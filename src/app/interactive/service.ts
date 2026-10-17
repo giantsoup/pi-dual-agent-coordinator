@@ -3,6 +3,7 @@ import { projectHistoryDetail } from "./history-detail.js";
 import type { ArchiveEntry } from "../../runtime/session-history.js";
 import type { HistoryDetail, HistoryRecord } from "../../types/history.js";
 import { safeDisplayText, safeDisplayFields, visibleProse } from "../../security/display-text.js";
+import { renderCheckInSummary } from "../presentation/check-in.js";
 import type { SessionInfo } from "@mariozechner/pi-coding-agent";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { extractAssistantText } from "../../handoff/handoff-envelope.js";
@@ -168,7 +169,7 @@ export class HeadlessInteractiveCoordinatorService
         await this.dispatchReplCommand(action.command, onAccepted);
         return;
       }
-      if (this.busy && ["submit_input", "approve_pending_plan", "discard_pending_plan", "replace_runtime", "configure_role", "configure_defaults"].includes(action.type)) {
+      if (this.busy && ["submit_input", "approve_pending_plan", "discard_pending_plan", "new_conversation", "replace_runtime", "configure_role", "configure_defaults"].includes(action.type)) {
         this.updateState({ type: "set_modal", modal: { kind: "none" } });
         this.raiseNotification({ level: "info", scope: "operator", code: "operation.busy",
           message: "Work is running. Keep editing your draft, or use /cancel. Help, status and /quit remain available." });
@@ -325,6 +326,14 @@ export class HeadlessInteractiveCoordinatorService
             nextStep: "Send another prompt if you want a revised plan."
           });
           this.refreshStatus();
+          return;
+        case "new_conversation":
+          await this.runControl(async () => {
+            for (const role of ["A", "B"] as const) await this.coordinator.replaceRuntime(role, { type: "new", role });
+          });
+          this.raiseNotification({ level: "info", scope: "runtime", code: "conversation.created",
+            title: "New conversation", message: "Both agents now have empty sessions. Previous work remains in History.",
+            nextStep: "Send your next request to Agent A." });
           return;
         case "replace_runtime":
           await this.runControl(() => this.coordinator.replaceRuntime(
@@ -495,6 +504,9 @@ export class HeadlessInteractiveCoordinatorService
           mode: "new"
         }, onAccepted);
         return;
+      case "new_conversation":
+        await this.dispatch({ type: "new_conversation" }, onAccepted);
+        return;
       case "switch":
         await this.dispatch({
           type: "replace_runtime",
@@ -519,6 +531,12 @@ export class HeadlessInteractiveCoordinatorService
     if (this.historyIndex.observe(event)) this.updateState({ type: "set_history", history: this.historyIndex.snapshot() });
     event = { ...event, details: safeDisplayFields(event.details) };
     const status = this.coordinator.getStatus();
+    if (event.eventType === "ui.conversation_reset") {
+      this.helpReturn = undefined;
+      this.operationTexts.clear();
+      this.committedMessages.clear();
+      this.updateState({ type: "reset_conversation", status });
+    }
     if (status.operation) this.updateState({ type: "set_operation", operation: status.operation });
     const update = deriveActivityUpdate(event, status);
     this.updateState({
@@ -616,7 +634,7 @@ export class HeadlessInteractiveCoordinatorService
     const run = record.kind === "tool" ? this.historyIndex.get(record.parentId) : record;
     let entries: ArchiveEntry[] = [];
     let reason: string | undefined;
-    if ((section === "output" || section === "request") && run?.kind === "run") {
+    if (run?.kind === "run" && (section === "output" || section === "request" || section === "metadata" && run.phase === "Check-in")) {
       try {
         if (!this.coordinator.getRunArchive) throw new Error("This runtime has no retained archive reader.");
         entries = await this.coordinator.getRunArchive(run);
@@ -831,5 +849,5 @@ function createUiNotification(
 }
 
 export function visibleAssistantText(text: string): string {
-  return visibleProse(text);
+  return [visibleProse(text), renderCheckInSummary(text)].filter(Boolean).join("\n\n");
 }

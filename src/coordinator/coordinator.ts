@@ -18,6 +18,7 @@ import {
   type ActivitySnapshot
 } from "../app/activity-summary.js";
 import { withPromptProvenance } from "../app/prompt-provenance.js";
+import { PLANNING_GUIDANCE } from "../app/trust-policy.js";
 import { createRequestId } from "../telemetry/correlation.js";
 import { normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
 import {
@@ -384,6 +385,16 @@ export class Coordinator {
       this.coordinatorActivity = undefined;
       await this.supersedeActiveWorkflowIfNeeded(role, updated);
       await this.eventBridge.waitForIdle();
+      if (action.type === "new") {
+        this.lastSummary = undefined;
+        this.operationKind = "idle";
+        this.setUiState("planning", "A");
+        this.clearAllActivity();
+        this.logger.log(normalizeLifecycleEvent({
+          role, sessionId: updated.sessionId, sessionFile: updated.sessionFile,
+          eventType: "ui.conversation_reset"
+        }));
+      }
     } finally { this.endConfiguration(); }
   }
 
@@ -992,6 +1003,7 @@ function renderPlanningTurnMessage(userInput: string): string {
     "If the operator wants a concrete implementation plan but has not approved execution yet, end the turn with exactly one `pi-plan` JSON block.",
     "If the operator explicitly wants execution to start now, end the turn with exactly one `pi-execute` JSON block.",
     "`pi-plan` and `pi-execute` are mutually exclusive.",
+    ...PLANNING_GUIDANCE,
     "",
     "Operator turn:",
     userInput

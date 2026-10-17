@@ -7,7 +7,8 @@ import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type {
   RoleRuntimeBinding,
   RuntimeLike,
-  SessionLike
+  SessionLike,
+  SessionPromptOptions
 } from "../../src/runtime/create-role-runtime.js";
 import type { RoleMcpStatusSnapshot } from "../../src/mcp/types.js";
 import type { Role } from "../../src/types/role.js";
@@ -21,6 +22,9 @@ export class FakeSession implements SessionLike {
   public thinkingLevel = "medium";
   public model = undefined;
   public messages: AgentMessage[] = [];
+  public readonly steering: string[] = [];
+  private onTurnEnd: SessionPromptOptions["onTurnEnd"];
+  private turnController = new AbortController();
   public sessionManager = {
     getLeafId: () => `${this.sessionId}-leaf`
   };
@@ -30,7 +34,7 @@ export class FakeSession implements SessionLike {
     public readonly sessionFile: string | undefined,
     private readonly promptHandler?: (
       text: string,
-      options?: { streamingBehavior?: "steer" | "followUp"; preflightResult?: (success: boolean) => void }
+      options?: SessionPromptOptions
     ) => Promise<void>
   ) {}
 
@@ -48,21 +52,31 @@ export class FakeSession implements SessionLike {
 
   public async prompt(
     text: string,
-    options?: { streamingBehavior?: "steer" | "followUp"; preflightResult?: (success: boolean) => void }
+    options?: SessionPromptOptions
   ): Promise<void> {
     this.prompts.push(text);
     options?.preflightResult?.(true);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    await this.promptHandler?.(text, options);
+    this.onTurnEnd = options?.onTurnEnd;
+    this.turnController = new AbortController();
+    try {
+      await this.promptHandler?.(text, options);
+    } finally {
+      this.onTurnEnd = undefined;
+    }
   }
 
   public async emit(event: AgentSessionEvent): Promise<void> {
     for (const listener of this.listeners) {
       await listener(event);
     }
+    if (event.type === "turn_end" && this.onTurnEnd) {
+      const steering = await this.onTurnEnd(event, this.turnController.signal);
+      if (steering) this.steering.push(steering);
+    }
   }
 
-  public async abort(): Promise<void> {}
+  public async abort(): Promise<void> { this.turnController.abort(); }
 
   public dispose(): void {}
 }

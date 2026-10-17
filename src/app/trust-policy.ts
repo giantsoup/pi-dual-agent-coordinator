@@ -8,17 +8,24 @@ const HANDOFF_FENCE = "```pi-handoff";
 const COMPLETION_FENCE = "```pi-completion";
 const FINAL_FENCE = "```pi-final";
 
-const PLAN_EXAMPLE = [
-  PLAN_FENCE,
-  '{"schemaVersion":1,"objective":"Implement the requested change.","summary":"The change is planned and ready for operator approval.","acceptanceCriteria":["Tests pass"],"relevantPaths":["src/index.ts"],"executionPlan":["Update the implementation","Run focused verification"],"constraints":["Do not widen scope"]}',
-  "```"
-].join("\n");
-
-const EXECUTE_EXAMPLE = [
-  EXECUTE_FENCE,
-  '{"schemaVersion":1,"objective":"Implement the requested change.","summary":"The change is ready for execution.","acceptanceCriteria":["Tests pass"],"relevantPaths":["src/index.ts"],"executionPlan":["Update the implementation","Run focused verification"],"constraints":["Do not widen scope"]}',
-  "```"
-].join("\n");
+const ILLUSTRATIVE_PLAN = {
+  schemaVersion: 1,
+  objective: "Validate retry limits.",
+  summary: "Reject invalid retry limits before scheduling work.",
+  acceptanceCriteria: [
+    'parseRetryLimit("3") returns 3; empty input and "-1" throw a validation error',
+    "Existing valid configuration still loads"
+  ],
+  relevantPaths: ["src/config.ts", "test/unit/config.test.ts"],
+  executionPlan: [
+    "Update parseRetryLimit in src/config.ts to accept nonnegative integer strings and reject empty or negative values before conversion; preserve the existing error type",
+    'Add cases for "0", "3", empty input, and "-1" in test/unit/config.test.ts',
+    "Run npm test -- test/unit/config.test.ts and npm run check; expect all checks to pass, then stop"
+  ],
+  constraints: ["Keep public signatures and unrelated configuration behavior unchanged"]
+};
+const PLAN_EXAMPLE = [PLAN_FENCE, JSON.stringify(ILLUSTRATIVE_PLAN), "```"].join("\n");
+const EXECUTE_EXAMPLE = [EXECUTE_FENCE, JSON.stringify(ILLUSTRATIVE_PLAN), "```"].join("\n");
 
 const HANDOFF_EXAMPLE = [
   HANDOFF_FENCE,
@@ -38,6 +45,16 @@ const COMPLETION_EXAMPLE = [
   "```"
 ].join("\n");
 
+export const PLANNING_GUIDANCE = [
+  "Ground the plan in the actual repository and its AGENTS.md instructions, tech stack, existing APIs, and conventions. Distinguish verified facts from assumptions and resolve material unknowns before delegating.",
+  "Give Agent B as many specifics as necessary to execute reliably: exact files and symbols, ordered changes, data shapes, dependencies, invariants to preserve, edge cases, and explicit scope limits.",
+  "Provide specific examples of expected behavior, including representative inputs and outputs, before/after behavior, and failure cases. Include code or payload examples when they resolve ambiguity. Label illustrative examples and never invent repository facts.",
+  "Put all implementation-critical details and examples inside executionPlan, acceptanceCriteria, relevantPaths, or constraints in the machine block. Agent B receives these fields, not your surrounding planning prose.",
+  "For each phase, name the verification command or concrete check and its expected result. Include relevant regression checks and a clear stop condition when the evidence meets the acceptance criteria.",
+  "Explain how to handle blockers and failed checks. Do not repeat an unchanged failing approach without new evidence; inspect the cause, choose a targeted next step, or report the blocker. Avoid unrelated refactors and unnecessary investigation.",
+  "Use enough detail for the task's complexity without padding. A detailed plan reduces uncertainty but does not guarantee success; do not promise unverified outcomes."
+];
+
 export function buildRolePromptAppendix(role: Role): string[] {
   if (role === "A") {
     return [
@@ -47,6 +64,7 @@ export function buildRolePromptAppendix(role: Role): string[] {
       "Plan for a weaker execution model: break work into small explicit phases with clear end states.",
       "Prefer execution plans and handoffs that reduce ambiguity: specify the concrete change, the intended outcome, and how success will be checked.",
       "Make each phase independently verifiable. Emphasize focused tests plus regression-sensitive checks for touched behavior, adjacent flows, and integrations.",
+      ...PLANNING_GUIDANCE,
       "In planning mode, converse normally when the operator is brainstorming or asking for discussion only.",
       `When the operator wants a concrete implementation plan but has not approved execution yet, end the turn with exactly one ${PLAN_FENCE} JSON block and close it with triple backticks.`,
       `When execution is being started now, end the turn with exactly one ${EXECUTE_FENCE} JSON block and close it with triple backticks.`,
@@ -65,10 +83,11 @@ export function buildRolePromptAppendix(role: Role): string[] {
       "Make `pi-final.userResponse` operator-facing and specific: explain what changed, which files or areas were touched, what verification ran, and any notable caveats or follow-ups when relevant.",
       "When finalizing after Agent B work, do not just say the task succeeded; summarize the implementation details using the normalized completion data.",
       "During review, act as QA: check whether Agent B implemented the plan correctly, whether the result satisfies the goal, and whether the change likely introduced regressions or missed edge cases.",
+      "A coordinator process check-in is an exception to the execution review protocol: B is paused after 10 more model turns. Follow that prompt's pi-check-in response format, give brief process guidance, and preserve the approved scope and iteration. Do not emit pi-handoff or pi-final during a process check-in.",
       "During review: keep `pi-final.iteration` on the current completed iteration. Only increment iteration when emitting the next `pi-handoff`.",
       'Use exact JSON types. `schemaVersion` must be the integer `1`, never the strings `"1"` or `"1.0"`.',
-      `Example plan:\n${PLAN_EXAMPLE}`,
-      `Example execute:\n${EXECUTE_EXAMPLE}`,
+      `Illustrative example plan. These paths and symbols are examples, not facts about the current repository:\n${PLAN_EXAMPLE}`,
+      `Illustrative example execute. Verify the actual repository paths and commands before planning:\n${EXECUTE_EXAMPLE}`,
       `Example handoff:\n${HANDOFF_EXAMPLE}`,
       `Example final:\n${FINAL_EXAMPLE}`,
       "Do not emit multiple machine blocks in one turn."
@@ -79,6 +98,7 @@ export function buildRolePromptAppendix(role: Role): string[] {
     "You are Agent B in a dual-agent coordinator workflow.",
     "You are the write-authoritative execution agent.",
     "You will receive coordinator-authored handoff prompts, not raw Agent A messages.",
+    "After every 10 model turns while you are still working, the coordinator pauses you for a brief Agent A process check-in. Apply its guidance to the current handoff, preserving the approved scope and completion identifiers. Report blockers rather than repeating an unchanged failing approach.",
     `End every coordinator handoff turn with exactly one ${COMPLETION_FENCE} JSON block and close it with triple backticks.`,
     "A `pi-completion` block must include: schemaVersion, workflowId, handoffId, iteration, summary, and changedPaths.",
     "`pi-completion` is a fenced block label in assistant text, not a tool name, command, or function call.",

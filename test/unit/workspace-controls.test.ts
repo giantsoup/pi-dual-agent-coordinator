@@ -25,6 +25,48 @@ async function setup() {
 }
 const strip = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 describe("selected workspace through shared history service", () => {
+  it("distinguishes requests from supervised B turns and keeps live activity after the tools", async () => {
+    const { app, service, emit } = await setup();
+    try {
+      emit("workflow.execution_progress", { workflowId: "workflow", handoffId: "handoff", iteration: 1,
+        completedTurns: 9, checkIn: { kind: "scheduled", afterTurn: 10 } });
+      emit("pi.tool_execution_start", { toolName: "bash", toolCallId: "active", toolArgs: { command: "verify-current-work" } });
+      const lines = strip(app.render(80).join("\n")).split("\n");
+      expect(lines.join("\n")).toContain("CURRENT REQUEST 1");
+      expect(lines.join("\n")).toContain("B turns: 9 completed / A check at 10");
+      const tool = lines.findIndex((line) => line.includes("[running] bash verify-current-work"));
+      const active = lines.findIndex((line) => line.includes("Active: B - Junior"));
+      expect(tool).toBeGreaterThan(-1);
+      expect(active).toBeGreaterThan(tool);
+      expect(lines.slice(active + 1).join("\n")).not.toContain("[completed]");
+    } finally { await service.dispose(); }
+  });
+  it.each([[80, 24], [120, 40]])("keeps check-ins before resumed tools and activity last at %sx%s", async (width, height) => {
+    const { app, service, terminal, emit } = await setup();
+    try {
+      terminal.columns = width; terminal.rows = height;
+      emit("runtime.run_started", { provenance: "coordinator_check_in" }, { runId: "check", role: "A" });
+      emit("runtime.run_finished", { outcome: "completed" }, { runId: "check", role: "A" });
+      emit("pi.tool_execution_start", { toolName: "read", toolCallId: "resumed", toolArgs: { path: "after-check.txt" } });
+      emit("workflow.execution_progress", { workflowId: "workflow", handoffId: "handoff", iteration: 1,
+        completedTurns: 10, checkIn: { kind: "scheduled", afterTurn: 20 } });
+      const lines = strip(app.render(width).join("\n")).split("\n");
+      const check = lines.findIndex((line) => line.includes("[completed] Check-in"));
+      const resumed = lines.findIndex((line) => line.includes("[running] read after-check.txt"));
+      const active = lines.findIndex((line) => line.includes("Active: B - Junior"));
+      expect(check).toBeGreaterThan(-1);
+      expect(resumed).toBeGreaterThan(check);
+      expect(active).toBeGreaterThan(resumed);
+      expect(lines.join("\n")).toContain("B turns: 10 completed / A check at 20");
+      expect(lines).toHaveLength(height);
+      app.handleInput("\x1bOQ"); // F2 opens the optional activity panel.
+      const activity = strip(app.render(width).join("\n")).split("\n");
+      expect(activity.findIndex((line) => line.includes("Active: B - Junior"))).toBeGreaterThan(activity.findIndex((line) => line.includes("Activity")));
+      expect(activity.some((line) => line.includes("Now:"))).toBe(true);
+      expect(activity.slice(activity.findIndex((line) => line.includes("Now:")) + 1).join("\n")).not.toContain("[completed]");
+      expect(activity.join("\n")).toContain("B turns: 10 completed / A check at 20");
+    } finally { await service.dispose(); }
+  });
   it("preserves draft, historical selection and inspector range through F1 and resize without runtime mutations", async () => {
     const { app, service, terminal, coordinator, emit } = await setup();
     app.handleInput("precious draft"); app.handleInput("\x1b[17~"); app.handleInput("\x1b[H"); app.handleInput("\x1b[B"); app.handleInput("\r");
@@ -57,7 +99,7 @@ describe("selected workspace through shared history service", () => {
     app.handleInput("\r"); app.handleInput(" "); app.handleInput("\x1b[B"); app.handleInput(" "); app.handleInput("\x1b[B"); app.handleInput("\r"); await settle();
     expect(app.render(80).join("\n")).toContain("READ-ONLY INSPECTOR");
     app.handleInput("\x1b"); expect(app.render(80).join("\n")).toContain("HISTORY [focus]");
-    app.handleInput("\x1b[F"); expect(app.render(80).join("\n")).toContain("CURRENT TURN");
+    app.handleInput("\x1b[F"); expect(app.render(80).join("\n")).toContain("CURRENT REQUEST");
     await service.dispose();
   });
   it.each(["idle", "completed", "failed", "cancelled", "timed_out", "cancelling"] as const)("never calls cached activeRole running in %s", async (kind) => {
@@ -103,7 +145,7 @@ it.each(["A", "B"] as const)("keeps %s workspace and inspector prose on terminal
       for (const width of [80, 120]) {
         const lines = app.render(width);
         expect(lines.join("\n")).toContain(`Active: ${role === "A" ? "A - Senior" : "B - Junior"}`);
-        expect(lines.find((line) => line.includes("CURRENT TURN"))).toContain(accent);
+        expect(lines.find((line) => line.includes("CURRENT REQUEST"))).toContain(accent);
         expect(lines.find((line) => line.includes("Inspect tools"))).toContain("\x1b[39;49mInspect tools");
         expect(lines.join("\n")).not.toMatch(/\x1b\[(?:[^m]*;)?(?:4[0-8]|10[0-7])(?:;|m)/);
         expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);

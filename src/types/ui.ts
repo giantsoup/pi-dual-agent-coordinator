@@ -173,6 +173,7 @@ export interface InteractiveUiState {
 }
 
 export type UiAction =
+  | { type: "new_conversation" }
   | { type: "open_records" }
   | { type: "inspect_record"; id: string; section?: import("./history.js").HistoryDetail["section"]; offset?: number }
   | { type: "open_models"; role: Role }

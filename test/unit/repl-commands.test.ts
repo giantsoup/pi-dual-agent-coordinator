@@ -36,7 +36,9 @@ describe("repl commands", () => {
   });
 
   it("parses new runtime", () => {
+    expect(parseReplCommand("/new")).toEqual({ type: "new_conversation" });
     expect(parseReplCommand("/new a")).toEqual({ type: "new", role: "A" });
+    expect(() => parseReplCommand("/new A unexpected")).toThrow();
   });
 
   it("parses switch runtime", () => {

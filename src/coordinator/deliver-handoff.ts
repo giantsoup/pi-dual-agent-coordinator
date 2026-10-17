@@ -1,13 +1,14 @@
 import { withPromptProvenance } from "../app/prompt-provenance.js";
 import { renderHandoffMessage } from "../handoff/render-handoff-message.js";
 import type { HandoffRecord } from "../types/handoff.js";
-import type { RoleRuntimeBinding } from "../runtime/create-role-runtime.js";
+import type { RoleRuntimeBinding, SessionPromptOptions } from "../runtime/create-role-runtime.js";
 import type { RuntimeEventBridge } from "./bind-runtime-events.js";
 
 export async function deliverHandoff(options: {
   prepared: HandoffRecord;
   binding: RoleRuntimeBinding;
   bridge: RuntimeEventBridge;
+  onTurnEnd?: SessionPromptOptions["onTurnEnd"];
 }): Promise<{
   delivered: HandoffRecord;
   message: Awaited<ReturnType<RuntimeEventBridge["promptAndWaitForTurnEnd"]>>;
@@ -43,6 +44,7 @@ export async function deliverHandoff(options: {
         }
       ),
       {
+        ...(options.onTurnEnd ? { onTurnEnd: options.onTurnEnd } : {}),
         preflightResult: (success) => {
           clearTimeout(timeoutId);
           settlePreflight?.(success);

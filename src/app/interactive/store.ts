@@ -17,6 +17,7 @@ import type {
 } from "../../types/ui.js";
 
 interface StoreActionMap {
+  reset_conversation: { status: CoordinatorStatusSnapshot };
   set_history: { history: import("../../types/history.js").HistorySnapshot };
   set_operation: { operation: InteractiveUiState["operation"] };
   replace_status: {
@@ -94,6 +95,8 @@ export function interactiveUiReducer(
   action: InteractiveStoreAction
 ): InteractiveUiState {
   switch (action.type) {
+    case "reset_conversation":
+      return { ...createInitialInteractiveUiState(action.status), history: state.history };
     case "set_history": return { ...state, history: action.history };
     case "set_operation":
       return { ...state, operation: action.operation };

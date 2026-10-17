@@ -16,36 +16,34 @@ describe("tui activity panel layout", () => {
     });
   });
 
-  it("keeps activity panels top-aligned so the current summary stays visible", () => {
+  it("keeps the latest activity visible below older calls", () => {
     const lines = [
-      "Now: reading src/package.json",
-      "Why: reading the relevant files before proposing a concrete change",
-      "",
-      "Agent A: GPT-5.4",
+      "A - Senior: fixture",
       "  session A-session-1",
       "  health ok",
-      "",
-      "Agent B: GPT-5.4",
-      "  session B-session-1",
-      "  health ok"
+      "  recent",
+      "  - completed read",
+      "  - completed search",
+      "Why: checking the approved files",
+      "Now: reading src/package.json"
     ];
 
-    expect(selectPanelViewport(lines, 6, "top")).toMatchObject({
+    expect(selectPanelViewport(lines, 6, "bottom")).toMatchObject({
       lines: [
-        "Now: reading src/package.json",
-        "Why: reading the relevant files before proposing a concrete change",
-        "",
-        "Agent A: GPT-5.4"
+        "  - completed read",
+        "  - completed search",
+        "Why: checking the approved files",
+        "Now: reading src/package.json"
       ],
-      startLine: 1,
-      endLine: 4,
-      totalLines: 10,
-      maxOffset: 6,
+      startLine: 5,
+      endLine: 8,
+      totalLines: 8,
+      maxOffset: 4,
       scrollOffset: 0
     });
   });
 
-  it("supports scrolling transcript and activity panels independently", () => {
+  it("supports scrolling panels independently", () => {
     const transcript = ["one", "two", "three", "four", "five"];
     const activity = ["alpha", "beta", "gamma", "delta", "epsilon"];
 
@@ -61,7 +59,7 @@ describe("tui activity panel layout", () => {
     ]);
   });
 
-  it("uses opposite scroll directions for bottom-anchored transcript and top-anchored activity", () => {
+  it("uses opposite scroll directions for bottom and top anchors", () => {
     expect(getNextScrollOffset("\u001b[5~", 0, 10, 4, "bottom")).toBe(4);
     expect(getNextScrollOffset("\u001b[6~", 4, 10, 4, "bottom")).toBe(0);
     expect(getNextScrollOffset("\u001b[5~", 4, 10, 4, "top")).toBe(0);

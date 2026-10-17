@@ -4,6 +4,7 @@ export type PromptProvenance =
   | "user_task"
   | "coordinator_handoff"
   | "coordinator_review"
+  | "coordinator_check_in"
   | "coordinator_repair"
   | "coordinator_control";
 

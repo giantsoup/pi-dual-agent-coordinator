@@ -12,6 +12,19 @@ const workflowIdSchema = z.string().min(1);
 const handoffIdSchema = z.string().min(1);
 const iterationSchema = z.number().int().positive();
 
+export const checkInSchema = z.object({
+  schemaVersion: z.literal(1),
+  workflowId: z.string(),
+  handoffId: z.string(),
+  iteration: iterationSchema,
+  turnCount: z.number().int().positive(),
+  decision: z.enum(["continue", "redirect", "blocked"]),
+  reason: z.string().trim().min(1).max(800),
+  nextSteps: z.array(z.string().trim().min(1).max(800)).max(5)
+}).strict().refine((value) => value.decision !== "redirect" || value.nextSteps.length > 0, {
+  message: "A redirect requires concrete next steps."
+});
+
 export const handoffEnvelopeSchema = z.object({
   schemaVersion: schemaVersionSchema,
   workflowId: workflowIdSchema,

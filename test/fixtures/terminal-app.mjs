@@ -20,6 +20,14 @@ const coordinator = new Coordinator({...options, createRoleRuntime: async input 
   const body = JSON.parse(String(init.body));
   const promptContent = (body.input ?? body.messages).filter(item => item.role === 'user').at(-1)?.content;
   const prompt = typeof promptContent === 'string' ? promptContent : promptContent?.map(item => item.text ?? '').join('\n') ?? '';
+  if (input.role === 'A' && prompt.includes('Coordinator process check-in')) {
+    await new Promise(resolve => setTimeout(resolve, 800));
+    return fixtureResponse(block('pi-check-in', {
+      schemaVersion:1, workflowId:field(prompt,'Workflow ID'), handoffId:field(prompt,'Handoff ID'),
+      iteration:Number(field(prompt,'Iteration')), turnCount:Number(prompt.match(/after (\d+) completed model turns/)?.[1]),
+      decision:'continue', reason:'The fixture is collecting the requested history evidence.', nextSteps:[]
+    }));
+  }
   if (prompt.includes('provenance="planning_user"') && prompt.includes('repair fixture')) return fixtureResponse('```pi-plan\n{}\n```');
   if (prompt.includes('provenance="planning_repair"')) {
     await new Promise(resolve => setTimeout(resolve,600));
@@ -27,10 +35,11 @@ const coordinator = new Coordinator({...options, createRoleRuntime: async input 
   }
   if (prompt.includes('provider failure')) return new Response('fixture failure',{status:503});
   if (input.role === 'B') {
-    const workflowId = field(prompt,'Workflow ID');
-    const handoffId = field(prompt,'Handoff ID');
-    const iteration = Number(field(prompt,'Iteration'));
-    if (prompt.includes('history stress')) {
+    const handoff = body.messages.filter(item => item.role === 'user').map(item => typeof item.content === 'string' ? item.content : item.content?.map(part => part.text ?? '').join('\n') ?? '').findLast(text => text.includes('Coordinator handoff for Agent B.')) ?? prompt;
+    const workflowId = field(handoff,'Workflow ID');
+    const handoffId = field(handoff,'Handoff ID');
+    const iteration = Number(field(handoff,'Iteration'));
+    if (handoff.includes('history stress')) {
       const count = stressCalls.get(handoffId) ?? 0;
       if (count < 12) {
         stressCalls.set(handoffId, count + 1);

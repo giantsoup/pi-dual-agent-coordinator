@@ -8,7 +8,7 @@ import { CorrelationState } from "../telemetry/correlation.js";
 import { TelemetryLogger } from "../telemetry/logger.js";
 import { Metrics } from "../telemetry/metrics.js";
 import { getModelDisplayInfo } from "../runtime/model-display.js";
-import type { RoleRuntimeBinding } from "../runtime/create-role-runtime.js";
+import type { RoleRuntimeBinding, SessionPromptOptions } from "../runtime/create-role-runtime.js";
 import type { Role } from "../types/role.js";
 
 interface TurnWaiter {
@@ -41,7 +41,8 @@ const MACHINE_BLOCK_PSEUDO_TOOLS = new Set([
   "pi-execute",
   "pi-handoff",
   "pi-completion",
-  "pi-final"
+  "pi-final",
+  "pi-check-in"
 ]);
 
 export class RuntimeEventBridge {
@@ -130,10 +131,7 @@ export class RuntimeEventBridge {
   public promptAndWaitForTurnEnd(
     binding: RoleRuntimeBinding,
     text: string,
-    options?: {
-      streamingBehavior?: "steer" | "followUp";
-      preflightResult?: (success: boolean) => void;
-    }
+    options?: SessionPromptOptions
   ): Promise<AgentMessage> {
     this.assertActive();
     const sessionKey = this.sessionKey(binding);

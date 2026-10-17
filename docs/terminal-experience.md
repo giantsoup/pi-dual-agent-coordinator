@@ -76,14 +76,25 @@ finish cleanup before another work request starts.
 
 ## Read and navigate the TUI
 
-The current operator turn occupies a workspace with a role-colored border and
-bold heading. Body text uses the terminal's default foreground and background,
+The current operator request occupies a workspace labelled `CURRENT REQUEST`,
+with a role-colored border and bold heading. This number counts operator requests,
+not model responses or tool calls. Body text uses the terminal's default foreground and background,
 without a colored fill. Its heading and current step report actual operation
 state. A is cyan and labelled `A - Senior`;
 B is amber and labelled `B - Junior`. Only an unfinished role run during a running
 operation displays `Active: A - Senior` or `Active: B - Junior`. Idle, approval
 waiting, cancellation and terminal results have separate labels. Inspecting older
-work never changes that live identity. There is no invented progress total.
+work never changes that live identity. The current phase follows the tool list,
+and live activity is the last line below the workspace and optional Activity panel.
+Records follow event order, including tools executed after a senior check-in.
+
+During execution, `B turns` shows completed model turns for the current handoff
+and the next Agent A check, or that A is checking the current boundary. One model
+response and its tool results count as one turn, even if it calls several tools.
+This uses the execution supervisor's counter, including completion repair, and
+resets for each new handoff. A terminal response goes to final review instead of
+a process check. Counts and check state are retained with request history;
+older records without this telemetry do not invent a model-turn count.
 
 Previous turns occupy a slim left rail when at least 104 columns and 14 body rows
 are available. The rail takes 22% of the width, capped at 28 cells. At 80 columns,
@@ -180,8 +191,14 @@ first message. Selecting a session opens history first. Press Enter in history
 to switch; viewing alone leaves runtime bindings unchanged. In plain mode, copy
 the listed path into `/switch A PATH` or `/switch B PATH`.
 
-`/switch` restores that role's Pi conversation context. `/new A` and `/new B`
-start empty conversations. In memory mode, repeated `/new` stays in memory and saved-session switching is unavailable. History previews never repair or rewrite session files; malformed or cyclic history is rejected. Failed switches preserve the current conversation. None of these commands resumes an interrupted
+`/new` starts a new conversation with empty sessions for both agents and a blank
+current view. Previous work remains in History, including after restart.
+`/new A` and `/new B` reset only that role and open the blank current view; the
+other role retains its context. Use `/new` when both agents need a fresh start.
+`/switch` restores that role's Pi conversation context. In memory mode, repeated
+`/new` stays in memory and saved-session switching is unavailable. History
+previews never repair or rewrite session files; malformed or cyclic history is
+rejected. Failed switches preserve the current conversation. None of these commands resumes an interrupted
 coordinator workflow. Startup replays saved outcomes and supersedes unfinished
 workflows with fresh sessions. Status reports that supersession. Cancelled,
 timed-out, and failed operations remain terminal after replay. Session and model

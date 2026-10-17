@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import type { HistoryRecord, HistorySnapshot, RecordOutcome } from "../../types/history.js";
 import type { NormalizedTelemetryEvent } from "../../types/telemetry.js";
 import { safeDisplayText } from "../../security/display-text.js";
+import { executionProgressSchema } from "../../workflow/execution-progress.js";
 
 const eventSchema = z.object({ eventType: z.string(), role: z.enum(["A", "B"]), sessionId: z.string(), timestamp: z.iso.datetime({ offset: true }),
   sessionFile: z.string().optional(), requestId: z.string().optional(), operatorTurnId: z.string().optional(), runId: z.string().optional(),
@@ -35,6 +36,7 @@ function outcome(value: unknown, timestamp: string): RecordOutcome {
 export class HistoryIndex {
   private readonly records = new Map<string, HistoryRecord>();
   private currentTurnId: string | undefined;
+  private resetId: string | undefined;
   private revision = 0;
   private warnings: string[] = [];
   public restore(input: ReturnType<typeof loadHistoryEvents>): void {
@@ -44,15 +46,19 @@ export class HistoryIndex {
     for (const [id, record] of this.records) {
       if (record.outcome.kind === "running") this.records.set(id, { ...record, outcome: { kind: "interrupted", endedAt: null } });
     }
-    this.currentTurnId = [...this.records.values()].filter((record) => record.kind === "turn").at(-1)?.id;
   }
-  public snapshot(): HistorySnapshot { return { records: [...this.records.values()], currentTurnId: this.currentTurnId, revision: this.revision, warnings: this.warnings }; }
+  public snapshot(): HistorySnapshot { return { records: [...this.records.values()], currentTurnId: this.currentTurnId, resetId: this.resetId, revision: this.revision, warnings: this.warnings }; }
   public get(id: string): HistoryRecord | undefined { return this.records.get(id); }
   public observe(event: NormalizedTelemetryEvent): boolean {
     const d = event.details;
     const turnId = event.operatorTurnId ?? [...this.records.values()].find((record) => record.kind === "turn" && event.requestId && record.requestIds.includes(event.requestId))?.id;
     const runId = event.runId;
     let changed = false;
+    if (event.eventType === "ui.conversation_reset" && this.resetId !== event.sessionId) {
+      this.currentTurnId = undefined;
+      this.resetId = event.sessionId;
+      changed = true;
+    }
     const put = (record: HistoryRecord) => {
       if (JSON.stringify(this.records.get(record.id)) === JSON.stringify(record)) return;
       this.records.set(record.id, record); changed = true;
@@ -78,10 +84,15 @@ export class HistoryIndex {
           }
         }
       }
+      if (event.eventType === "workflow.execution_progress") {
+        const progress = executionProgressSchema.safeParse(d);
+        const latest = this.records.get(turn.id);
+        if (progress.success && latest?.kind === "turn") put({ ...latest, execution: progress.data });
+      }
     }
     if (event.eventType === "runtime.run_started" && runId && turnId && !this.records.has(runId)) {
       const provenance = string(d.provenance) ?? "planning_user";
-      const phase = provenance.includes("repair") ? "Repair" : provenance.includes("review") || provenance.includes("control") ? "Review" : provenance.includes("handoff") ? "Execution" : "Planning";
+      const phase = provenance.includes("repair") ? "Repair" : provenance.includes("check_in") ? "Check-in" : provenance.includes("review") || provenance.includes("control") ? "Review" : provenance.includes("handoff") ? "Execution" : "Planning";
       put({ kind: "run", id: runId, parentId: turnId, role: event.role, sessionId: event.sessionId, sessionFile: event.sessionFile,
         branchId: string(d.branchId), requestId: event.requestId, workflowId: string(d.workflowId), handoffId: string(d.handoffId),
         phase, title: phase, timestamp: event.timestamp, outcome: { kind: "running", startedAt: event.timestamp } });

@@ -105,8 +105,8 @@ class Terminal:
             prose_contrast = contrast(DEFAULT_PALETTE['default'], DEFAULT_BACKGROUND)
             check(any(cell.fg == 'default' for cell in text_cells) and prose_contrast >= 7,'default prose exceeds 7:1 contrast: '+label)
             if role:
-                y, row = next((y, row) for y, row in enumerate(rows) if 'CURRENT TURN' in row)
-                check(self.screen.buffer[y][row.index('CURRENT TURN')].fg == ('cyan' if role == 'A' else 'brown'),'current-turn heading retains actual role accent: '+label)
+                y, row = next((y, row) for y, row in enumerate(rows) if 'CURRENT REQUEST' in row)
+                check(self.screen.buffer[y][row.index('CURRENT REQUEST')].fg == ('cyan' if role == 'A' else 'brown'),'current-turn heading retains actual role accent: '+label)
             styles = sorted({(cell.fg, cell.bg, cell.bold, cell.reverse) for cell in cells})
             (EVIDENCE/(label+'.colors.json')).write_text(json.dumps({'palette':'Ghostty 1.3.1 defaults', 'minimumTextContrast':round(minimum,2), 'defaultProseContrast':round(prose_contrast,2), 'styles':[{'foreground':fg,'background':bg,'bold':bold,'reverse':reverse} for fg,bg,bold,reverse in styles]},indent=2)+'\n')
             return '\n'.join(rows)
@@ -152,6 +152,20 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             check(sum(entry['text']=='Execution detail retained.' for entry in entries)==1,'execution prose once')
             check(sum(entry['text']=='Review detail retained.' for entry in entries)==1,'review prose once')
             check(any('TERMINAL_WORKFLOW_OK' in entry['text'] for entry in entries),'final response')
+            for commands in [['/new A','/new B'], ['/new']]:
+                before = terminal.state()
+                for command in commands:
+                    previous = [(r['role'],r['sessionId']) for r in terminal.state()['status']['runtimes']]
+                    notification = terminal.state().get('notification',{}).get('id')
+                    terminal.command(command)
+                    terminal.wait(lambda:[(r['role'],r['sessionId']) for r in terminal.state()['status']['runtimes']]!=previous and terminal.state().get('notification',{}).get('id')!=notification and terminal.state().get('notification',{}).get('code')==('conversation.created' if command=='/new' else 'runtime.session.created'),'fresh sessions')
+                terminal.wait(lambda:terminal.state().get('operation',{}).get('kind')=='idle' and not terminal.state().get('history',{}).get('currentTurnId'),'blank current conversation')
+                check(terminal.state()['history']['records']==before['history']['records'],'new conversation preserves all retained history')
+                check(not any(entry.get('text')=='plan first' for entry in terminal.state().get('conversation',[])),'old conversation removed from current view')
+                expected = b'Created new session for role' if mode=='plain' and len(commands)>1 else b'New conversation'
+                terminal.wait(lambda:expected in terminal.output,'fresh conversation visibly acknowledged')
+                terminal.command('fresh discussion')
+                terminal.wait(lambda:terminal.state().get('operation',{}).get('kind')=='completed','fresh conversation accepts input')
             terminal.command('slow request')
             terminal.wait(lambda:bool(terminal.state().get('liveStream')),'live progress before completion')
             if mode == 'tui':
@@ -253,8 +267,16 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             if history_mode != 'plain':
                 terminal.wait(lambda:b'Active: B - Junior' in terminal.output,'B active label')
                 screen = terminal.snapshot('B-execution-120x40',role='B')
-                if CAPTURE: check('CURRENT TURN' in screen and 'HISTORY' in screen,'selected wide layout')
+                if CAPTURE: check('CURRENT REQUEST' in screen and 'HISTORY' in screen,'selected wide layout')
                 terminal.size(80,24);terminal.snapshot('B-execution-80x24',role='B')
+            terminal.wait(lambda:any(record['kind']=='turn' and record.get('execution',{}).get('checkIn',{}).get('kind')=='checking' for record in terminal.state().get('history',{}).get('records',[])),'senior check-in at completed B turn 10')
+            if history_mode != 'plain':
+                screen = terminal.snapshot('A-check-in-80x24',role='A')
+                if CAPTURE:
+                    check('B turns: 10 completed / A checking turn 10' in screen,'visible count matches actual senior pause')
+                    rows = screen.splitlines()
+                    active = next(i for i, line in enumerate(rows) if 'Active: A - Senior' in line)
+                    check(all(i < active for i, line in enumerate(rows) if '[completed]' in line),'active line follows completed tool records')
             terminal.wait(lambda:any(record['kind']=='run' and record.get('role')=='A' and record.get('phase')=='Review' and record['outcome']['kind']=='running' for record in terminal.state().get('history',{}).get('records',[])),'real A review run')
             if history_mode != 'plain':
                 terminal.wait(lambda:b'Active: A - Senior' in terminal.output,'A active label')
@@ -265,10 +287,23 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             runs = [record for record in records if record['kind']=='run']
             check(b'\x1b[36;49m' in terminal.output and b'\x1b[33;49m' in terminal.output,'standard cyan and amber role styles reach the real TTY') if history_mode != 'plain' else None
             check(history['currentTurnId']==plan_turn,'approval retains originating operator turn')
+            execution = next(record['execution'] for record in records if record['id']==plan_turn)
+            check(execution['completedTurns']==13 and execution['checkIn']['kind']=='final_review','completed B turns include final response and exclude A check-in')
             check(len(calls)==12,'all twelve calls retained')
             check(len([call for call in calls if call['outcome']['kind']=='failed'])==1,'failed call retained')
-            check([run['phase'] for run in runs if run['parentId']==plan_turn]==['Planning','Execution','Review'],'individual planning execution and review runs')
+            check([run['phase'] for run in runs if run['parentId']==plan_turn]==['Planning','Execution','Check-in','Review'],'individual planning execution check-in and review runs')
             check(all(record['outcome']['kind']!='running' for record in records),'no stale running records after completion')
+            progress = next(run for run in runs if run['phase']=='Check-in')
+            terminal.command('/inspect '+progress['id']+' output')
+            terminal.wait(lambda:'Progress check after turn 10: Continue' in terminal.state().get('modal',{}).get('content',''),'readable check-in output')
+            content = terminal.state()['modal']['content']
+            check('schemaVersion' not in content and 'workflowId' not in content and 'pi-check-in' not in content,'check-in protocol hidden from ordinary output')
+            check('collecting the requested history evidence' in content,'useful check-in reason retained')
+            if history_mode != 'plain': terminal.send('\x1b');time.sleep(.08)
+            terminal.command('/inspect '+progress['id']+' metadata')
+            terminal.wait(lambda:'"checkIn"' in terminal.state().get('modal',{}).get('content',''),'explicit check-in metadata')
+            check('schemaVersion' in terminal.state()['modal']['content'],'protocol fields available only on metadata inspection')
+            if history_mode != 'plain': terminal.send('\x1b');time.sleep(.08)
             first = calls[0]
             files = list(terminal.state_root.rglob('*.jsonl'))
             before = {str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in files}

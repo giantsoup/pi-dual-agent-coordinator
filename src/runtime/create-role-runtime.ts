@@ -39,6 +39,14 @@ import type { Role } from "../types/role.js";
 
 export type SupportedThinkingLevel = ThinkingLevel;
 
+export type ModelTurnEnd = Extract<AgentSessionEvent, { type: "turn_end" }>;
+export interface SessionPromptOptions {
+  streamingBehavior?: "steer" | "followUp";
+  preflightResult?: (success: boolean) => void;
+  /** Awaited after tool results, before the next model request. Returned text steers that request. */
+  onTurnEnd?: (event: ModelTurnEnd, signal: AbortSignal) => Promise<string | void>;
+}
+
 export interface SessionLike {
   readonly sessionId: string;
   readonly sessionFile?: string | undefined;
@@ -51,10 +59,7 @@ export interface SessionLike {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(
     text: string,
-    options?: {
-      streamingBehavior?: "steer" | "followUp";
-      preflightResult?: (success: boolean) => void;
-    }
+    options?: SessionPromptOptions
   ): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;

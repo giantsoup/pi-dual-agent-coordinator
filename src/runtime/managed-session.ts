@@ -40,6 +40,7 @@ export class ManagedSession implements SessionLike {
   public prompt(text: string, options?: Parameters<SessionLike["prompt"]>[1]): Promise<void> {
     if (this.pending) throw new Error("A submission is already active.");
     this.stopped = false;
+    const { onTurnEnd, ...piOptions } = options ?? {};
     this.piSession.setAutoCompactionEnabled(this.autoCompactionEnabled);
     let finishAgent = () => {};
     let started = false;
@@ -50,19 +51,37 @@ export class ManagedSession implements SessionLike {
     const unsubscribe = this.piSession.subscribe((event) => {
       if (event.type === "agent_end") finishAgent();
     });
+    let turnError: Error | undefined;
+    // AgentSession notifications are queued and cannot pause the model loop.
+    const unsubscribeTurns = this.piSession.agent.subscribe(async (event, signal) => {
+      if (event.type !== "turn_end" || !onTurnEnd) return;
+      try {
+        this.assertActive();
+        signal.throwIfAborted();
+        const steering = await onTurnEnd(event, signal);
+        this.assertActive();
+        signal.throwIfAborted();
+        if (steering) await this.piSession.steer(steering);
+      } catch (error) {
+        turnError = error instanceof Error ? error : new Error(String(error));
+        throw turnError;
+      }
+    });
     const pending = (async () => {
       try {
-        await this.piSession.prompt(text, { ...options, preflightResult: (success) => {
+        await this.piSession.prompt(text, { ...piOptions, preflightResult: (success) => {
           if (success) this.assertActive();
           options?.preflightResult?.(success);
         } });
         if (started) await agentDone;
         await this.compactionDone;
+        if (turnError) throw turnError;
       } finally {
         this.stopped = true;
         this.piSession.setAutoCompactionEnabled(false);
         unsubscribe();
         unsubscribeAgent();
+        unsubscribeTurns();
         this.pending = undefined;
       }
     })();

@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { withPromptProvenance } from "../app/prompt-provenance.js";
+import { PLANNING_GUIDANCE } from "../app/trust-policy.js";
+import { createExecutionSupervisor, ExecutionCheckInError } from "./execution-supervisor.js";
 import { createHandoffId } from "../handoff/handoff-id.js";
 import { applyTransition } from "./handoff-state-machine.js";
 import { deliverHandoff } from "./deliver-handoff.js";
@@ -12,7 +14,7 @@ import { SessionLedger } from "../persistence/session-ledger.js";
 import { getModelDisplayInfo } from "../runtime/model-display.js";
 import { OperationStoppedError } from "./bind-runtime-events.js";
 import type { RuntimeEventBridge } from "./bind-runtime-events.js";
-import type { RoleRuntimeBinding } from "../runtime/create-role-runtime.js";
+import type { RoleRuntimeBinding, SessionPromptOptions } from "../runtime/create-role-runtime.js";
 import type { CoordinatorUiPhase } from "../types/status.js";
 import type {
   CompletionRecord,
@@ -133,7 +135,7 @@ export class WorkflowOrchestrator {
         };
       }
 
-      return this.runApprovedPlanLoop({
+      return await this.runApprovedPlanLoop({
         ...options,
         state,
         startedAt,
@@ -166,8 +168,8 @@ export class WorkflowOrchestrator {
         userTask: options.userTask,
         details: {
           reason: failure.reason,
-          role: error instanceof WorkflowProtocolError ? error.details.role : "coordinator",
-          unexpectedError: !(error instanceof WorkflowProtocolError)
+          role: error instanceof WorkflowProtocolError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : "coordinator",
+          unexpectedError: !(error instanceof WorkflowProtocolError || error instanceof ExecutionCheckInError)
         }
       });
       state = await this.persistRecord(state, blockedRecord);
@@ -233,8 +235,8 @@ export class WorkflowOrchestrator {
         userTask: options.userTask,
         details: {
           reason: failure.reason,
-          role: error instanceof WorkflowProtocolError ? error.details.role : "coordinator",
-          unexpectedError: !(error instanceof WorkflowProtocolError)
+          role: error instanceof WorkflowProtocolError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : "coordinator",
+          unexpectedError: !(error instanceof WorkflowProtocolError || error instanceof ExecutionCheckInError)
         }
       });
       const state = await this.persistRecord(this.currentState ?? options.state, blockedRecord);
@@ -367,6 +369,7 @@ export class WorkflowOrchestrator {
     iteration: number;
     requestId: string;
     message: Awaited<ReturnType<RuntimeEventBridge["promptAndWaitForTurnEnd"]>>;
+    onTurnEnd: NonNullable<SessionPromptOptions["onTurnEnd"]>;
   }): Promise<CompletionRecord> {
     const first = resolveAgentBResponse({
       message: options.message,
@@ -411,7 +414,8 @@ export class WorkflowOrchestrator {
           iteration: options.iteration,
           sessionRole: "B"
         }
-      )
+      ),
+      { onTurnEnd: options.onTurnEnd }
     );
     const repaired = resolveAgentBResponse({
       message: repairedMessage,
@@ -519,10 +523,19 @@ export class WorkflowOrchestrator {
       });
 
       this.setUiState("execution", "B");
+      const onTurnEnd = createExecutionSupervisor({
+        bindingA: options.bindingA,
+        cwd: options.bindingB.cwd,
+        bridge: this.bridge,
+        envelope,
+        setUiState: this.setUiState,
+        logEvent: (eventType, details) => this.logWorkflowEvent(eventType, eventType === "workflow.execution_progress" ? options.bindingB : options.bindingA, options, details)
+      });
       const { delivered, message: agentBMessage } = await deliverHandoff({
         prepared,
         binding: options.bindingB,
-        bridge: this.bridge
+        bridge: this.bridge,
+        onTurnEnd
       });
       state = await this.persistRecord(state, delivered);
       this.logWorkflowEvent("workflow.iteration_delivered", options.bindingB, options, {
@@ -538,7 +551,8 @@ export class WorkflowOrchestrator {
         handoffId: prepared.handoffId ?? envelope.handoffId,
         iteration,
         requestId: options.requestId,
-        message: agentBMessage
+        message: agentBMessage,
+        onTurnEnd
       });
 
       const completed = createCompletedRecord({
@@ -704,6 +718,7 @@ function renderInitialPlanningMessage(options: {
   return [
     "Coordinator planning prompt for Agent A.",
     "You own planning, review, and final sign-off for this workflow.",
+    ...PLANNING_GUIDANCE,
     "When you finalize a workflow, keep `pi-final.summary` short and make `pi-final.userResponse` specific about implementation details, touched files or areas, verification, and any remaining caveats.",
     `Workflow ID: ${options.workflowId}`,
     `Request ID: ${options.requestId}`,
@@ -907,7 +922,7 @@ function deriveUnexpectedApprovedPlanFailure(
   const workflow = currentState?.workflows[options.initialEnvelope.workflowId];
   const latestIteration = workflow?.currentIteration ?? options.initialEnvelope.iteration;
   const binding =
-    workflow?.latestCompletion || workflow?.finalDecision ? options.bindingA : options.bindingB;
+    error instanceof ExecutionCheckInError || workflow?.latestCompletion || workflow?.finalDecision ? options.bindingA : options.bindingB;
   return {
     workflowId: options.initialEnvelope.workflowId,
     iteration: latestIteration,

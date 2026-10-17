@@ -165,7 +165,7 @@ function createUi(writes?: string[]): ReplUiLike {
   return {
     renderHelp() {
       writes?.push(
-        "Help\nModes switch automatically\n/approve starts execution from a pending plan\n/new creates a fresh role session\n"
+        "Help\nModes switch automatically\n/approve starts execution from a pending plan\n/new starts a fresh conversation for both agents\n"
       );
     },
     getPrompt() {
@@ -283,7 +283,7 @@ describe("bootstrap repl", () => {
     expect(output).toContain("Agent A model: GPT-5.4 (openai/gpt-5.4)");
     expect(output).toContain("Agent B model: Qwen3 Coder Next (local-qwen/qwen3-coder-next)");
     expect(output).toContain("Modes switch automatically");
-    expect(output).toContain("Commands: /help /status /approve /discard /sessions /handoff /cancel /new A|B /switch A|B /quit");
+    expect(output).toContain("Commands: /help /status /approve /discard /sessions /handoff /cancel /new [A|B] /switch A|B /quit");
     expect(output).toContain("Keys: Enter submit | Ctrl+C cancel work, repeat while idle to exit");
   });
 
@@ -342,7 +342,7 @@ describe("bootstrap repl", () => {
     expect(writes.join("")).toContain("Help");
     expect(writes.join("")).toContain("Modes switch automatically");
     expect(writes.join("")).toContain("/approve");
-    expect(writes.join("")).toContain("/new creates a fresh role session");
+    expect(writes.join("")).toContain("/new starts a fresh conversation for both agents");
   });
 
   it("renders a structured pending plan and supports approve/discard commands", async () => {
