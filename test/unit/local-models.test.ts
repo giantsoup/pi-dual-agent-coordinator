@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { lmStudioFixture } from "../helpers/lm-studio.js";
 import { LmStudioModels, LocalModelSwitchError } from "../../src/security/lm-studio.js";
 
-const prior = "qwen3.6-35b-a3b";
+const prior = "qwen/qwen3.8-27b";
 const target = "qwen3-coder-next";
 describe("trusted local model switching", () => {
   it("lists downloaded LLMs and validates tool and context support", async () => {

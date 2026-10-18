@@ -98,6 +98,9 @@ constraints and has no reported audit finding in this run.
 - Active Pi imports use the Earendil namespace, with all four imported Pi packages
   declared directly. The synchronous model picker reads bundled metadata without
   runtime/auth creation or networking. Existing approved model IDs remain explicit.
+- At the operator's request, Agent B now defaults to `lm-studio/qwen/qwen3.8-27b`
+  with API thinking off. Qwen3.6 and Qwen3 Coder Next remain explicit choices.
+  Real SDK and model-switch fixtures exercise the namespaced Qwen3.8 ID.
 - Async ModelRuntime owns only the selected broker model and capability. Other
   provider catalogs/auth adapters are disabled. Creation skips config and catalog
   refresh. All later refreshes force offline mode and the selected provider.
@@ -154,7 +157,12 @@ A later unrestricted-worker run still timed out in two tests, with 364/366
 passing; its log is `candidate-attempt7-default-workers-tests.log`. The final
 configuration caps Vitest at two fork workers to bound sandbox process startup
 contention. The final full-suite command remains normal `npm test`. Earlier candidate runs passed all 365 then-existing tests;
-the new picker race regression makes the final intended total 366.
+the new picker race regression makes the final intended total 366. After the
+operator requested Qwen3.8 as the default, 27 focused tests passed. The first
+full run exposed eight assertions in a shared model-switch fixture that still
+named the former default; 358/366 passed. The fixture now uses Qwen3.8, preserving
+the same rollback and cancellation assertions. That failed run remains in
+`qwen-default-stale-fixture-tests.log`. The table below records the subsequent run.
 
 | Command | Result |
 | --- | --- |
@@ -163,7 +171,7 @@ the new picker race regression makes the final intended total 366.
 | `npm run verify:dependencies` | Passed; 166 files, 9 directly imported package names, exact versions and native compiler checked |
 | `npm install-scripts ls --json` | No unreviewed dependency lifecycle scripts |
 | `npm run check` | Passed with strict TypeScript 7 |
-| `npm test` | 55 files, 366 tests passed in 53.16 seconds; two fork workers |
+| `npm test` | 55 files, 366 tests passed in 57.45 seconds; two fork workers |
 | `npm run build` | Passed; expected JS, declarations/maps, native credential helper |
 | `npm run verify:isolation` | 341 assertions and 2 security tests passed |
 | `PI_TUI_SCREEN_CAPTURE=1 npm run verify:terminal` | 445 assertions passed; TUI/plain mode, rendered screen capture enabled |
@@ -190,9 +198,9 @@ its separate doctor, one-request cloud smoke, and already-loaded local-model che
 The launcher is outside this migration's switch scope and remains unchanged.
 The local verifier now resolves the saved Agent B selection and validates its
 already-loaded inventory entry before constructing a runtime. It never loads or
-downloads a model. This workspace selects `lm-studio/qwen3-coder-next`, rather than
-the application's default model, so checking only the default would miss the
-intended live executor.
+downloads a model. Before the operator's Qwen3.8 request, this workspace selected
+`lm-studio/qwen3-coder-next`. The final snapshot will be separately verified before
+saving the requested `lm-studio/qwen/qwen3.8-27b` default and checking live execution.
 
 ## Rollback
 

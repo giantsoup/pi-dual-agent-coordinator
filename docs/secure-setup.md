@@ -5,9 +5,9 @@ installation outside every workspace that agents can edit. Secure mode supports
 approved `openai` Responses models for Agent A, with API-key authentication, and
 downloaded tool-capable LM Studio models for Agent B without cloud credentials.
 
-Start LM Studio's server on `127.0.0.1:1234` and download `qwen3.6-35b-a3b`.
+Start LM Studio's server on `127.0.0.1:1234` and download `qwen/qwen3.8-27b`.
 The app loads it with a 65,536-token context when needed. The CLI commands are in the
-[README](../README.md). Agent B defaults to `lm-studio/qwen3.6-35b-a3b` and API
+[README](../README.md). Agent B defaults to `lm-studio/qwen/qwen3.8-27b` and API
 thinking off. Doctor checks the downloaded model and its tool/context capabilities
 through LM Studio's `/api/v1/models` endpoint; startup waits for loaded readiness.
 An unavailable local model blocks startup; there is no cloud fallback.

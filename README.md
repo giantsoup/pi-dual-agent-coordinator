@@ -53,7 +53,7 @@ From your own private local terminal, run:
 
 Setup verifies isolation with dummy secrets before opening the secure entry
 dialog. Agent A defaults to `openai/gpt-6-luna` at high reasoning. Agent B defaults to
-`lm-studio/qwen3.6-35b-a3b` with API thinking off. Step 0 stays incomplete until the
+`lm-studio/qwen/qwen3.8-27b` with API thinking off. Step 0 stays incomplete until the
 isolation suite and the live smoke check both pass.
 
 ## Everyday commands
@@ -71,7 +71,7 @@ F3 opens a model picker with GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna for A,
 plus Low/Medium/High reasoning. B lists downloaded LM Studio LLMs with tool calling
 and at least 65,536 context tokens. Use A/B to change agents, arrows to choose,
 Enter to apply, and S to toggle saving for restart. Controls appear in the picker.
-For example, `--model-a openai/gpt-6-luna --thinking-a high --model-b lm-studio/qwen3.6-35b-a3b --thinking-b off`.
+For example, `--model-a openai/gpt-6-luna --thinking-a high --model-b lm-studio/qwen/qwen3.8-27b --thinking-b off`.
 Pi 1.3.0 supplies these GPT descriptors. The app uses its bundled metadata and keeps
 the approved model IDs explicit in `src/security/models.ts`, using the official OpenAI endpoint. Coordinator defaults are
 non-secret and separate from Pi auth. Legacy unrelated credentials remain intact.
@@ -82,15 +82,17 @@ Selecting another B model unloads the old model first. Manual loading also works
 
 ```sh
 lms server start --port 1234 --bind 127.0.0.1
-lms load qwen3.6-35b-a3b --identifier qwen3.6-35b-a3b --context-length 65536 --yes
+lms load qwen/qwen3.8-27b --identifier qwen/qwen3.8-27b --context-length 65536 --yes
 ```
 
 Agent B never retrieves an OpenAI credential or falls back to a cloud model.
 Its server must accept local requests without authentication. If you have saved
 older OpenAI defaults for B, replace them in `~/.pi/dual-agent-coordinator/config.json`
-with `"modelB": "lm-studio/qwen3.6-35b-a3b"` and `"thinkingB": "off"`, or rerun setup.
-Run `npm run verify:local` to exercise Agent B's live LM Studio inference and
-sandboxed write tool in a temporary workspace. It makes local inference requests.
+with `"modelB": "lm-studio/qwen/qwen3.8-27b"` and `"thinkingB": "off"`, or rerun setup.
+After verifying a trusted installation, run its `bin/node scripts/verify-local-executor.mjs`
+from that installation to exercise Agent B's live LM Studio inference and sandboxed
+write/read tools in a temporary workspace. It uses the saved, already-loaded model
+and makes local inference requests without loading or downloading models.
 
 ## REPL basics
 

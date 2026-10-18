@@ -3,7 +3,7 @@ import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Role } from "../types/role.js";
 
 export const SMART_MODEL = "openai/gpt-6-luna";
-export const EXECUTION_MODEL = "lm-studio/qwen3.6-35b-a3b";
+export const EXECUTION_MODEL = "lm-studio/qwen/qwen3.8-27b";
 export const LM_STUDIO_BASE_URL = "http://127.0.0.1:1234/v1";
 export const SMOKE_MAX_TOKENS = 1024;
 
@@ -36,6 +36,7 @@ export function createLocalModel(input: { id: string; name: string; contextWindo
     compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, maxTokensField: "max_tokens" } };
 }
 const localModels: Model<"openai-completions">[] = [
+  { id: "qwen/qwen3.8-27b", name: "Qwen3.8 27B (LM Studio)" },
   { id: "qwen3.6-35b-a3b", name: "Qwen3.6 35B A3B (LM Studio)" },
   { id: "qwen3-coder-next", name: "Qwen3 Coder Next (LM Studio)" }
 ].map(createLocalModel);

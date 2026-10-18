@@ -27,7 +27,7 @@ it("runs Agent B tool calls through the local broker without loading an OpenAI c
     expect(new Headers(init?.headers).get("authorization")).toBe("Bearer lm-studio");
     expect(init?.redirect).toBe("error");
     const body = JSON.parse(String(init?.body));
-    expect(body.model).toBe("qwen3.6-35b-a3b");
+    expect(body.model).toBe("qwen/qwen3.8-27b");
     expect(body.max_tokens).toBe(16384);
     expect(body.reasoning_effort).toBe("none");
     return body.messages.some((message: { role: string }) => message.role === "tool")
@@ -73,7 +73,7 @@ it("keeps automatic compaction on the local provider", async () => {
   const binding = await createRoleRuntime({ ...options, initialSessionManager: manager, role: "B", providerTestBackend: { ...options, modelIds: [], load,
     request: async (url, init) => {
       expect(url).toBe(`${LM_STUDIO_BASE_URL}/chat/completions`);
-      expect(JSON.parse(String(init?.body)).model).toBe("qwen3.6-35b-a3b");
+      expect(JSON.parse(String(init?.body)).model).toBe("qwen/qwen3.8-27b");
       calls++;
       if (calls === 1) {
         const response = fixtureChatResponse("Working context");
@@ -95,7 +95,7 @@ it("restricts each role's startup and model picker to its own provider", async (
   await expect(createRoleRuntime({ ...options, role: "B", modelOverride: "openai/gpt-5.4" })).rejects.toThrow("local LM Studio");
   await expect(createRoleRuntime({ ...options, role: "A", modelOverride: EXECUTION_MODEL })).rejects.toThrow("OpenAI Responses");
   const coordinator = new Coordinator({ ...options, jsonLogs: false, verbose: false });
-  expect(coordinator.getAvailableModels("B").map((model) => model.canonical)).toEqual([EXECUTION_MODEL, "lm-studio/qwen3-coder-next"]);
+  expect(coordinator.getAvailableModels("B").map((model) => model.canonical)).toEqual([EXECUTION_MODEL, "lm-studio/qwen3.6-35b-a3b", "lm-studio/qwen3-coder-next"]);
   expect(coordinator.getAvailableModels("A").every((model) => model.canonical.startsWith("openai/"))).toBe(true);
 });
 

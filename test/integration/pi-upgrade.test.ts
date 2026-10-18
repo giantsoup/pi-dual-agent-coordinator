@@ -34,7 +34,7 @@ it("keeps concurrent A/B brokers isolated across catalog construction, offline r
   const create = (role: "A" | "B") => createRoleRuntime({ ...options, role, sessionMode: "memory", providerTestBackend: {
     cwd: options.cwd, modelIds: [], load, request: async (url, init) => {
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe(role === "A" ? "gpt-6-luna" : "qwen3.6-35b-a3b");
+      expect(body.model).toBe(role === "A" ? "gpt-6-luna" : "qwen/qwen3.8-27b");
       expect(url).toBe(role === "A" ? "https://api.openai.com/v1/responses" : "http://127.0.0.1:1234/v1/chat/completions");
       return role === "A" ? fixtureResponse("A_ONLY") : fixtureChatResponse("B_ONLY");
     }
@@ -47,7 +47,7 @@ it("keeps concurrent A/B brokers isolated across catalog construction, offline r
     if (!(a.session instanceof ManagedSession) || !(b.session instanceof ManagedSession)) throw new Error("Expected real Pi sessions");
     const ar = a.session.piSession.modelRuntime; const br = b.session.piSession.modelRuntime;
     expect((await ar.getAvailable()).map((model) => model.id)).toEqual(["gpt-6-luna"]);
-    expect((await br.getAvailable()).map((model) => model.id)).toEqual(["qwen3.6-35b-a3b"]);
+    expect((await br.getAvailable()).map((model) => model.id)).toEqual(["qwen/qwen3.8-27b"]);
     const at = (await ar.getAuth("openai"))?.auth.apiKey; const bt = (await br.getAuth("lm-studio"))?.auth.apiKey;
     expect(at).toBeTruthy(); expect(bt).toBeTruthy(); expect(at).not.toBe(bt);
     expect(await br.getAuth("openai")).toBeUndefined();

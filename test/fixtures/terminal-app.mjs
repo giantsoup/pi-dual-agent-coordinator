@@ -18,7 +18,7 @@ const options = {command:'repl',cwd:workspace,sessionRoot:stateRoot,sessionMode:
 const executed = new Set();
 const stressCalls = new Map();
 let repairScenario;
-const localInventory = ['qwen3.6-35b-a3b','qwen3-coder-next','google/gemma-4-e4b'].map((key,index) => ({type:'llm',key,display_name:key,max_context_length:262144,
+const localInventory = ['qwen/qwen3.8-27b','qwen3-coder-next','google/gemma-4-e4b'].map((key,index) => ({type:'llm',key,display_name:key,max_context_length:262144,
   capabilities:{trained_for_tool_use:true},loaded_instances:index === 0 ? [{id:key,config:{context_length:65536}}] : []}));
 const localModels = new LmStudioModels({request:async (url,init) => {
   if (init.method === 'GET') return Response.json({models:localInventory});

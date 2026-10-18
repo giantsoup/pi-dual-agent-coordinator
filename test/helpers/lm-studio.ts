@@ -7,7 +7,7 @@ export function localModelFixture(key: string, loaded: boolean, extra = {}) {
 }
 
 export function lmStudioFixture() {
-  const models = [localModelFixture("qwen3.6-35b-a3b", true), localModelFixture("qwen3-coder-next", false), localModelFixture("google/gemma-4-e4b", false)];
+  const models = [localModelFixture("qwen/qwen3.8-27b", true), localModelFixture("qwen3-coder-next", false), localModelFixture("google/gemma-4-e4b", false)];
   const calls: { path: string; body?: { model?: string | undefined; context_length?: number | undefined; instance_id?: string | undefined } }[] = [];
   const failures = new Set<string>();
   let loadHook: ((key: string) => Promise<void>) | undefined;
