@@ -5,9 +5,9 @@ opens on a TTY. Use `repl /absolute/project --plain` for readline.
 
 ## Test locally from this checkout
 
-Start LM Studio on `127.0.0.1:1234` and load the selected Agent B model with
-a 65,536-token context. See [local executor setup](../README.md) for the `lms`
-commands. Agent A uses its Keychain-backed OpenAI credential; B stays local.
+Start LM Studio's server on `127.0.0.1:1234` and download the selected Agent B
+model. The app loads it with a 65,536-token context during startup if needed.
+Agent A uses its Keychain-backed OpenAI credential; B stays local.
 
 Build and copy the current app into a new trusted directory. Run these commands
 from the source checkout; keep that checkout separate from the installation:
@@ -111,8 +111,17 @@ bounded multiline editor viewport and IME cursor marker.
   history and activity when shown. An open body inspector cycles with the editor
   and visible activity. Opening an inspector focuses it explicitly.
 - F2 shows or hides activity diagnostics.
-- In workspace or history, Up/Down selects semantic records. PageUp/PageDown
-  moves by a viewport. Home selects the beginning. End returns to the current
+- Wheel or trackpad scrolling over the request pane moves through its records
+  and visible prose. PageUp/PageDown scrolls a page and Shift+Up/Down scrolls a
+  line, even while the composer has focus. The pane shows counts of lines above
+  and below the viewport, its scroll controls, and Following or Paused status.
+  Scrolling pauses following so incoming events do not pull the view away.
+  End returns to the current request and resumes following. The request heading,
+  operation status and draft stay visible. Long prose previews remain bounded;
+  select a run and inspect its retained output to read beyond that preview.
+- After F6 focuses the workspace, Up/Down selects semantic records and brings
+  the selected record into view. In history, PageUp/PageDown also pages through
+  records. Home selects the beginning. End returns to the current
   turn and resumes following. Space toggles one fold; Right expands; Left
   collapses or selects the parent. Enter opens read-only inspection.
 - Turn folds expose role runs. Run folds expose individual calls. Tool output
@@ -120,8 +129,11 @@ bounded multiline editor viewport and IME cursor marker.
   visible. Each planning, execution, review and protocol-repair run has its own ID.
 - In the focused inspector, 1 selects summary, 2 safe request or objective,
   3 retained output or visible assistant prose, and 4 identity/status metadata.
-  Up/Down and PageUp/PageDown scroll independently; Home/End reaches the output
+  Up/Down, PageUp/PageDown and wheel scrolling over the inspector scroll
+  independently; Home/End reaches the output
   edges. Printable inspector shortcuts never intercept editor typing.
+- Mouse reporting is enabled only during the TUI session. Use your terminal's
+  Shift+drag selection gesture to select text while mouse reporting is active.
 - Esc closes one view at a time, then returns to the editor. Closing help over
   inspection restores inspection first.
 - Editor Enter submits, Shift+Enter inserts a newline, and bracketed paste keeps
@@ -204,13 +216,28 @@ workflows with fresh sessions. Status reports that supersession. Cancelled,
 timed-out, and failed operations remain terminal after replay. Session and model
 changes clear a pending plan, so ask for a new plan before approving work.
 
-`/model A` and `/model B` list models from Pi's secure configured registry.
-`/thinking A` and `/thinking B` list the current model's supported thinking levels.
+F3 opens the model picker. A/B chooses the agent; Up/Down chooses a model;
+Left/Right selects Low, Medium, or High reasoning for A; Enter applies the choice.
+S toggles Remember after restart (on by default), R refreshes, and Esc returns
+to the draft. These controls are shown inside the picker.
+
+A offers GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna. This manual list is maintained
+in `src/security/models.ts`. B lists downloaded LM Studio LLMs, marks readiness,
+and explains when a model lacks tool calling or the required context support.
+When B changes, the app unloads the previous model, loads the selection, and waits
+for readiness. A compact progress panel shows the stage and elapsed time; a
+notification confirms readiness. Esc or Ctrl+C requests cancellation and restores
+the previous model after any pending LM Studio operation settles. Q quits after
+cleanup. Failed restoration marks B unavailable until a model is selected again.
+
+`/model A` and `/model B` open the same picker. In plain mode they print the choices
+and commands. `/thinking A` lists Low, Medium, and High; `/thinking B` lists Off.
 Selections apply to that role's current conversation and next operation.
 Model changes retain conversation context and rebuild the isolated runtime.
+They also work before a role has written its first response to disk.
 Model metadata, endpoint policy, and credential retrieval are validated before
-the replacement is installed. Failed selections leave the previous runtime
-usable. Registry availability does not certify project access to every model.
+the replacement is installed. Failed selections restore the previous runtime and
+local model when possible. Registry availability does not certify project access to every model.
 The API can still reject an inference request.
 
 All model, session, and configuration mutations require idle work. Agent A
@@ -228,7 +255,7 @@ Use the same commands in either terminal interface:
 /config timeout-ms 600000
 ```
 
-Choices are temporary unless you append `save`:
+Explicit command choices are temporary unless you append `save`:
 
 ```text
 /model A openai/gpt-6-luna save
@@ -238,8 +265,8 @@ Choices are temporary unless you append `save`:
 ```
 
 Saving updates only the corresponding non-secret coordinator defaults. Other
-settings remain intact. CLI overrides take precedence on restart. The model
-selector leaves saved defaults unchanged; use the explicit command to save.
+settings remain intact. CLI overrides take precedence on restart. The picker
+saves when Remember after restart is checked; toggle S for a temporary choice.
 
 ## Verify changes
 
@@ -248,6 +275,11 @@ Run `npm run verify:terminal` for real PTY coverage. It requires Python 3, macOS
 and the existing secure runtime prerequisites. It creates isolated workspaces
 and state, uses unique dummy credentials with installed Pi Responses and Chat Completions fixtures,
 and deletes the fixtures afterward. It makes no live inference requests.
+
+After building, `node scripts/verify-model-picker.mjs` verifies a real LM Studio
+switch to downloaded Gemma 4 E4B, readiness and one bounded local inference. It
+requires exactly one loaded model and restores that model in cleanup. Pass a
+different downloaded model key as its argument when needed. It uses no OpenAI key.
 
 See [current workspace verification](current-workspace-verification.md) for
 this implementation's results and real PTY evidence. The earlier

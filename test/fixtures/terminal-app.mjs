@@ -6,6 +6,7 @@ import { bootstrapRepl } from '../../dist/src/app/bootstrap.js';
 import { Coordinator } from '../../dist/src/coordinator/coordinator.js';
 import { HeadlessInteractiveCoordinatorService } from '../../dist/src/app/interactive/service.js';
 import { createRoleRuntime } from '../../dist/src/runtime/create-role-runtime.js';
+import { LmStudioModels } from '../../dist/src/security/lm-studio.js';
 import { fixtureResponse, fixtureChatResponse, fixtureChatToolResponse } from '../../dist/src/security/fixture-provider.js';
 
 const [workspace, stateRoot, mode] = process.argv.slice(2);
@@ -13,10 +14,25 @@ if (!workspace || !stateRoot) throw new Error('Supply isolated workspace and sta
 const block = (name, data) => `\`\`\`${name}\n${JSON.stringify(data)}\n\`\`\``;
 const field = (text, name) => { const value = text.match(new RegExp(`${name}: ([^\\n]+)`))?.[1]; if (!value) throw new Error(`Missing ${name}`); return value; };
 const toolResponse = fixtureChatToolResponse;
-const options = {command:'repl',cwd:workspace,sessionRoot:stateRoot,sessionMode:'persistent',mcpEnabled:false,jsonLogs:false,verbose:false,maxReviewRounds:2,timeoutMs:15000,plainUi:mode === 'plain'};
+const options = {command:'repl',cwd:workspace,sessionRoot:stateRoot,sessionMode:'persistent',mcpEnabled:false,jsonLogs:false,verbose:false,maxReviewRounds:2,timeoutMs:15000,plainUi:mode === 'plain' || mode === 'plain-repair'};
 const executed = new Set();
 const stressCalls = new Map();
-const coordinator = new Coordinator({...options, createRoleRuntime: async input => createRoleRuntime({...input,providerTestBackend:{cwd:workspace,modelIds:[],load:async()=>`dummy-${randomUUID()}`,request:async (_url,init) => {
+let repairScenario;
+const localInventory = ['qwen3.6-35b-a3b','qwen3-coder-next','google/gemma-4-e4b'].map((key,index) => ({type:'llm',key,display_name:key,max_context_length:262144,
+  capabilities:{trained_for_tool_use:true},loaded_instances:index === 0 ? [{id:key,config:{context_length:65536}}] : []}));
+const localModels = new LmStudioModels({request:async (url,init) => {
+  if (init.method === 'GET') return Response.json({models:localInventory});
+  const body = JSON.parse(init.body);
+  if (String(url).endsWith('/unload')) for (const model of localInventory) model.loaded_instances = model.loaded_instances.filter(instance => instance.id !== body.instance_id);
+  else {
+    await new Promise(resolve => setTimeout(resolve,650));
+    const model = localInventory.find(model => model.key === body.model);
+    if (!model) return Response.json({}, {status:404});
+    model.loaded_instances = [{id:body.model+'-ready',config:{context_length:body.context_length}}];
+  }
+  return Response.json({});
+}});
+const coordinator = new Coordinator({...options, localModels, createRoleRuntime: async input => createRoleRuntime({...input,providerTestBackend:{cwd:workspace,modelIds:[],load:async()=>`dummy-${randomUUID()}`,request:async (_url,init) => {
   const body = JSON.parse(String(init.body));
   const promptContent = (body.input ?? body.messages).filter(item => item.role === 'user').at(-1)?.content;
   const prompt = typeof promptContent === 'string' ? promptContent : promptContent?.map(item => item.text ?? '').join('\n') ?? '';
@@ -24,13 +40,18 @@ const coordinator = new Coordinator({...options, createRoleRuntime: async input 
     await new Promise(resolve => setTimeout(resolve, 800));
     return fixtureResponse(block('pi-check-in', {
       schemaVersion:1, workflowId:field(prompt,'Workflow ID'), handoffId:field(prompt,'Handoff ID'),
-      iteration:Number(field(prompt,'Iteration')), turnCount:Number(prompt.match(/after (\d+) completed model turns/)?.[1]),
+      iteration:Number(field(prompt,'Iteration')), turnCount:Number(prompt.match(/after (\d+) (?:completed|successful) model turns/)?.[1]),
       decision:'continue', reason:'The fixture is collecting the requested history evidence.', nextSteps:[]
     }));
   }
-  if (prompt.includes('provenance="planning_user"') && prompt.includes('repair fixture')) return fixtureResponse('```pi-plan\n{}\n```');
+  if (prompt.includes('provenance="planning_user"') && prompt.includes('repair fixture')) {
+    repairScenario = prompt.includes('exhaust repair fixture') ? 'exhaust' : prompt.includes('bounded repair fixture') ? 'bounded' : 'single';
+    return fixtureResponse('```pi-plan\n{}\n```');
+  }
   if (prompt.includes('provenance="planning_repair"')) {
-    await new Promise(resolve => setTimeout(resolve,600));
+    await new Promise(resolve => setTimeout(resolve, repairScenario === 'single' ? 600 : 150));
+    const attempt = Number(/response attempt (\d+)\/10/.exec(prompt)?.[1]);
+    if (repairScenario === 'exhaust' || repairScenario === 'bounded' && attempt < 10) return fixtureResponse('```pi-plan\n{}\n```');
     return fixtureResponse('TERMINAL_REPAIR_OK');
   }
   if (prompt.includes('provider failure')) return new Response('fixture failure',{status:503});
@@ -76,6 +97,7 @@ const coordinator = new Coordinator({...options, createRoleRuntime: async input 
     },cancel(){clearTimeout(timer);}}),{headers:{'Content-Type':'text/event-stream'}});
   }
   const operator = prompt.split('\nOperator turn:\n')[1] ?? prompt;
+  if (operator.includes('scroll fixture')) return fixtureResponse(Array.from({length:60},(_,i)=>`SCROLL_LINE_${i}`).join('\n'));
   if (operator.includes('plan')) return fixtureResponse('Plan prose retained.\n' + block('pi-plan',{schemaVersion:1,objective:prompt.includes('history stress')?'history stress':prompt.includes('tool failure')?'tool failure':prompt.includes('cancel-execution')?'cancel-execution':prompt.includes('cancel-review')?'cancel-review':prompt.includes('review cap')?'review cap':'Write fixture result',summary:'Ready',acceptanceCriteria:['result file verified'],relevantPaths:['result.txt'],executionPlan:['Write result.txt','Verify content']}));
   return fixtureResponse('## Discussion\nUnicode 界 😀\n```ts\nconst result = "ok";\n```\nTERMINAL_DISCUSSION_OK');
 }}})});

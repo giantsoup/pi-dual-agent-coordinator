@@ -236,7 +236,7 @@ export function adaptLegacyCoordinator(
   coordinator: LegacyCoordinatorLike
 ): InteractiveCoordinatorLike {
   return {
-    start: () => coordinator.start(),
+    start: (onProgress) => coordinator.start(onProgress),
     submitUserInput: (text) => coordinator.submitUserInput(text),
     approvePendingPlan: () => coordinator.approvePendingPlan(),
     discardPendingPlan: () => coordinator.discardPendingPlan(),
@@ -248,6 +248,7 @@ export function adaptLegacyCoordinator(
     dispose: () => coordinator.dispose(),
     ...(coordinator.cancelActive ? { cancelActive: coordinator.cancelActive.bind(coordinator) } : {}),
     ...(coordinator.getAvailableModels ? { getAvailableModels: coordinator.getAvailableModels.bind(coordinator) } : {}),
+    ...(coordinator.getModelPickerCatalog ? { getModelPickerCatalog: coordinator.getModelPickerCatalog.bind(coordinator) } : {}),
     ...(coordinator.getSavedSessions ? { getSavedSessions: coordinator.getSavedSessions.bind(coordinator) } : {}),
     ...(coordinator.getSessionHistory ? { getSessionHistory: coordinator.getSessionHistory.bind(coordinator) } : {}),
     ...(coordinator.configureRole ? { configureRole: coordinator.configureRole.bind(coordinator) } : {}),

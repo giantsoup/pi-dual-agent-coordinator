@@ -3,13 +3,13 @@
 Use macOS, Node.js >=20.6, npm, and Apple Command Line Tools. Keep the trusted
 installation outside every workspace that agents can edit. Secure mode supports
 approved `openai` Responses models for Agent A, with API-key authentication, and
-fixed local LM Studio models for Agent B without cloud credentials.
+downloaded tool-capable LM Studio models for Agent B without cloud credentials.
 
-Start LM Studio on `127.0.0.1:1234` and load `qwen3.6-35b-a3b` with that API
-identifier and a 65,536-token context. The CLI commands are in the
+Start LM Studio's server on `127.0.0.1:1234` and download `qwen3.6-35b-a3b`.
+The app loads it with a 65,536-token context when needed. The CLI commands are in the
 [README](../README.md). Agent B defaults to `lm-studio/qwen3.6-35b-a3b` and API
-thinking off. Doctor checks that the selected local model is loaded with at least
-65,536 context tokens through LM Studio's `/api/v1/models` endpoint.
+thinking off. Doctor checks the downloaded model and its tool/context capabilities
+through LM Studio's `/api/v1/models` endpoint; startup waits for loaded readiness.
 An unavailable local model blocks startup; there is no cloud fallback.
 
 ## Prepare without a real key
@@ -43,7 +43,7 @@ An unavailable local model blocks startup; there is no cloud fallback.
 1. Create or select a dedicated project in [OpenAI Platform settings](https://platform.openai.com/settings/).
 2. Create a project API key, with restricted permissions. Allow the permission
    needed to create responses at `POST /v1/responses`, and deny unrelated endpoints.
-   The app uses Pi's built-in model catalog plus a fixed trusted GPT-6 Luna entry and does not need to list models,
+   The app uses Pi's built-in model catalog plus three maintained GPT entries and does not need to list OpenAI models,
    upload files, manage assistants, or administer the organization. Ensure that
    the owning identity's project role permits model requests and Responses access.
 3. Set an expiration date. Record the key's dashboard identifier and expiry, never

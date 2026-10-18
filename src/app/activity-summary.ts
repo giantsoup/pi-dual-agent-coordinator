@@ -291,6 +291,11 @@ function deriveWorkflowUpdate(
           startedAt: event.timestamp
         }
       };
+    case "response.attempt_started":
+    case "response.rejected":
+    case "response.succeeded":
+    case "response.exhausted":
+    case "response.stopping":
     case "workflow.repair_requested":
       return {
         role: "coordinator",
@@ -298,9 +303,8 @@ function deriveWorkflowUpdate(
           role: "coordinator",
           phase: "repair",
           kind: "repair",
-          label: `requesting repair from Agent ${event.role}`,
-          reason:
-            "requesting a repair because the expected machine block was missing or invalid",
+          label: stringValue(event.details.label) ?? `requesting repair from Agent ${event.role}`,
+          reason: stringValue(event.details.reason) ?? "validating the required response",
           workflowId,
           iteration,
           startedAt: event.timestamp

@@ -25,6 +25,7 @@ export async function createProviderBroker(options: {
   provider?: "openai" | "lm-studio" | undefined;
   cwd: string;
   modelIds: string[];
+  resolveLocalInstanceId?: (() => Promise<string>) | undefined;
   load?: (() => Promise<string>) | undefined;
   request?: typeof fetch | undefined;
   maxRequests?: number | undefined;
@@ -74,7 +75,10 @@ export async function createProviderBroker(options: {
         if ("tools" in parsed && Array.isArray(parsed.tools) && parsed.tools.length > 0) throw new Error("Smoke test tools forbidden");
       }
       requests++;
-      if (local) body = JSON.stringify({ ...parsed, reasoning_effort: "none" });
+      if (local) {
+        const instanceId = await options.resolveLocalInstanceId?.();
+        body = JSON.stringify({ ...parsed, ...(instanceId ? { model: instanceId } : {}), reasoning_effort: "none" });
+      }
       if (!local) assertProviderEndpoint(endpoint);
       const upstream = await request(endpoint, {
         method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },

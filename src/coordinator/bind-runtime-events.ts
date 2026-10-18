@@ -1,3 +1,4 @@
+import { ResponseFormatError, PROTOCOL_TOOL_NAMES, type ResponseProgress } from "./response-repair.js";
 import { randomUUID } from "node:crypto";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
@@ -36,15 +37,6 @@ export type RuntimeUiBridgeEvent =
       text: string;
     };
 
-const MACHINE_BLOCK_PSEUDO_TOOLS = new Set([
-  "pi-plan",
-  "pi-execute",
-  "pi-handoff",
-  "pi-completion",
-  "pi-final",
-  "pi-check-in"
-]);
-
 export class RuntimeEventBridge {
   private readonly subscriptions = new Map<Role, () => void>();
   private readonly uiListeners = new Set<(event: RuntimeUiBridgeEvent) => void>();
@@ -53,7 +45,7 @@ export class RuntimeEventBridge {
   private readonly pending = new Set<Promise<void>>();
   private readonly bufferedTurnEnds = new Map<string, AgentMessage[]>();
   private readonly turnWaiters = new Map<string, TurnWaiter[]>();
-  private readonly pseudoToolAttempts = new Map<string, { toolName: string; count: number }>();
+  private readonly submissions = new Map<string, { responseId: string; formatOnly: boolean; failure?: ResponseFormatError }>();
   private lastError: Error | undefined;
   private operatorTurnId: string | undefined;
   private readonly runIds = new Map<Role, string>();
@@ -139,7 +131,7 @@ export class RuntimeEventBridge {
     this.runIds.set(binding.role, runId);
     const tag = text.split("\n", 1)[0] ?? "";
     const attribute = (name: string) => tag.match(new RegExp(`${name}="([^"<>]+)"`))?.[1];
-    const metadata = { runId, operatorTurnId: this.operatorTurnId, requestId: this.requestIds.get(binding.role),
+    const metadata = { runId, responseId: options?.responseId, responseAttempt: options?.responseAttempt ?? 1, formatOnly: options?.formatOnly ?? false, operatorTurnId: this.operatorTurnId, requestId: this.requestIds.get(binding.role),
       workflowId: attribute("workflowId"), handoffId: attribute("handoffId"), provenance: attribute("provenance") ?? "planning_user" };
     const branchId = binding.session.sessionManager?.appendCustomEntry?.("pi-dual-run", metadata) ?? binding.session.sessionManager?.getLeafId();
     const logRun = (eventType: string, details: Record<string, unknown>) => this.logger.log({
@@ -150,10 +142,17 @@ export class RuntimeEventBridge {
     logRun("runtime.run_started", {});
     this.turnIds.set(binding.role, `${this.requestIds.get(binding.role) ?? "turn"}:${++this.turnSequence}`);
     this.bufferedTurnEnds.set(sessionKey, []);
-    this.pseudoToolAttempts.delete(sessionKey);
+    this.submissions.set(sessionKey, { responseId: options?.responseId ?? "unscoped", formatOnly: options?.formatOnly ?? false });
     const turnEndPromise = this.awaitNextTurnEnd(sessionKey);
     void turnEndPromise.catch(() => undefined);
-    const prompt = binding.session.prompt(text, options);
+    const session = binding.session;
+    const prompt = Promise.resolve().then(() => session.prompt(text, { ...options, onTurnEnd: async (event, signal) => {
+      if (event.message.role === "assistant" && event.message.stopReason !== "error" && event.message.stopReason !== "aborted") {
+        const misuse = event.message.content.find((part) => part.type === "toolCall" && (options?.formatOnly || PROTOCOL_TOOL_NAMES.has(part.name)));
+        if (misuse) throw new ResponseFormatError(options?.responseId ?? "unscoped", "Protocol labels are assistant text, and tools are disabled during format-only repairs.");
+      }
+      return options?.onTurnEnd?.(event, signal);
+    } }));
     const pending = (async () => {
       try {
         const [, message] = await Promise.all([prompt, turnEndPromise]);
@@ -163,17 +162,31 @@ export class RuntimeEventBridge {
       } catch (error) {
         if (!this.operationSignal?.aborted) await binding.session.abort();
         logRun("runtime.run_finished", { outcome: this.operationSignal?.aborted ? "interrupted" : "failed", leafId: binding.session.sessionManager?.getLeafId() });
-        throw error;
+        throw this.operationSignal?.aborted ? new OperationStoppedError() : this.submissions.get(sessionKey)?.failure ?? error;
       } finally {
-        this.runIds.delete(binding.role);
-        await prompt.catch(() => undefined);
-        const waiters = this.turnWaiters.get(sessionKey) ?? [];
-        this.turnWaiters.delete(sessionKey);
-        for (const waiter of waiters) waiter.reject(new Error("Prompt ended before turn_end."));
+        try {
+          await prompt.catch(() => undefined);
+          await this.waitForIdle();
+        } finally {
+          this.runIds.delete(binding.role);
+          this.submissions.delete(sessionKey);
+          this.bufferedTurnEnds.delete(sessionKey);
+          const waiters = this.turnWaiters.get(sessionKey) ?? [];
+          this.turnWaiters.delete(sessionKey);
+          for (const waiter of waiters) waiter.reject(new Error("Prompt ended before turn_end."));
+        }
       }
     })();
     void pending.catch(() => undefined);
     return pending;
+  }
+
+  public logResponseEvent(eventType: string, binding: RoleRuntimeBinding, progress: ResponseProgress): void {
+    const event = normalizeLifecycleEvent({ role: binding.role, sessionId: binding.sessionId, sessionFile: binding.sessionFile,
+      requestId: progress.requestId, eventType, details: { ...progress } });
+    event.operatorTurnId = this.operatorTurnId;
+    this.logger.log(event);
+    this.metrics.observe(event);
   }
 
   public async waitForIdle(): Promise<void> {
@@ -202,7 +215,7 @@ export class RuntimeEventBridge {
     }
     this.turnWaiters.clear();
     this.bufferedTurnEnds.clear();
-    this.pseudoToolAttempts.clear();
+    this.submissions.clear();
   }
 
   private async handleEvent(
@@ -242,7 +255,7 @@ export class RuntimeEventBridge {
 
     if (
       event.type === "tool_execution_start" &&
-      MACHINE_BLOCK_PSEUDO_TOOLS.has(event.toolName)
+      (PROTOCOL_TOOL_NAMES.has(event.toolName) || this.submissions.get(sessionKey)?.formatOnly)
     ) {
       this.observePseudoToolLoop(binding, sessionKey, event.toolName);
     }
@@ -251,10 +264,9 @@ export class RuntimeEventBridge {
       return;
     }
 
-    this.pseudoToolAttempts.delete(sessionKey);
     this.turnIds.set(binding.role, `${requestId ?? "turn"}:${++this.turnSequence}`);
 
-    if (event.message.role === "assistant" && event.message.content.some((part) => part.type === "toolCall")) return;
+    if (event.message.role === "assistant" && event.message.stopReason !== "error" && event.message.stopReason !== "aborted" && event.message.content.some((part) => part.type === "toolCall")) return;
 
     const queue = this.turnWaiters.get(sessionKey);
     if (queue && queue.length > 0) {
@@ -340,28 +352,14 @@ export class RuntimeEventBridge {
     sessionKey: string,
     toolName: string
   ): void {
-    const previous = this.pseudoToolAttempts.get(sessionKey);
-    const count =
-      previous && previous.toolName === toolName ? previous.count + 1 : 1;
-    this.pseudoToolAttempts.set(sessionKey, { toolName, count });
-
-    if (count < 3 || !this.turnWaiters.has(sessionKey)) {
-      return;
-    }
-
-    this.subscriptions.get(binding.role)?.();
-    this.subscriptions.delete(binding.role);
-    this.bufferedTurnEnds.delete(sessionKey);
-    this.pseudoToolAttempts.delete(sessionKey);
-
-    const error = new Error(
-      `Agent ${binding.role} repeatedly attempted to call \`${toolName}\` as a tool. Machine blocks must be written as fenced assistant text. Run \`/new ${binding.role}\` to recover this runtime, then retry.`
-    );
+    const submission = this.submissions.get(sessionKey);
+    if (!submission || submission.failure) return;
+    const error = new ResponseFormatError(submission.responseId,
+      submission.formatOnly ? "Tools are disabled during response formatting." : `Protocol label ${toolName} must be fenced assistant text, not a tool.`, toolName);
+    submission.failure = error;
     const waiters = this.turnWaiters.get(sessionKey) ?? [];
     this.turnWaiters.delete(sessionKey);
-    for (const waiter of waiters) {
-      waiter.reject(error);
-    }
+    for (const waiter of waiters) waiter.reject(error);
   }
 }
 

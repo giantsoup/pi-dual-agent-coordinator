@@ -21,9 +21,12 @@ export type AgentBResponse =
 export function resolveAgentAResponse(options: {
   message: Parameters<typeof maybeParseHandoffEnvelope>[0];
   workflowId: string;
+  requestId?: string;
   allowedHandoffIterations: number[];
   allowedFinalIterations: number[];
 }): AgentAResponse {
+  const failure = validateMachineResponse(options.message);
+  if (failure) return { kind: "invalid", reason: failure };
   const text = extractAssistantText(options.message);
   const counts = {
     handoff: countBlocks(text, HANDOFF_BLOCK_TYPE),
@@ -57,6 +60,7 @@ export function resolveAgentAResponse(options: {
         reason: `unexpected handoff iteration ${envelope.iteration}`
       };
     }
+    if (envelope.requestId && options.requestId && envelope.requestId !== options.requestId) return { kind: "invalid", reason: "Unexpected handoff requestId." };
     return { kind: "handoff", envelope };
   }
 
@@ -74,36 +78,24 @@ export function resolveAgentAResponse(options: {
     };
   }
   if (!options.allowedFinalIterations.includes(finalDecision.iteration)) {
-    // In review turns, some models incorrectly reuse the next handoff iteration
-    // for a terminal final. Accept that specific drift and normalize it later.
-    if (
-      options.allowedFinalIterations.length === 1 &&
-      options.allowedHandoffIterations.includes(finalDecision.iteration)
-    ) {
-      const normalizedIteration =
-        options.allowedFinalIterations[0] ?? finalDecision.iteration;
-      return {
-        kind: "final",
-        finalDecision: {
-          ...finalDecision,
-          iteration: normalizedIteration
-        }
-      };
-    }
     return {
       kind: "invalid",
       reason: `unexpected final iteration ${finalDecision.iteration}`
     };
   }
+  if (finalDecision.requestId && options.requestId && finalDecision.requestId !== options.requestId) return { kind: "invalid", reason: "Unexpected final requestId." };
   return { kind: "final", finalDecision };
 }
 
 export function resolveAgentBResponse(options: {
   message: Parameters<typeof maybeParseCompletionRecord>[0];
   workflowId: string;
+  requestId?: string;
   handoffId: string;
   iteration: number;
 }): AgentBResponse {
+  const failure = validateMachineResponse(options.message);
+  if (failure) return { kind: "invalid", reason: failure };
   const text = extractAssistantText(options.message);
   const count = countBlocks(text, COMPLETION_BLOCK_TYPE);
   if (count !== 1) {
@@ -139,9 +131,17 @@ export function resolveAgentBResponse(options: {
     };
   }
 
+  if (completion.requestId && options.requestId && completion.requestId !== options.requestId) return { kind: "invalid", reason: "Unexpected completion requestId." };
   return { kind: "completion", completion };
 }
 
 function countBlocks(text: string, type: string): number {
   return [...text.matchAll(new RegExp("```" + type + "\\b", "g"))].length;
+}
+
+function validateMachineResponse(message: Parameters<typeof extractAssistantText>[0]): string | undefined {
+  if (message.role === "assistant" && message.stopReason === "length") return "Truncated response.";
+  const text = extractAssistantText(message);
+  if ([...text.matchAll(/```pi-[a-z0-9-]+\b/g)].length !== 1) return "Expected exactly one machine block; missing, incorrect, or duplicate blocks.";
+  return undefined;
 }

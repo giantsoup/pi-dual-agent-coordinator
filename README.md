@@ -59,14 +59,18 @@ Use the trusted installation's `dist/src/index.js` entry point:
 - `repl /absolute/project --plain`: use the plain terminal fallback.
 - `repl /absolute/project --no-mcp`: disable MCP for that run.
 
-Agent A accepts approved OpenAI Responses models. Agent B accepts the fixed local
-LM Studio models `lm-studio/qwen3.6-35b-a3b` and `lm-studio/qwen3-coder-next`.
+F3 opens a model picker with GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna for A,
+plus Low/Medium/High reasoning. B lists downloaded LM Studio LLMs with tool calling
+and at least 65,536 context tokens. Use A/B to change agents, arrows to choose,
+Enter to apply, and S to toggle saving for restart. Controls appear in the picker.
 For example, `--model-a openai/gpt-6-luna --thinking-a high --model-b lm-studio/qwen3.6-35b-a3b --thinking-b off`.
-Pi 0.67.68 lacks Luna in its bundled catalog; the app supplies one fixed,
-reviewed descriptor for the official `gpt-6-luna` model and endpoint. Coordinator defaults are
+Pi 0.67.68 lacks these latest GPT descriptors; the app maintains the three picker
+choices in `src/security/models.ts`, using the official OpenAI endpoint. Coordinator defaults are
 non-secret and separate from Pi auth. Legacy unrelated credentials remain intact.
 
-Start LM Studio and load the executor with a 65,536-token context:
+Start LM Studio's server and download the executor. The app loads the selected
+model automatically, shows progress, and waits for 65,536-token context readiness.
+Selecting another B model unloads the old model first. Manual loading also works:
 
 ```sh
 lms server start --port 1234 --bind 127.0.0.1

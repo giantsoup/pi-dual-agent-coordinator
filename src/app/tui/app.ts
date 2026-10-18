@@ -2,6 +2,7 @@ import { roleLabel } from "../../types/history.js";
 import { CurrentWorkspace, liveIdentity, paintRole, type WorkspaceFocus, frame } from "./workspace.js";
 import { bindingMatches, contextualHelp, footerBindings } from "./bindings.js";
 import { safeDisplayText } from "../../security/display-text.js";
+import { ModelPicker } from "./model-picker.js";
 import {
   Editor,
   SelectList,
@@ -60,6 +61,9 @@ export class CoordinatorTuiApp implements Component, Focusable {
   private historyDraft: string | undefined;
   private selection: SelectList | undefined;
   private modalViewport = { width: 1, height: 1 };
+  private workspaceBounds = { left: 1, top: 2, width: 0, height: 0 };
+  private modelPicker: ModelPicker | undefined;
+  private modelPickerKey: string | undefined;
 
   public constructor(
     private readonly tui: TUI,
@@ -100,6 +104,32 @@ export class CoordinatorTuiApp implements Component, Focusable {
 
   public handleInput(data: string): void {
     const state = this.service.getState();
+    const mouse = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
+    if (mouse) {
+      const button = Number(mouse[1]);
+      const x = Number(mouse[2]);
+      const y = Number(mouse[3]);
+      const bounds = this.workspaceBounds;
+      if (state.modal.kind === "none" && mouse[4] === "M" && (button & 64) !== 0 && (button & 3) < 2
+        && x >= bounds.left && x < bounds.left + bounds.width && y >= bounds.top && y < bounds.top + bounds.height) {
+        this.workspace.scroll((button & 1) === 0 ? -3 : 3, state);
+        this.tui.requestRender(true);
+      }
+      return;
+    }
+    if (state.modal.kind === "model_loading") {
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) void this.service.dispatch({ type: "cancel" });
+      else if (data.toLowerCase() === "q") void this.service.dispatch({ type: "quit" });
+      this.tui.requestRender();
+      return;
+    }
+    if (bindingMatches(data, "models")) {
+      void this.service.dispatch({ type: "open_models", role: "A" });
+      this.tui.requestRender(true); return;
+    }
+    if ((state.modal.kind === "model_picker" || state.modal.kind === "model_error") && matchesKey(data, Key.ctrl("c"))) {
+      void this.service.dispatch({ type: "close_modal" }); this.tui.requestRender(true); return;
+    }
     if (bindingMatches(data, "help")) {
       if (state.modal.kind !== "none") this.savedModals.set(state.modal.createdAt, { offset: this.modalScrollOffset, selected: this.selection?.getSelectedItem()?.value });
       void this.service.dispatch({ type: state.modal.kind === "help" ? "close_modal" : "open_help" });
@@ -157,6 +187,11 @@ export class CoordinatorTuiApp implements Component, Focusable {
       return;
     }
 
+    if ((this.paneFocus === "editor" || this.paneFocus === "transcript") && this.workspace.scrollInput(data, state)) {
+      this.tui.requestRender(true);
+      return;
+    }
+
     if (this.paneFocus !== "editor") {
       if (this.handlePaneInput(data, state)) {
         this.tui.requestRender(true);
@@ -198,6 +233,9 @@ export class CoordinatorTuiApp implements Component, Focusable {
     const activityHeight = this.showActivity ? Math.min(8, Math.max(3, Math.floor(availableMainHeight * .27))) : 0;
     const bodyHeight = Math.max(1, availableMainHeight - activityHeight);
     this.historyRailVisible = width >= 104 && bodyHeight >= 14;
+    const railWidth = this.historyRailVisible && !this.workspace.inspector ? Math.min(28, Math.floor(width * .22)) + 1 : 0;
+    const compactHistoryHeight = !this.historyRailVisible && !this.workspace.inspector ? 1 : 0;
+    this.workspaceBounds = { left: railWidth + 1, top: headerLines.length + 1 + compactHistoryHeight, width: width - railWidth, height: bodyHeight - compactHistoryHeight };
     const mainLines = [...this.workspace.render(state, width, bodyHeight), ...(this.showActivity ? frame(`Activity${this.paneFocus === "activity" ? " [focus]" : ""}`, selectPanelViewport(renderActivity(state, width - 2), activityHeight, "bottom", this.activityScrollOffset).lines, width, activityHeight) : [])];
 
     let lines = [...headerLines, ...mainLines, liveLine, ...editorLines, ...footerLines];
@@ -251,11 +289,16 @@ export class CoordinatorTuiApp implements Component, Focusable {
       this.lastModalKey = undefined;
       this.modalScrollOffset = 0;
       this.selection = undefined;
+      this.modelPicker = undefined; this.modelPickerKey = undefined;
       if (this.overlay) { this.overlay.hide(); this.overlay = undefined; this.tui.setFocus(this); }
       return;
     }
 
     const contentKey = `${state.modal.kind}:${state.modal.createdAt}:${state.modal.content}`;
+    if (state.modal.kind === "model_picker" && this.modelPickerKey !== `${state.modal.createdAt}:${state.modal.catalog.role}`) {
+      this.modelPickerKey = `${state.modal.createdAt}:${state.modal.catalog.role}`;
+      this.modelPicker = new ModelPicker(state.modal.catalog);
+    }
     const modalKey = `${contentKey}:${this.terminal.columns}:${this.terminal.rows}`;
     if (modalKey !== this.lastModalKey) {
       const sameModal = this.lastModalKey?.startsWith(`${contentKey}:`);
@@ -272,12 +315,27 @@ export class CoordinatorTuiApp implements Component, Focusable {
           this.modalViewport = { width, height: Math.max(3, this.terminal.rows - this.editor.render(this.terminal.columns).length - 4) };
           const modal = this.service.getState().modal;
           if (modal.kind === "none") return [];
+          if (modal.kind === "model_picker") return this.modelPicker?.render(width, Math.min(19, this.modalViewport.height), ["running", "cancelling"].includes(this.service.getState().operation.kind), Boolean(this.service.getState().pendingPlan)) ?? [];
+          if (modal.kind === "model_loading") {
+            const elapsed = Math.max(0, Math.floor((Date.now() - modal.startedAt) / 1000));
+            const spinner = ["|", "/", "-", "\\"][elapsed % 4];
+            const content = modal.cancelling && modal.progress.phase !== "restoring" ? "Cancelling… waiting for LM Studio before restoring the previous model." : modal.content;
+            const body = ["", ...wrapBlock(`${spinner} ${content}`, width - 4), "", `${elapsed}s elapsed`, "Your conversation and draft are preserved.", "", modal.cancelling ? "Restoring safely. Please wait. | Q quit after cleanup" : "Esc / Ctrl+C cancel | Q quit"];
+            return frame(modal.title, body, width, Math.min(this.modalViewport.height, body.length + 2), modal.role);
+          }
+          if (modal.kind === "model_error") {
+            const height = Math.min(this.modalViewport.height, 15);
+            const choices = this.selection?.render(width - 2) ?? [];
+            const message = wrapBlock(modal.content, width - 4).slice(0, Math.max(1, height - choices.length - 5));
+            return frame(modal.title, [...message, "", ...choices, "", "↑/↓ choose | Enter select | Esc back"], width, height);
+          }
           if (this.selection && modal.kind !== "history") return [padLine(modal.title, width), ...modal.content.split("\n").slice(0, 2).map((line) => padLine(line, width)), padLine("Up/Down choose | Enter apply | Esc close | Ctrl+C cancel", width), ...this.selection.render(width)].slice(0, this.modalViewport.height);
           return renderModal(modal.kind === "help" ? { ...modal, content: contextualHelp(this.workspace.context) + "\n\n" + modal.content } : modal, width, this.modalViewport.height, this.modalScrollOffset);
         },
         invalidate() {},
         handleInput: (data) => this.handleInput(data)
-      }, { width: "100%", row: 2, maxHeight: Math.max(3, this.terminal.rows - this.editor.render(this.terminal.columns).length - 4), margin: { top: 2, bottom: this.editor.render(this.terminal.columns).length + 2, left: 0, right: 0 } });
+      }, { width: state.modal.kind.startsWith("model_") ? Math.min(96, Math.max(1, this.terminal.columns - 4)) : "100%", row: 2,
+        maxHeight: Math.max(3, this.terminal.rows - this.editor.render(this.terminal.columns).length - 4), margin: { top: 2, bottom: this.editor.render(this.terminal.columns).length + 2, left: 0, right: 0 } });
     }
   }
 
@@ -288,6 +346,12 @@ export class CoordinatorTuiApp implements Component, Focusable {
   ): boolean {
     if (state.modal.kind === "none") {
       return false;
+    }
+
+    if (state.modal.kind === "model_picker") {
+      const action = this.modelPicker?.handleInput(data, ["running", "cancelling"].includes(state.operation.kind));
+      if (action) void this.service.dispatch(action);
+      return true;
     }
 
     if (this.selection && (state.modal.kind !== "history" || matchesKey(data, Key.enter))) {
@@ -339,7 +403,9 @@ function renderFooter(
 ): string[] {
   const baseHint = footerBindings(paneFocus);
   const statusHint = transientHint ?? state.lastError?.message ?? state.notification?.message ??
-    (paneFocus === "editor" ? "Enter submit | Tab complete | Shift+Enter newline | /help commands" : "Arrows select | PgUp/PgDn page | End current/follow | Esc back | Ctrl+C cancel");
+    (paneFocus === "editor" || paneFocus === "transcript" ? "Shift+Up/Down scroll line | End follow | F6 select records | Esc editor"
+      : paneFocus === "inspector" ? "Up/Down scroll | PgUp/PgDn page | Home/End edges | Esc back"
+      : "Arrows select | PgUp/PgDn page | End current/follow | Esc back | Ctrl+C cancel");
   return [padLine(baseHint, width), padLine(safeDisplayText(statusHint), width)];
 }
 

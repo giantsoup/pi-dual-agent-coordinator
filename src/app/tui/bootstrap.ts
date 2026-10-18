@@ -21,7 +21,6 @@ export async function bootstrapTuiRepl(
     dependencies.createService?.(options) ??
     new HeadlessInteractiveCoordinatorService(new Coordinator(options));
   try {
-    await service.start();
     await runTerminal(service, dependencies);
   } finally { await service.dispose(); }
 }
@@ -52,10 +51,13 @@ async function runTerminal(service: InteractiveCoordinatorService, dependencies:
   const shutdown = () => { void service.dispatch({ type: "quit" }).finally(() => resolveExit?.()); };
   const signals = ["SIGTERM", "SIGHUP", "SIGINT"] as const;
   for (const signal of signals) process.on(signal, shutdown);
-  const elapsedTimer = setInterval(() => { if (service.getState().operation.kind === "running") tui.requestRender(); }, 1000);
+  const elapsedTimer = setInterval(() => { if (service.getState().operation.kind === "running" || service.getState().modal.kind === "model_loading") tui.requestRender(); }, 500);
   terminal.write("\u001B[?1049h");
   try {
     tui.start();
+    terminal.write("\u001B[?1000h\u001B[?1006h");
+    tui.requestRender(true);
+    await service.start();
     tui.requestRender(true);
     await exitPromise;
   } finally {
@@ -66,6 +68,6 @@ async function runTerminal(service: InteractiveCoordinatorService, dependencies:
       // Pi 0.67.68 enables its keyboard fallback after 150 ms, even if startup throws.
       await terminal.drainInput(1000, 200).catch(() => undefined);
       tui.stop();
-    } finally { terminal.write("\u001B[?25h\u001B[?1049l"); }
+    } finally { terminal.write("\u001B[?1006l\u001B[?1000l\u001B[?25h\u001B[?1049l"); }
   }
 }

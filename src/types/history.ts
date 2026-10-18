@@ -1,3 +1,4 @@
+import type { ResponseProgress } from "../coordinator/response-progress.js";
 import type { Role } from "./role.js";
 import type { ExecutionProgress } from "../workflow/execution-progress.js";
 
@@ -13,7 +14,7 @@ interface HistoryBase {
   outcome: RecordOutcome;
 }
 export type HistoryRecord =
-  | (HistoryBase & { kind: "turn"; requestIds: string[]; planId?: string | undefined; workflowId?: string | undefined; execution?: ExecutionProgress | undefined })
+  | (HistoryBase & { kind: "turn"; requestIds: string[]; planId?: string | undefined; workflowId?: string | undefined; execution?: ExecutionProgress | undefined; responseProgress?: ResponseProgress | undefined })
   | (HistoryBase & { kind: "run"; parentId: string; role: Role; sessionId: string; sessionFile?: string | undefined; branchId?: string | undefined; requestId?: string | undefined; workflowId?: string | undefined; handoffId?: string | undefined; phase: string })
   | (HistoryBase & { kind: "tool"; parentId: string; role: Role; sessionId: string; callId: string; toolName: string; request: string; preview: string });
 export interface HistorySnapshot {

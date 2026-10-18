@@ -8,6 +8,7 @@ export async function deliverHandoff(options: {
   prepared: HandoffRecord;
   binding: RoleRuntimeBinding;
   bridge: RuntimeEventBridge;
+  responseId?: string;
   onTurnEnd?: SessionPromptOptions["onTurnEnd"];
 }): Promise<{
   delivered: HandoffRecord;
@@ -44,6 +45,7 @@ export async function deliverHandoff(options: {
         }
       ),
       {
+        responseId: options.responseId,
         ...(options.onTurnEnd ? { onTurnEnd: options.onTurnEnd } : {}),
         preflightResult: (success) => {
           clearTimeout(timeoutId);

@@ -19,6 +19,9 @@ export function replayHandoffState(records: HandoffRecord[]): WorkflowState {
 }
 
 export function applyTransition(state: WorkflowState, record: HandoffRecord): WorkflowState {
+  if (record.status === "repair_requested" && record.details?.responseKind === "planning") {
+    return { ...state, records: [...state.records, record] };
+  }
   const existing = state.workflows[record.workflowId];
   const status = deriveWorkflowStatus(record, existing?.status);
   const iterations = upsertIteration(existing?.iterations ?? [], record);

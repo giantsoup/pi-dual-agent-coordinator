@@ -513,7 +513,7 @@ Proposed approach below.
     await coordinator.dispose();
   });
 
-  it("keeps planning-turn repair inside the planning UI phase", async () => {
+  it("shows bounded planning response attempts while remaining in planning conversation mode", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-dual-plan-repair-status-unit-"));
     const repairGate = createDeferred<void>();
 
@@ -556,18 +556,18 @@ Proposed approach below.
 
     await waitFor(
       () =>
-        coordinator.getStatus().phase === "planning" &&
+        coordinator.getStatus().phase === "repair" &&
         coordinator.getStatus().coordinatorActivity ===
-          "repairing Agent A planning response" &&
+          "Agent A planning response attempt 2/10" &&
         coordinator.getStatus().conversationMode === "planning"
     );
 
     const duringRepair = coordinator.getStatus();
-    expect(duringRepair.phase).toBe("planning");
+    expect(duringRepair.phase).toBe("repair");
     expect(duringRepair.conversationMode).toBe("planning");
     expect(duringRepair.activeRole).toBe("A");
     expect(duringRepair.activeWorkflowId).toBeUndefined();
-    expect(duringRepair.coordinatorActivity).toBe("repairing Agent A planning response");
+    expect(duringRepair.coordinatorActivity).toBe("Agent A planning response attempt 2/10");
     expect(duringRepair.coordinatorReason).toContain("planning mode only accepts");
 
     repairGate.resolve();
@@ -890,7 +890,7 @@ Proposed approach below.
 
     expect(result.workflow?.status).toBe("blocked");
     expect(result.userResponse).toContain(
-      "repeatedly attempted to call `pi-completion` as a tool"
+      "Tools are disabled during response formatting."
     );
     expect(coordinator.getStatus().workflowStatus).toBe("blocked");
     expect(coordinator.getStatus().activeWorkflowId).toBeUndefined();

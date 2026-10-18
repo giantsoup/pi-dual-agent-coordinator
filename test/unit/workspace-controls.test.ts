@@ -25,6 +25,115 @@ async function setup() {
 }
 const strip = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 describe("selected workspace through shared history service", () => {
+  it.each([[80, 24], [120, 40]])("scrolls records and prose while preserving the draft at %sx%s", async (width, height) => {
+    const { app, service, terminal, coordinator } = await setup();
+    try {
+      terminal.columns = width; terminal.rows = height;
+      const getState = service.getState.bind(service);
+      let liveStream = { role: "B" as const, sessionId: "s", startedAt: "now", text: Array.from({ length: 60 }, (_, i) => `PROSE[${i}]`).join("\n") };
+      vi.spyOn(service, "getState").mockImplementation(() => ({ ...getState(), liveStream }));
+      app.handleInput("draft stays here");
+      const screen = () => strip(app.render(width).join("\n"));
+      const position = () => Number(screen().match(/↑ (\d+)/)?.[1]);
+      expect(screen()).toContain("PROSE[59]");
+      expect(screen()).toContain("Wheel/PgUp/PgDn scroll");
+      expect(screen()).toContain("F6 panes");
+      const bottom = position();
+      app.handleInput("\x1b[5~");
+      expect(position()).toBeLessThan(bottom);
+      expect(screen()).toContain("Paused, End follows");
+      const page = position();
+      app.handleInput("\x1b[1;2A"); expect(position()).toBe(page - 1);
+      app.handleInput("\x1b[1;2B"); expect(position()).toBe(page);
+      app.handleInput("\x1b[6~"); expect(position()).toBe(bottom);
+      app.handleInput("\x1b[5~");
+      const paused = screen();
+      liveStream = { ...liveStream, text: liveStream.text + "\nPROSE[60]" };
+      expect(position()).toBe(page);
+      expect(screen()).not.toContain("PROSE[60]");
+      app.handleInput("\x1bOP"); app.render(width); app.handleInput("\x1b");
+      expect(position()).toBe(page);
+      expect(screen()).toContain("draft stays here");
+      for (let i = 0; i < 20; i++) { app.handleInput("\x1b[5~"); app.render(width); }
+      expect(position()).toBe(0);
+      expect(screen()).toContain("read file-0");
+      expect(screen()).not.toContain("PROSE[60]");
+      app.handleInput("\x1b[F");
+      expect(screen()).toContain("PROSE[60]");
+      expect(screen()).toContain("Following");
+      expect(screen()).toContain("CURRENT REQUEST");
+      expect(screen()).toContain("draft stays here");
+      expect(paused).not.toContain("PROSE[59]");
+      expect(coordinator.submitUserInput).not.toHaveBeenCalled();
+      expect(coordinator.replaceRuntime).not.toHaveBeenCalled();
+      const lines = app.render(width);
+      expect(lines).toHaveLength(height);
+      expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+    } finally { await service.dispose(); }
+  });
+  it("anchors paused prose when new calls arrive and the live preview rolls over", async () => {
+    const { service, emit } = await setup();
+    try {
+      const workspace = new CurrentWorkspace(service, () => {});
+      const stream = { role: "B" as const, sessionId: "s", startedAt: "now", text: Array.from({ length: 70 }, (_, i) => `ANCHOR[${i}]`).join("\n") };
+      let state = { ...service.getState(), liveStream: stream };
+      const screen = () => strip(workspace.render(state, 80, 17).join("\n"));
+      const prose = () => screen().split("\n").filter((line) => line.includes("ANCHOR["));
+      screen(); workspace.scroll(-10, state);
+      const before = prose();
+      expect(before.length).toBeGreaterThan(0);
+      emit("pi.tool_execution_start", { toolName: "read", toolCallId: "new-call", toolArgs: { path: "arrived-while-paused" } });
+      state = { ...service.getState(), liveStream: { ...stream, text: Array.from({ length: 140 }, (_, i) => `ANCHOR[${i}]`).join("\n") } };
+      expect(prose()).toEqual(before);
+      expect(screen()).toContain("Paused, End follows");
+      workspace.scrollInput("\x1b[F", state);
+      expect(screen()).toContain("ANCHOR[139]");
+      expect(screen()).toContain("Following");
+    } finally { await service.dispose(); }
+  });
+  it.each([[80, 24], [120, 40]])("routes wheel events only over the request pane at %sx%s", async (width, height) => {
+    const { app, service, terminal, emit } = await setup();
+    try {
+      for (let i = 12; i < 40; i++) emit("pi.tool_execution_start", { toolName: "read", toolCallId: `call-${i}`, toolArgs: { path: `file-${i}` } });
+      terminal.columns = width; terminal.rows = height;
+      app.handleInput("mouse draft");
+      const screen = () => strip(app.render(width).join("\n"));
+      const position = () => Number(screen().match(/↑ (\d+)/)?.[1]);
+      const bottom = position();
+      expect(bottom).toBeGreaterThan(0);
+      app.handleInput("\x1b[<64;50;8M");
+      expect(position()).toBe(Math.max(0, bottom - 3));
+      app.handleInput("\x1b[<65;50;8M");
+      expect(position()).toBe(bottom);
+      app.handleInput(`\x1b[<64;50;${height}M`);
+      app.handleInput("\x1b[<64;50;1M");
+      app.handleInput("\x1b[<0;50;8M");
+      app.handleInput("\x1b[<64;50;8m");
+      if (width >= 104) app.handleInput("\x1b[<64;5;8M");
+      expect(position()).toBe(bottom);
+      app.handleInput("\x1bOP"); app.render(width);
+      app.handleInput("\x1b[<64;50;8M"); app.handleInput("\x1b");
+      expect(position()).toBe(bottom);
+      expect(screen()).toContain("mouse draft");
+      expect(screen()).not.toContain("<64;");
+    } finally { await service.dispose(); }
+  });
+  it("scrolls inspector output under the pointer without moving editor focus", async () => {
+    const { app, service } = await setup();
+    try {
+      app.render(80); app.handleInput("inspector draft");
+      app.handleInput("\x1b[17~"); app.handleInput("\x1b[H"); app.handleInput("\x1b[B"); app.handleInput("\r");
+      await settle(); app.handleInput("3"); await settle();
+      app.handleInput("\x1b[17~");
+      expect(strip(app.render(80).join("\n"))).toContain("line 1 of 400");
+      app.handleInput("\x1b[<65;20;8M");
+      const screen = strip(app.render(80).join("\n"));
+      expect(screen).toContain("line 4 of 400");
+      expect(screen).not.toContain("INSPECTOR [focus]");
+      app.handleInput("!");
+      expect(app.render(80).join("\n")).toContain("inspector draft!");
+    } finally { await service.dispose(); }
+  });
   it("distinguishes requests from supervised B turns and keeps live activity after the tools", async () => {
     const { app, service, emit } = await setup();
     try {
@@ -33,7 +142,7 @@ describe("selected workspace through shared history service", () => {
       emit("pi.tool_execution_start", { toolName: "bash", toolCallId: "active", toolArgs: { command: "verify-current-work" } });
       const lines = strip(app.render(80).join("\n")).split("\n");
       expect(lines.join("\n")).toContain("CURRENT REQUEST 1");
-      expect(lines.join("\n")).toContain("B turns: 9 completed / A check at 10");
+      expect(lines.join("\n")).toContain("B turns: 9 successful / A check at 10");
       const tool = lines.findIndex((line) => line.includes("[running] bash verify-current-work"));
       const active = lines.findIndex((line) => line.includes("Active: B - Junior"));
       expect(tool).toBeGreaterThan(-1);
@@ -57,14 +166,14 @@ describe("selected workspace through shared history service", () => {
       expect(check).toBeGreaterThan(-1);
       expect(resumed).toBeGreaterThan(check);
       expect(active).toBeGreaterThan(resumed);
-      expect(lines.join("\n")).toContain("B turns: 10 completed / A check at 20");
+      expect(lines.join("\n")).toContain("B turns: 10 successful / A check at 20");
       expect(lines).toHaveLength(height);
       app.handleInput("\x1bOQ"); // F2 opens the optional activity panel.
       const activity = strip(app.render(width).join("\n")).split("\n");
       expect(activity.findIndex((line) => line.includes("Active: B - Junior"))).toBeGreaterThan(activity.findIndex((line) => line.includes("Activity")));
       expect(activity.some((line) => line.includes("Now:"))).toBe(true);
       expect(activity.slice(activity.findIndex((line) => line.includes("Now:")) + 1).join("\n")).not.toContain("[completed]");
-      expect(activity.join("\n")).toContain("B turns: 10 completed / A check at 20");
+      expect(activity.join("\n")).toContain("B turns: 10 successful / A check at 20");
     } finally { await service.dispose(); }
   });
   it("preserves draft, historical selection and inspector range through F1 and resize without runtime mutations", async () => {

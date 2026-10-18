@@ -3,6 +3,15 @@ import type { ParsedReplCommand } from "../app/cli.js";
 import type { CoordinatorStatusSnapshot } from "./status.js";
 import type { Role } from "./role.js";
 import type { PendingExecutionPlanSnapshot } from "./workflow.js";
+import type { ModelPickerCatalog, ModelSwitchProgress } from "./model-selection.js";
+
+interface ModalContent {
+  title: string;
+  content: string;
+  format: "text" | "json";
+  createdAt: string;
+  choices?: Array<{ label: string; value: string; action: UiAction }> | undefined;
+}
 
 export interface UiNotification {
   id: string;
@@ -35,13 +44,15 @@ export type UiModalState =
       kind: "none";
     }
   | {
-      kind: "help" | "status" | "sessions" | "handoff" | "settings" | "history" | "records" | "record_detail";
+      kind: "help" | "status" | "sessions" | "handoff" | "settings" | "history" | "records" | "record_detail" | "model_error";
       title: string;
       content: string;
       format: "text" | "json";
       createdAt: string;
       choices?: Array<{ label: string; value: string; action: UiAction }> | undefined;
-    };
+    }
+  | (ModalContent & { kind: "model_picker"; catalog: ModelPickerCatalog })
+  | (ModalContent & { kind: "model_loading"; role: Role; operation: "inventory" | "switch" | "startup"; progress: ModelSwitchProgress; startedAt: number; cancelling: boolean });
 
 export interface UiRuntimeActivityTotals {
   reads: number;

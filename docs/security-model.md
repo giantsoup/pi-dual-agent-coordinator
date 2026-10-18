@@ -24,7 +24,7 @@ Redirects are forbidden. Endpoint, proxy, TLS, and Node injection overrides fail
 closed. Neither `auth.json` nor `models.json` is evaluated for authentication.
 
 Agent B uses a separate broker that forwards only
-`POST http://127.0.0.1:1234/v1/chat/completions` for its selected fixed LM Studio
+`POST http://127.0.0.1:1234/v1/chat/completions` for its selected downloaded LM Studio
 model. It never retrieves the OpenAI key. Its upstream bearer value is an inert
 placeholder, and LM Studio must run without API authentication. Both brokers
 require a fresh private capability, reject redirects, and limit request and
@@ -90,11 +90,12 @@ empty trusted directory. Workspace `AGENTS.md` is read as text through the
 isolated read tool, so a symlink to a protected credential cannot turn the
 resource loader into a credential reader. Coordinator-authored role prompts and
 the built-in MCP extension are the only executable extensions.
-The fixed trusted model catalog adds the official `gpt-6-luna` descriptor to Pi's
-built-in OpenAI models for Agent A and Qwen3.6 35B A3B and Qwen3 Coder Next through
-LM Studio for Agent B. Local descriptors use a 65,536-token context and API thinking
-off. Load the local model with at least this context length. This does not accept
-endpoint or model data from files.
+The trusted catalog adds official GPT-6.1 Sol, GPT-5.6 Terra and GPT-6 Luna
+descriptors to Pi's built-in OpenAI models for Agent A. B's downloaded LLM keys
+and capabilities are validated from the fixed loopback LM Studio inventory.
+Local descriptors use a 65,536-token context and API thinking off. The broker
+validates the selected logical model and resolves its ready instance before each
+request. This does not accept endpoint or model data from files.
 High reasoning is checked in the actual installed provider's serialized request;
 the no-tools live smoke uses the saved Agent A reasoning level and a 1,024-token
 cap that includes reasoning.
@@ -165,6 +166,13 @@ as startup. Agent A retrieves authentication through the trusted broker; Agent B
 uses only its local broker. Both preserve role isolation. Arbitrary endpoints, project extensions, and
 plaintext authentication remain disabled. Session history and restoration stay
 inside the role's private session directory. Saved defaults contain no credentials.
+
+LM Studio inventory, load and unload run only in the trusted application process
+against `127.0.0.1:1234/api/v1/models`. These management operations are absent from
+agent tools and the inference broker, and receive no OpenAI credential. Switching
+waits for local readiness before committing the runtime and saved defaults.
+Cancellation waits for pending server operations to settle and restores the old
+model; failed restoration blocks new work until B is configured successfully.
 
 Cancellation aborts Pi compaction, branch summaries, and agent work, then drains the owned prompt and runtime cleanup. Queued preflight cannot start a provider request after cancellation.
 Sandboxed tool workers kill their process group on abort. MCP tool requests

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subagent recommendation</title>
+<style>
+*{box-sizing:border-box}body{margin:0;color:var(--foreground,#202020);font:15px/1.5 var(--font-sans,system-ui)}h2{font-size:23px;line-height:1.25;margin:0 0 10px}p{margin:0 0 16px}.muted,small{color:var(--muted-foreground,#666)}.control{padding:18px;border:1px solid var(--border,#ddd);border-radius:var(--radius,10px);background:var(--secondary,#f6f6f6)}.control strong{display:block;margin-bottom:4px}.stem{text-align:center;color:var(--muted-foreground,#666);padding:5px}.branches{display:grid;grid-template-columns:1fr 1fr;gap:14px}.branch{border:1px solid var(--border,#ddd);border-radius:var(--radius,10px);padding:16px}.label{font-size:12px;text-transform:uppercase;letter-spacing:.06em}.branch.a{border-top:3px solid var(--chart-1,#4581a0)}.branch.b{border-top:3px solid var(--chart-2,#b78232)}.branch strong{display:block;font-size:18px;margin:4px 0}.child{margin-top:14px;padding:12px 16px;background:var(--secondary,#f6f6f6);border-radius:var(--radius,8px);font-size:14px}.child b{display:block}.phases{margin-top:22px;border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;vertical-align:top;padding:11px 8px;border-bottom:1px solid var(--border,#ddd)}th:first-child,td:first-child{padding-left:0}th{font-weight:600}td:last-child,th:last-child{white-space:nowrap;text-align:right;padding-right:0}.guard{margin-top:17px;padding:16px;background:var(--secondary,#f6f6f6);border-radius:var(--radius,10px)}small{display:block;margin-top:14px;font-size:12px}a{color:inherit;text-underline-offset:3px}@media(max-width:450px){.branches{gap:8px}.branch{padding:12px}.child{padding:12px}.branch strong{font-size:16px}th,td{padding:9px 5px}.phases{font-size:13px}} 
+</style>
+</head>
+<body>
+<h2>Give A and B bounded helpers</h2>
+<p>Use independent Pi sessions managed by this coordinator. Start with helpers that investigate and review; add isolated coding helpers afterward.</p>
+<div class="control"><strong>The coordinator owns every child task</strong><span class="muted">Permissions, queue, shared budgets, cancellation, results, and retained history.</span></div>
+<div class="stem" aria-hidden="true">↓</div>
+<div class="branches">
+ <div class="branch a"><span class="label">Agent A</span><strong>Plans and signs off</strong><span class="muted">Keeps final review authority.</span><div class="child"><b>Read-only helpers</b>Repository scouts and independent reviewers.<br><span class="muted">A's approved OpenAI model.</span></div></div>
+ <div class="branch b"><span class="label">Agent B</span><strong>Implements the plan</strong><span class="muted">Keeps execution ownership.</span><div class="child"><b>Read-only helpers first</b>Code tracing and failure investigation.<br><span class="muted">B's approved local model.</span></div></div>
+</div>
+<table class="phases"><thead><tr><th>Release</th><th>What it adds</th><th>Estimated effort</th></tr></thead><tbody><tr><td>First</td><td>Both agents can delegate research and review, with secure lifecycle and terminal inspection.</td><td>6–10 days</td></tr><tr><td>Later</td><td>B delegates coding into isolated workspaces, with patch integration and conflict handling.</td><td>+6–10 days</td></tr></tbody></table>
+<div class="guard"><b>Start small.</b> One delegation level, at most two active children globally, and one local inference request at a time. Raise local concurrency after measuring accepted results, latency, and memory use.</div>
+<small>Engineering estimates for one developer familiar with the app. Research only; no implementation or performance benchmark. Pi 0.67.68 supplies the session machinery, while its <a href="https://github.com/badlogic/pi-mono/blob/v0.67.68/packages/coding-agent/examples/extensions/subagent/README.md">subagent example</a> needs adaptation to preserve this app's security controls.</small>
+</body>
+</html>

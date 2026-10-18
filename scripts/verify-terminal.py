@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import struct
@@ -62,7 +63,7 @@ class Terminal:
         self.process = subprocess.Popen(['node',str(REPO/'test/fixtures/terminal-app.mjs'),str(self.workspace),str(self.state_root),mode],stdin=self.slave,stdout=self.slave,stderr=self.slave,env=env)
         self.output = b''
         if startup_failure: self.wait(lambda:self.process.poll() is not None,'startup failure')
-        else: self.wait(lambda: b'Enter submit' in self.output, 'startup')
+        else: self.wait(lambda: b'Enter submit' in self.output and len(self.state().get('status',{}).get('runtimes',[])) == 2 and self.state().get('modal',{}).get('kind') == 'none', 'startup')
     def read(self):
         while select.select([self.master],[],[],.01)[0]:
             try:
@@ -127,6 +128,9 @@ class Terminal:
         if b'\x1b[?1049h' in self.output:
             check(b'\x1b[?1049l' in self.output,'main screen restored')
             check(b'\x1b[?25h' in self.output,'cursor restored')
+            if b'\x1b[?1006h' in self.output:
+                check(self.output.rfind(b'\x1b[?1006l') > self.output.rfind(b'\x1b[?1006h'),'SGR mouse reporting restored')
+                check(self.output.rfind(b'\x1b[?1000l') > self.output.rfind(b'\x1b[?1000h'),'mouse tracking restored')
             if b'\x1b[>4;2m' in self.output:
                 check(self.output.rfind(b'\x1b[>4;0m') > self.output.rfind(b'\x1b[>4;2m'),'keyboard protocol restored after fallback')
         if self.mode.startswith('history'):
@@ -138,6 +142,11 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
     for mode in ['tui','plain']:
         terminal = Terminal(root,mode)
         try:
+            fresh_b = next(runtime for runtime in terminal.state()['status']['runtimes'] if runtime['role']=='B')
+            check(not Path(fresh_b['sessionFile']).exists(),'unused B session has not been flushed to disk')
+            terminal.command('/model B lm-studio/qwen3-coder-next save')
+            terminal.wait(lambda:any(runtime['role']=='B' and runtime.get('modelCanonical')=='lm-studio/qwen3-coder-next' for runtime in terminal.state().get('status',{}).get('runtimes',[])),'change unused B model through terminal command')
+            check(next(runtime for runtime in terminal.state()['status']['runtimes'] if runtime['role']=='B')['sessionId']==fresh_b['sessionId'],'model change retains the unflushed B session')
             terminal.command('plan first')
             terminal.wait(lambda:bool(terminal.state().get('pendingPlan')),'pending plan')
             check(not (terminal.workspace/'result.txt').exists(),'approval required')
@@ -192,12 +201,42 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
                 terminal.command('/sessions A')
                 terminal.wait(lambda:terminal.state().get('modal',{}).get('kind') == 'sessions','sessions overlay')
                 terminal.send('\x1b');time.sleep(.08)
-                terminal.command('/model A')
-                terminal.wait(lambda:terminal.state().get('modal',{}).get('kind') == 'settings','model overlay')
-                terminal.send('\x1b');time.sleep(.08)
+                terminal.send('picker draft survives')
+                terminal.send('\x1bOR')
+                terminal.wait(lambda:terminal.state().get('modal',{}).get('kind') == 'model_picker','F3 model overlay')
+                terminal.size(80,24);time.sleep(.1)
+                screen = terminal.snapshot('model-picker-a-80x24')
+                if CAPTURE:
+                    for text in ['GPT-6.1 Sol','GPT-5.6 Terra','GPT-6 Luna','Low','Medium','High','Enter apply','Esc back']:
+                        check(text in screen,'visible picker choice/control: '+text)
+                terminal.send('\x1b[H');terminal.send('\x1b[D');terminal.send('s')
+                terminal.send('\x1bOP')
+                terminal.wait(lambda:terminal.state().get('modal',{}).get('kind')=='help','help over picker')
+                terminal.send('\x1b');terminal.size(120,40);time.sleep(.1)
+                terminal.snapshot('model-picker-a-120x40')
+                terminal.send('\r')
+                terminal.wait(lambda:any(runtime['role']=='A' and runtime.get('modelCanonical')=='openai/gpt-6.1-sol' and runtime.get('thinking')=='medium' for runtime in terminal.state()['status']['runtimes']),'selected GPT and medium reasoning')
+                terminal.wait(lambda:terminal.state().get('modal',{}).get('kind')=='none','model ready')
+                check('ready' in terminal.state()['notification']['message'],'ready notification after model selection')
+                terminal.send('\x1bOR');terminal.wait(lambda:terminal.state().get('modal',{}).get('kind')=='model_picker','reopen model picker')
+                terminal.send('b');terminal.wait(lambda:terminal.state().get('modal',{}).get('catalog',{}).get('role')=='B','B picker tab')
+                screen = terminal.snapshot('model-picker-b-120x40')
+                if CAPTURE: check('google/gemma-4-e4b' in screen and 'Not loaded' in screen,'all downloaded models and readiness shown')
+                terminal.send('\x1b[H');terminal.send('s');terminal.send('\r')
+                terminal.wait(lambda:terminal.state().get('modal',{}).get('progress',{}).get('phase')=='loading','B model loading')
+                terminal.snapshot('model-picker-loading-120x40')
+                terminal.send('\x1b')
+                terminal.wait(lambda:terminal.state().get('modal',{}).get('kind')=='none','B cancellation finished')
+                check(any(runtime['role']=='B' and runtime.get('modelCanonical')=='lm-studio/qwen3-coder-next' for runtime in terminal.state()['status']['runtimes']),'cancel retains previous B selection')
+                terminal.send('\r')
+                terminal.wait(lambda:any(entry.get('text')=='picker draft survives' for entry in terminal.state().get('conversation',[])),'model selection and cancellation preserve draft')
+                terminal.wait(lambda:terminal.state().get('operation',{}).get('kind')=='completed','post picker draft completion')
             else:
                 terminal.command('/cancel')
                 terminal.wait(lambda:terminal.state().get('operation',{}).get('kind') == 'cancelled','plain cancellation')
+                terminal.command('/model A')
+                terminal.wait(lambda:terminal.state().get('modal',{}).get('kind')=='model_picker','plain model choices')
+                check('GPT-6.1 Sol' in terminal.state()['modal']['content'] and '/thinking A low|medium|high' in terminal.state()['modal']['content'],'plain models and reasoning controls remain readable')
             if mode == 'tui':
                 for stage in ['cancel-execution','cancel-review']:
                     terminal.command('plan '+stage)
@@ -249,6 +288,77 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
         repair.stop()
     finally:
         if repair.process.poll() is None: repair.process.kill();repair.process.wait()
+    for repair_mode in ['bounded-repair', 'plain-repair']:
+        bounded = Terminal(root,repair_mode,size=(80,24))
+        try:
+            bounded.command('bounded repair fixture')
+            bounded.wait(lambda:bounded.state().get('status',{}).get('responseProgress',{}).get('attempt') == 4,'fourth bounded response attempt')
+            bounded.wait(lambda:b'Agent A planning response attempt 4/10' in bounded.output,'visible bounded response progress')
+            bounded.wait(lambda:bounded.state().get('operation',{}).get('kind') == 'completed','tenth-attempt success')
+            check(bounded.state()['status']['responseProgress']['attempt'] == 10,'success on attempt ten')
+            check(bounded.state()['status']['responseProgress']['repairCount'] == 9,'nine repair requests')
+            check(len([record for record in bounded.state()['history']['records'] if record['kind']=='run']) == 10,'ten response runs, no eleventh')
+            bounded.command('exhaust repair fixture')
+            bounded.wait(lambda:bounded.state().get('operation',{}).get('kind') == 'running','exhaustion fixture started')
+            if repair_mode != 'plain-repair': bounded.send('preserved repair draft')
+            bounded.wait(lambda:bounded.state().get('operation',{}).get('kind') == 'failed','tenth-attempt exhaustion')
+            check(bounded.process.poll() is None,'terminal stays open after repair exhaustion')
+            progress = bounded.state()['status']['responseProgress']
+            check(progress['attempt'] == 10 and progress['repairCount'] == 9,'exact exhausted attempt accounting')
+            check('invalid' in progress['reason'],'final validation reason is visible in status')
+            current = next(record for record in bounded.state()['history']['records'] if record['id']==bounded.state()['history']['currentTurnId'])
+            check(current['responseProgress']['reason'] == progress['reason'],'history retains final validation reason')
+            if repair_mode != 'plain-repair':
+                bounded.send('\r')
+                bounded.wait(lambda:any(entry.get('text') == 'preserved repair draft' for entry in bounded.state().get('conversation',[])),'failure preserves composer draft for explicit submission')
+                bounded.wait(lambda:bounded.state().get('operation',{}).get('kind') == 'completed','explicit work after exhaustion')
+                check(current['id'] in {record['id'] for record in bounded.state()['history']['records']},'failed history survives explicit later work')
+            bounded.command('/status')
+            if repair_mode != 'plain-repair':
+                bounded.wait(lambda:bounded.state().get('modal',{}).get('kind') == 'status','status after response failure')
+                bounded.send('\x1b')
+                bounded.wait(lambda:bounded.state().get('modal',{}).get('kind') == 'none','status modal closed')
+            else: bounded.wait(lambda:b'responseProgress' in bounded.output,'plain status includes response progress')
+            bounded.stop()
+        finally:
+            if bounded.process.poll() is None: bounded.process.kill();bounded.process.wait()
+    for cols, rows in [(80,24),(120,40)]:
+        scrolling = Terminal(root,f'scrolling-{cols}',size=(cols,rows))
+        try:
+            scrolling.command('scroll fixture')
+            scrolling.wait(lambda:scrolling.state().get('operation',{}).get('kind')=='completed','scrollable prose fixture')
+            scrolling.wait(lambda:b'SCROLL_LINE_59' in scrolling.output,'latest prose rendered')
+            check(b'\x1b[?1000h\x1b[?1006h' in scrolling.output,'mouse reporting enabled in real TTY')
+            scrolling.send('scroll draft')
+            following = scrolling.snapshot(f'scroll-{cols}-following')
+            scrolling.send('\x1b[5~')
+            paused = scrolling.snapshot(f'scroll-{cols}-paused')
+            if CAPTURE:
+                position = lambda screen: int(re.search(r'↑ (\d+)',screen).group(1))
+                check('SCROLL_LINE_59' in following and 'Following' in following,'initially follows latest prose')
+                check(position(paused)<position(following) and 'SCROLL_LINE_59' not in paused,'PageUp scrolls prose from editor focus')
+                check('Paused, End follows' in paused and 'Wheel/PgUp/PgDn scroll' in paused,'scroll controls and follow state visible')
+                scrolling.send('\x1b[<64;50;8M')
+                wheel = scrolling.snapshot(f'scroll-{cols}-wheel')
+                check(position(wheel)==max(0,position(paused)-3),'SGR wheel scrolls three lines in real TTY')
+                scrolling.send('\x1b[<65;50;8M')
+                check(position(scrolling.snapshot(f'scroll-{cols}-wheel-down'))==position(paused),'wheel down returns three lines')
+                scrolling.send('\x1b[1;2A')
+                check(position(scrolling.snapshot(f'scroll-{cols}-line-up'))==position(paused)-1,'Shift+Up scrolls one line in real TTY')
+                scrolling.send('\x1b[1;2B')
+                check(position(scrolling.snapshot(f'scroll-{cols}-line-down'))==position(paused),'Shift+Down returns one line')
+                scrolling.send(f'\x1b[<64;50;{rows}M')
+                check(position(scrolling.snapshot(f'scroll-{cols}-outside'))==position(paused),'wheel outside workspace leaves viewport alone')
+            scrolling.send('\x1b[F')
+            restored = scrolling.snapshot(f'scroll-{cols}-restored')
+            if CAPTURE:
+                check('SCROLL_LINE_59' in restored and 'Following' in restored,'End resumes following from editor focus')
+                check('scroll draft' in restored and '<64;' not in restored,'draft survives keyboard and wheel scrolling')
+            check(len([entry for entry in scrolling.state()['conversation'] if entry['kind']=='operator_message'])==1,'scrolling never submits draft')
+            scrolling.send('\x03')
+            scrolling.stop()
+        finally:
+            if scrolling.process.poll() is None: scrolling.process.kill();scrolling.process.wait()
     for history_mode in ['history-tui','plain']:
         # A separate plain fixture instance gets its own paths; the CLI mode stays plain.
         if history_mode == 'plain':
@@ -273,7 +383,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             if history_mode != 'plain':
                 screen = terminal.snapshot('A-check-in-80x24',role='A')
                 if CAPTURE:
-                    check('B turns: 10 completed / A checking turn 10' in screen,'visible count matches actual senior pause')
+                    check('B turns: 10 successful / A checking turn 10' in screen,'visible count matches actual senior pause')
                     rows = screen.splitlines()
                     active = next(i for i, line in enumerate(rows) if 'Active: A - Senior' in line)
                     check(all(i < active for i, line in enumerate(rows) if '[completed]' in line),'active line follows completed tool records')
@@ -288,7 +398,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             check(b'\x1b[36;49m' in terminal.output and b'\x1b[33;49m' in terminal.output,'standard cyan and amber role styles reach the real TTY') if history_mode != 'plain' else None
             check(history['currentTurnId']==plan_turn,'approval retains originating operator turn')
             execution = next(record['execution'] for record in records if record['id']==plan_turn)
-            check(execution['completedTurns']==13 and execution['checkIn']['kind']=='final_review','completed B turns include final response and exclude A check-in')
+            check(execution['completedTurns']==12 and execution['checkIn']['kind']=='final_review','successful B turns exclude failed calls and A check-in, and include valid completion')
             check(len(calls)==12,'all twelve calls retained')
             check(len([call for call in calls if call['outcome']['kind']=='failed'])==1,'failed call retained')
             check([run['phase'] for run in runs if run['parentId']==plan_turn]==['Planning','Execution','Check-in','Review'],'individual planning execution check-in and review runs')

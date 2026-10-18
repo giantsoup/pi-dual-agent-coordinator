@@ -175,7 +175,7 @@ describe("repl progress renderer", () => {
       "  reason: sending the next handoff to Agent B\n",
       "Repair · Agent B · Qwen3 Coder Next (local-qwen/qwen3-coder-next)\n",
       "  requesting repair from Agent B\n",
-      "  reason: requesting a repair because the expected machine block was missing or invalid\n",
+      "  reason: missing pi-completion block\n",
       "Execution · Agent B · Qwen3 Coder Next v2 (local-qwen/qwen3-coder-next-v2)\n",
       "  gathering local context\n",
       "  reason: gathering local context before making changes\n"

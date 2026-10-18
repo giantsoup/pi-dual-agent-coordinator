@@ -108,3 +108,21 @@ it("rejects unauthorized local broker operations and redirected upstream respons
     expect(request).toHaveBeenCalledTimes(1);
   } finally { await broker.close(); }
 });
+
+it("pins local inference to the verified instance even when restoration changes its alias", async () => {
+  let alias = "first-instance";
+  const request = vi.fn<typeof fetch>(async () => fixtureChatResponse("Alias answer"));
+  const broker = await createProviderBroker({ cwd: "/unused", provider: "lm-studio", modelIds: ["logical-model"], resolveLocalInstanceId: async () => alias, request });
+  const headers = { Authorization: `Bearer ${broker.token}`, "Content-Type": "application/json" };
+  try {
+    for (const next of ["first-instance", "restored-instance"]) {
+      alias = next;
+      const response = await fetch(`${broker.baseUrl}/chat/completions`, { method: "POST", headers, body: JSON.stringify({ model: "logical-model" }) });
+      await response.text();
+      expect(JSON.parse(String(request.mock.lastCall?.[1]?.body))).toMatchObject({ model: next, reasoning_effort: "none" });
+    }
+    const response = await fetch(`${broker.baseUrl}/models/load`, { method: "POST", headers, body: JSON.stringify({ model: "logical-model" }) });
+    expect(response.status).toBe(400); await response.text();
+    expect(request).toHaveBeenCalledTimes(2);
+  } finally { await broker.close(); }
+});

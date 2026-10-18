@@ -37,9 +37,11 @@ import type {
 } from "../../types/ui.js";
 import type { CoordinatorTurnResult } from "../../types/workflow.js";
 import type { Role } from "../../types/role.js";
+import type { ModelPickerCatalog, ModelSwitchProgress } from "../../types/model-selection.js";
+import { LocalModelSwitchError } from "../../security/lm-studio.js";
 
 export interface InteractiveCoordinatorLike {
-  start(): Promise<void>;
+  start(onProgress?: (role: Role, progress: ModelSwitchProgress) => void): Promise<void>;
   submitUserInput(text: string): Promise<CoordinatorTurnResult>;
   approvePendingPlan(): Promise<CoordinatorTurnResult>;
   discardPendingPlan(): void;
@@ -55,9 +57,10 @@ export interface InteractiveCoordinatorLike {
   getHistoryEvents?(): ReturnType<typeof loadHistoryEvents>;
   getRunArchive?(run: Extract<HistoryRecord, { kind: "run" }>): Promise<ArchiveEntry[]>;
   getAvailableModels?(role?: Role): Array<{ canonical: string; name: string; reasoning: boolean; thinkingLevels: SupportedThinkingLevel[] }>;
+  getModelPickerCatalog?(role: Role, signal?: AbortSignal): Promise<ModelPickerCatalog>;
   getSavedSessions?(role: Role): Promise<SessionInfo[]>;
   getSessionHistory?(role: Role, path: string): Promise<AgentMessage[]>;
-  configureRole?(role: Role, input: { model?: string; thinking?: SupportedThinkingLevel; save: boolean }): Promise<void>;
+  configureRole?(role: Role, input: { model?: string; thinking?: SupportedThinkingLevel; save: boolean }, onProgress?: (progress: ModelSwitchProgress) => void): Promise<void>;
   configureDefaults?(key: "review-rounds" | "timeout-ms", value: number, save: boolean): Promise<void>;
   cancelActive?(): Promise<void>;
   dispose(): Promise<void>;
@@ -93,8 +96,12 @@ export class HeadlessInteractiveCoordinatorService
   private helpReturn: InteractiveUiState["modal"] | undefined;
   private readonly committedMessages = new Set<string>();
   private operationTexts = new Set<string>();
+  private modelQuery: AbortController | undefined;
+  private quitting = false;
 
-  public constructor(private readonly coordinator: InteractiveCoordinatorLike) {}
+  public constructor(private readonly coordinator: InteractiveCoordinatorLike) {
+    this.state = createInitialInteractiveUiState(coordinator.getStatus());
+  }
 
   public async start(): Promise<void> {
     if (this.disposed) {
@@ -104,9 +111,18 @@ export class HeadlessInteractiveCoordinatorService
       return;
     }
 
-    await this.coordinator.start();
     this.started = true;
+    this.busy = true;
+    try {
+      this.showModelProgress("A", "startup", { phase: "checking", message: "Starting the agents…" });
+      await this.coordinator.start((role, progress) => this.showModelProgress(role, "startup", progress));
+    } catch (error) {
+      if (this.state.shouldExit || this.quitting) return;
+      throw error;
+    } finally { this.busy = false; }
+    const shouldExit = this.state.shouldExit;
     this.state = createInitialInteractiveUiState(this.coordinator.getStatus());
+    this.state.shouldExit = shouldExit;
     this.historyIndex.restore(this.coordinator.getHistoryEvents?.() ?? { events: [], warnings: [] });
     this.updateState({ type: "set_history", history: this.historyIndex.snapshot() });
     this.emitStateChanged();
@@ -170,7 +186,7 @@ export class HeadlessInteractiveCoordinatorService
         return;
       }
       if (this.busy && ["submit_input", "approve_pending_plan", "discard_pending_plan", "new_conversation", "replace_runtime", "configure_role", "configure_defaults"].includes(action.type)) {
-        this.updateState({ type: "set_modal", modal: { kind: "none" } });
+        if (this.state.modal.kind !== "model_loading") this.updateState({ type: "set_modal", modal: { kind: "none" } });
         this.raiseNotification({ level: "info", scope: "operator", code: "operation.busy",
           message: "Work is running. Keep editing your draft, or use /cancel. Help, status and /quit remain available." });
         return;
@@ -396,29 +412,56 @@ export class HeadlessInteractiveCoordinatorService
           return;
         }
         case "open_models": {
-          const models = this.coordinator.getAvailableModels?.(action.role) ?? [];
-          this.updateState({ type: "set_modal", modal: { kind: "settings", title: `Agent ${action.role} model`,
-            content: `Choose an approved model for this role's current conversation and next operation. Defaults are unchanged.\nTo save explicitly: /model ${action.role} MODEL save\n` + models.map((model) => `${model.canonical} | ${model.name}`).join("\n"),
-            format: "text", createdAt: new Date().toISOString(), choices: models.map((model) => ({ value: model.canonical, label: `${model.name} (${model.canonical})`, action: { type: "configure_role", role: action.role, model: model.canonical, save: false } })) } });
+          if (this.state.modal.kind === "model_loading" && this.state.modal.operation !== "inventory") return;
+          this.modelQuery?.abort();
+          const controller = new AbortController(); this.modelQuery = controller;
+          this.showModelProgress(action.role, "inventory", { phase: "checking", message: action.role === "B" ? "Reading downloaded models from LM Studio…" : "Reading GPT model choices…" });
+          try {
+            const runtime = this.state.status.runtimes.find((item) => item.role === action.role);
+            const catalog: ModelPickerCatalog = await this.coordinator.getModelPickerCatalog?.(action.role, controller.signal) ?? {
+              role: action.role, currentModel: runtime?.modelCanonical, currentThinking: runtime?.thinking,
+              models: (this.coordinator.getAvailableModels?.(action.role) ?? []).map((model) => ({ canonical: model.canonical, name: model.name, description: model.canonical }))
+            };
+            if (controller.signal.aborted || this.modelQuery !== controller) return;
+            const content = [`Agent ${action.role} models (current: ${catalog.currentModel ?? "none"})`,
+              ...catalog.models.map((model) => `${model.name} / ${model.canonical}${model.disabledReason ? ` / ${model.disabledReason}` : model.loaded === undefined ? "" : model.loaded ? " / ready" : " / not loaded"}`),
+              `/model ${action.role} PROVIDER/MODEL [save]`, ...(action.role === "A" ? ["/thinking A low|medium|high [save]"] : [])].join("\n");
+            this.updateState({ type: "set_modal", modal: { kind: "model_picker", title: "Models", content, format: "text", createdAt: new Date().toISOString(), catalog } });
+          } catch (error) {
+            if (!controller.signal.aborted) this.showModelError(action.role, error, action);
+          } finally { if (this.modelQuery === controller) this.modelQuery = undefined; }
           return;
         }
         case "open_thinking": {
           const runtime = this.state.status.runtimes.find((item) => item.role === action.role);
           const model = this.coordinator.getAvailableModels?.().find((item) => item.canonical === runtime?.modelCanonical);
-          const levels: SupportedThinkingLevel[] = model?.thinkingLevels ?? ["off"];
+          const levels: SupportedThinkingLevel[] = action.role === "A" ? ["low", "medium", "high"] : model?.thinkingLevels ?? ["off"];
           this.updateState({ type: "set_modal", modal: { kind: "settings", title: `Agent ${action.role} thinking`,
             content: `Applies to the current conversation and next operation. Save explicitly with /thinking ${action.role} LEVEL save.\n${levels.join(" | ")}`,
             format: "text", createdAt: new Date().toISOString(), choices: levels.map((thinking) => ({ value: thinking, label: thinking, action: { type: "configure_role", role: action.role, thinking, save: false } })) } });
           return;
         }
-        case "configure_role":
+        case "configure_role": {
           const configureRole = this.coordinator.configureRole?.bind(this.coordinator);
           if (!configureRole) throw new Error("Role configuration unavailable.");
-          await this.runControl(() => configureRole(action.role, { ...(action.model ? { model: action.model } : {}), ...(action.thinking ? { thinking: action.thinking } : {}), save: action.save }));
+          const hadPlan = Boolean(this.state.pendingPlan);
+          this.showModelProgress(action.role, "switch", { phase: "checking", message: `Preparing Agent ${action.role}'s selection…` });
+          try {
+            await this.runControl(() => configureRole(action.role, { ...(action.model ? { model: action.model } : {}), ...(action.thinking ? { thinking: action.thinking } : {}), save: action.save }, (progress) => this.showModelProgress(action.role, "switch", progress)));
+          } catch (error) {
+            if (error instanceof LocalModelSwitchError && error.cancelled && error.recovery !== "unavailable") {
+              this.updateState({ type: "set_modal", modal: { kind: "none" } });
+              this.raiseNotification({ level: "info", scope: "runtime", code: "runtime.configuration_cancelled", message: error.message });
+            } else this.showModelError(action.role, error, action);
+            return;
+          }
           this.refreshStatus();
           this.updateState({ type: "set_modal", modal: { kind: "none" } });
-          this.raiseNotification({ level: "info", scope: "runtime", code: "runtime.configured", message: `Agent ${action.role} updated for the current conversation and next operation.${action.save ? " Defaults saved." : " Defaults unchanged."} Pending plan cleared; request a new plan before approval.` });
+          const runtime = this.state.status.runtimes.find((item) => item.role === action.role);
+          this.raiseNotification({ level: "info", scope: "runtime", code: "runtime.configured", title: `Agent ${action.role} ready`,
+            message: `Agent ${action.role} ready: ${runtime?.modelName ?? action.model ?? "selected model"}${action.role === "A" ? ` / ${runtime?.thinking ?? action.thinking} reasoning` : ""}.${action.save ? " Saved for restart." : " Defaults unchanged."}${hadPlan ? " Pending plan cleared; request a new plan." : ""}` });
           return;
+        }
         case "configure_defaults":
           const configureDefaults = this.coordinator.configureDefaults?.bind(this.coordinator);
           if (!configureDefaults) throw new Error("Coordinator configuration unavailable.");
@@ -427,6 +470,7 @@ export class HeadlessInteractiveCoordinatorService
           this.raiseNotification({ level: "info", scope: "operator", code: "defaults.configured", message: `${action.key} = ${action.value} for the next operation.${action.save ? " Defaults saved." : " Defaults unchanged."}` });
           return;
         case "close_modal":
+          this.modelQuery?.abort(); this.modelQuery = undefined;
           this.updateState({
             type: "set_modal",
             modal: this.state.modal.kind === "help" ? this.helpReturn ?? { kind: "none" } : { kind: "none" }
@@ -434,6 +478,17 @@ export class HeadlessInteractiveCoordinatorService
           this.helpReturn = undefined;
           return;
         case "cancel":
+          if (this.state.modal.kind === "model_loading") {
+            if (this.state.modal.operation === "inventory") {
+              this.modelQuery?.abort(); this.modelQuery = undefined;
+              this.updateState({ type: "set_modal", modal: { kind: "none" } }); return;
+            }
+            const modal = this.state.modal;
+            this.updateState({ type: "set_modal", modal: { ...modal, cancelling: true, content: "Cancellation requested. Waiting for LM Studio and restoring the previous model…" } });
+            if (modal.operation === "startup") this.updateState({ type: "set_should_exit", value: true });
+            await this.coordinator.cancelActive?.();
+            return;
+          }
           if (this.state.operation.kind === "running" || this.state.operation.kind === "cancelling") {
             this.updateState({ type: "set_operation", operation: { kind: "cancelling" } });
             await this.coordinator.cancelActive?.();
@@ -441,6 +496,9 @@ export class HeadlessInteractiveCoordinatorService
           }
           return;
         case "quit":
+          this.quitting = true;
+          this.modelQuery?.abort();
+          if (this.state.modal.kind === "model_loading") this.updateState({ type: "set_modal", modal: { ...this.state.modal, cancelling: true, content: "Restoring safely before exiting…" } });
           await this.coordinator.cancelActive?.();
           this.updateState({
             type: "set_should_exit",
@@ -647,6 +705,24 @@ export class HeadlessInteractiveCoordinatorService
     this.busy = true;
     try { await run(); }
     finally { this.busy = false; this.refreshStatus(); }
+  }
+
+  private showModelProgress(role: Role, operation: "inventory" | "switch" | "startup", progress: ModelSwitchProgress): void {
+    const previous = this.state.modal;
+    const same = previous.kind === "model_loading" && previous.operation === operation;
+    this.updateState({ type: "set_modal", modal: { kind: "model_loading", title: `${operation === "inventory" ? "Models" : "Preparing"} / Agent ${role}`, content: progress.message,
+      format: "text", createdAt: same ? previous.createdAt : new Date().toISOString(), role, operation, progress,
+      startedAt: same ? previous.startedAt : Date.now(), cancelling: same && previous.cancelling } });
+  }
+
+  private showModelError(role: Role, error: unknown, retry: UiAction): void {
+    const message = safeDisplayText(error instanceof Error ? error.message : "Model selection failed.");
+    this.updateState({ type: "set_modal", modal: { kind: "model_error", title: `Agent ${role} / Could not switch model`, content: message,
+      format: "text", createdAt: new Date().toISOString(), choices: [
+        { value: "retry", label: "Try again", action: retry },
+        { value: "models", label: "Choose another model", action: { type: "open_models", role } }
+      ] } });
+    this.raiseNotification({ level: "error", scope: "runtime", code: "runtime.configuration_failed", message });
   }
 
   private async runWork(run: () => Promise<CoordinatorTurnResult>): Promise<CoordinatorTurnResult> {

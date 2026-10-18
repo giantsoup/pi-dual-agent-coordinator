@@ -1,4 +1,5 @@
 import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import { ResponseFormatError, PROTOCOL_TOOL_NAMES } from "../coordinator/response-repair.js";
 import type { SessionLike } from "./create-role-runtime.js";
 
 /** Owns Pi preflight, agent work, and post-turn compaction as one submission. */
@@ -40,7 +41,9 @@ export class ManagedSession implements SessionLike {
   public prompt(text: string, options?: Parameters<SessionLike["prompt"]>[1]): Promise<void> {
     if (this.pending) throw new Error("A submission is already active.");
     this.stopped = false;
-    const { onTurnEnd, ...piOptions } = options ?? {};
+    const { onTurnEnd, formatOnly, responseId, responseAttempt: _responseAttempt, ...piOptions } = options ?? {};
+    const previousTools = this.piSession.getActiveToolNames();
+    if (formatOnly) this.piSession.setActiveToolsByName([]);
     this.piSession.setAutoCompactionEnabled(this.autoCompactionEnabled);
     let finishAgent = () => {};
     let started = false;
@@ -54,6 +57,16 @@ export class ManagedSession implements SessionLike {
     let turnError: Error | undefined;
     // AgentSession notifications are queued and cannot pause the model loop.
     const unsubscribeTurns = this.piSession.agent.subscribe(async (event, signal) => {
+      if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason !== "error" && event.message.stopReason !== "aborted") {
+        const calls = event.message.content.filter((part) => part.type === "toolCall");
+        const misuse = calls.find((call) => formatOnly || PROTOCOL_TOOL_NAMES.has(call.name));
+        if (misuse) {
+          turnError = new ResponseFormatError(responseId ?? "unscoped", formatOnly
+            ? "Tools are disabled during response formatting. Return assistant text only."
+            : `Protocol label ${misuse.name} is assistant text, not a tool.`, misuse.name);
+          throw turnError;
+        }
+      }
       if (event.type !== "turn_end" || !onTurnEnd) return;
       try {
         this.assertActive();
@@ -83,6 +96,7 @@ export class ManagedSession implements SessionLike {
         unsubscribeAgent();
         unsubscribeTurns();
         this.pending = undefined;
+        if (formatOnly) this.piSession.setActiveToolsByName(previousTools);
       }
     })();
     this.pending = pending;

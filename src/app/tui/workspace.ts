@@ -57,6 +57,13 @@ export class CurrentWorkspace {
   private resetId: string | undefined;
   private height = 10;
   private width = 80;
+  private viewportStart = 0;
+  private viewportHeight = 1;
+  private viewportTotal = 0;
+  private manualScroll = false;
+  private scrollAnchor: { kind: "record"; id: string; offset: number } | { kind: "prose"; offset: number } | undefined;
+  private displayedProse: string | undefined;
+  private pausedProse: string | undefined;
   private readonly clocks = new Map<string, { start: number; elapsed: number }>();
   private readonly proseCache = new Map<string, { width: number; content: string; lines: string[] }>();
   private readonly runProse = new Map<string, string>();
@@ -92,15 +99,40 @@ export class CurrentWorkspace {
   private select(records: HistoryRecord[], id: string | undefined): HistoryRecord | undefined { return records.find((record) => record.id === id) ?? records.at(-1); }
   private current(state: InteractiveUiState): void {
     this.following = true; this.unread = 0; this.readRevision = state.history.revision;
+    this.manualScroll = false;
+    this.pausedProse = undefined; this.scrollAnchor = undefined;
     this.viewedTurnId = undefined; this.historyOpen = false;
     this.workspaceSelection = this.rows(state).at(-1)?.id ?? state.history.currentTurnId;
   }
   private browse(state: InteractiveUiState): void { if (this.following) { this.readRevision = state.history.revision; this.following = false; this.viewedTurnId = state.history.currentTurnId;
       const stream = state.liveStream;
       this.streamAtRead = stream ? { key: `${stream.role}:${stream.sessionId}:${stream.startedAt}`, length: stream.text.length } : undefined; } }
+  public scroll(lines: number, state: InteractiveUiState): void {
+    if (this.inspector) {
+      for (let i = 0; i < Math.abs(lines); i++) this.inspectorInput(lines < 0 ? "\x1b[A" : "\x1b[B");
+      return;
+    }
+    if (this.historyOpen) return;
+    this.browse(state);
+    if (!this.manualScroll) this.pausedProse = this.displayedProse;
+    this.manualScroll = true;
+    this.scrollAnchor = undefined;
+    this.viewportStart = Math.max(0, Math.min(Math.max(0, this.viewportTotal - this.viewportHeight), this.viewportStart + lines));
+  }
+  public scrollInput(data: string, state: InteractiveUiState): boolean {
+    if (this.historyOpen || this.inspector) return false;
+    if (bindingMatches(data, "scrollUp")) this.scroll(-this.viewportHeight, state);
+    else if (bindingMatches(data, "scrollDown")) this.scroll(this.viewportHeight, state);
+    else if (bindingMatches(data, "scrollLineUp")) this.scroll(-1, state);
+    else if (bindingMatches(data, "scrollLineDown")) this.scroll(1, state);
+    else if (!this.following && bindingMatches(data, "latest")) this.current(state);
+    else return false;
+    return true;
+  }
   public handleInput(data: string, state: InteractiveUiState, wide: boolean): boolean {
     if (this.inspector && this.focus === "inspector") return this.inspectorInput(data);
     if (this.focus !== "transcript" && this.focus !== "history") return false;
+    if (this.focus === "transcript" && this.scrollInput(data, state)) return true;
     if (bindingMatches(data, "latest")) { this.current(state); return true; }
     if (this.focus === "history" && !wide && !this.historyOpen) {
       if (bindingMatches(data, "inspect")) { this.historyOpen = true; this.browse(state); return true; }
@@ -120,6 +152,7 @@ export class CurrentWorkspace {
     else if (matchesKey(data, Key.home)) next = 0;
     else if (bindingMatches(data, "inspect")) { this.browse(state); this.inspect(selected.id); return true; }
     else if (bindingMatches(data, "fold") || bindingMatches(data, "expand")) {
+      this.manualScroll = false;
       if (selected.kind === "turn" && !history) {
         if (bindingMatches(data, "fold") && !this.collapsedTurns.has(selected.id)) this.collapsedTurns.add(selected.id); else this.collapsedTurns.delete(selected.id);
       } else if (selected.kind === "run" && !history) {
@@ -127,6 +160,7 @@ export class CurrentWorkspace {
       } else if (bindingMatches(data, "fold") && this.expanded.has(selected.id)) this.expanded.delete(selected.id); else this.expanded.add(selected.id);
       this.browse(state); return true;
     } else if (bindingMatches(data, "collapse")) {
+      this.manualScroll = false;
       if (!history && selected.kind === "turn") this.collapsedTurns.add(selected.id);
       else if (!history && selected.kind === "run" && !this.collapsedRuns.has(selected.id)) this.collapsedRuns.add(selected.id);
       else if (!this.expanded.delete(selected.id) && selected.kind !== "turn") { if (history) this.historySelection = selected.parentId; else this.workspaceSelection = selected.parentId; }
@@ -135,6 +169,7 @@ export class CurrentWorkspace {
     const target = records[Math.max(0, Math.min(records.length - 1, next))];
     if (target) {
       this.browse(state);
+      this.manualScroll = false;
       if (history) { this.historySelection = target.id; if (target.kind === "turn") this.viewedTurnId = target.id; }
       else this.workspaceSelection = target.id;
     }
@@ -215,9 +250,10 @@ export class CurrentWorkspace {
     const currentWidth = wide ? width - railWidth - 1 : width;
     const mainHeight = height - (wide ? 0 : 1);
     const current = state.history.records.find((record) => record.id === (this.viewedTurnId ?? state.history.currentTurnId));
+    const viewingCurrent = !this.viewedTurnId || this.viewedTurnId === state.history.currentTurnId;
     const live = liveIdentity(state);
     const turnNumber = current ? turns.findIndex((turn) => turn.id === current.id) + 1 : undefined;
-    const title = `${this.viewedTurnId ? "HISTORY REQUEST" : "CURRENT REQUEST"}${turnNumber ? ` ${turnNumber}` : ""} | ${this.viewedTurnId ? current?.outcome.kind ?? "unavailable" : live.phase}${this.focus === "transcript" ? " [focus]" : ""}`;
+    const title = `${viewingCurrent ? "CURRENT REQUEST" : "HISTORY REQUEST"}${turnNumber ? ` ${turnNumber}` : ""} | ${viewingCurrent ? live.phase : current?.outcome.kind ?? "unavailable"}${this.focus === "transcript" ? " [focus]" : ""}`;
     const bodyWidth = Math.max(1, currentWidth - 4);
     const rows = this.rows(state);
     if (this.following) this.workspaceSelection = rows.at(-1)?.id ?? current?.id;
@@ -228,24 +264,27 @@ export class CurrentWorkspace {
     const checkLabel = checkStopped ? "checks stopped" : checkIn?.kind === "scheduled" ? `A check at ${checkIn.afterTurn}`
       : checkIn?.kind === "checking" ? `A checking turn ${checkIn.afterTurn}`
       : checkIn?.kind === "final_review" ? "final review" : "check stopped";
-    const progressLine = progress ? `B turns: ${progress.completedTurns} completed / ${checkLabel}` : undefined;
+    const progressLine = progress ? `B turns: ${progress.completedTurns} successful / ${checkLabel}` : undefined;
+    const response = current?.kind === "turn" ? current.responseProgress : undefined;
     const statusLines = [
+      ...(response && response.attempt > 1 ? [response.label, ...(response.state !== "succeeded" && response.reason ? [response.reason] : [])] : []),
       ...(progressLine ? [progressLine] : []),
-      `\x1b[1;4m>> ${this.viewedTurnId ? selected?.title ?? "Retained records" : live.phase.toUpperCase()} / ${this.viewedTurnId ? current?.outcome.kind : state.pendingPlan ? "waiting approval" : state.operation.kind === "running" || state.operation.kind === "cancelling" ? state.operation.kind : current?.outcome.kind ?? state.operation.kind}\x1b[0m`
+      `\x1b[1;4m>> ${viewingCurrent ? live.phase.toUpperCase() : selected?.title ?? "Retained records"} / ${viewingCurrent ? state.pendingPlan ? "waiting approval" : state.operation.kind === "running" || state.operation.kind === "cancelling" ? state.operation.kind : current?.outcome.kind ?? state.operation.kind : current?.outcome.kind}\x1b[0m`
     ];
-    const contentBudget = Math.max(0, mainHeight - 2 - statusLines.length - 1);
-    const maxRows = Math.max(0, contentBudget - 2);
-    const selectedIndex = selected ? rows.indexOf(selected) : 0;
-    const start = this.following ? Math.max(0, rows.length - maxRows) : Math.max(0, selectedIndex - Math.floor(maxRows / 2));
-    const body = [current && this.workspaceSelection === current.id ? `> Operator turn: ${current.title} / ${recordSummary(current, state.history.records)}` : current?.title ?? (state.history.resetId ? "New conversation. Send a request to Agent A." : "Send a request to Agent A, or use /help."), ""];
-    const recordLines: string[] = [];
-    for (const record of rows.slice(start, start + maxRows)) {
-      const marker = selected?.id === record.id ? ">" : " ";
-      const label = `${marker} ${this.expanded.has(record.id) ? "-" : "+"} ${record.kind === "tool" ? "  " : ""}${record.kind === "turn" ? "" : roleLabel(record.role)} [${record.outcome.kind}] ${record.title} / ${this.duration(record)} ${recordSummary(record, state.history.records)}`;
-      recordLines.push(paintRole(pad(label, bodyWidth), record.kind === "turn" ? undefined : record.role));
-      if (this.expanded.has(record.id) && record.kind === "tool") recordLines.push(...wrap(record.preview ? `Preview (up to 120 chars): ${record.preview}` : "Preview unavailable; Enter inspects retained output.", bodyWidth).slice(0, 2));
+    const heading = [current && this.workspaceSelection === current.id ? `> Operator turn: ${current.title} / ${recordSummary(current, state.history.records)}` : current?.title ?? (state.history.resetId ? "New conversation. Send a request to Agent A." : "Send a request to Agent A, or use /help."), ""];
+    const contentBudget = Math.max(0, mainHeight - 3 - statusLines.length - heading.length);
+    const body: (string | HistoryRecord)[] = [];
+    const recordSpans: { id: string; start: number; end: number }[] = [];
+    let selectedLine = 0;
+    for (const record of rows) {
+      if (selected?.id === record.id) selectedLine = body.length;
+      const start = body.length;
+      body.push(record);
+      if (this.expanded.has(record.id) && record.kind === "tool") body.push(...wrap(record.preview ? `Preview (up to 120 chars): ${record.preview}` : "Preview unavailable; Enter inspects retained output.", bodyWidth).slice(0, 2));
+      recordSpans.push({ id: record.id, start, end: body.length });
     }
-    if (maxRows) body.push(...(this.following ? recordLines.slice(-maxRows) : recordLines.slice(0, maxRows)));
+    let proseStart: number | undefined;
+    this.displayedProse = undefined;
     const latestRun = children(state.history.records, current?.id ?? "").at(-1);
     if (latestRun?.kind === "run") {
       const cacheKey = `${latestRun.id}:${latestRun.outcome.kind}`;
@@ -259,21 +298,43 @@ export class CurrentWorkspace {
           this.requestRender();
         }).catch(() => this.pendingProse.delete(cacheKey));
       }
-      const prose = !this.viewedTurnId && state.liveStream ? visibleProse(state.liveStream.text) : this.runProse.get(cacheKey);
+      const prose = this.manualScroll ? this.pausedProse : viewingCurrent && state.liveStream ? visibleProse(state.liveStream.text) : this.runProse.get(cacheKey);
+      this.displayedProse = prose;
       if (prose) {
+        proseStart = body.length;
         const key = `${latestRun.id}:${bodyWidth}`;
         const cached = this.proseCache.get(key);
         const boundedProse = prose.slice(-24000).split("\n").slice(-80).join("\n");
         const lines = cached?.content === prose ? cached.lines : new Markdown(boundedProse, 0, 0, theme).render(bodyWidth);
         this.proseCache.clear(); this.proseCache.set(key, { width: bodyWidth, content: prose, lines });
-        const proseBudget = Math.max(0, contentBudget - body.length - 1);
-        if (proseBudget) body.push("", ...lines.slice(-proseBudget));
+        body.push("", ...(boundedProse !== prose ? ["Recent prose preview; Enter on run inspects retained output."] : []), ...lines);
       }
     }
-    while (body.length < contentBudget + 1) body.push("");
-    body.push(...statusLines);
+    const maxStart = Math.max(0, body.length - contentBudget);
+    this.viewportHeight = Math.max(1, contentBudget);
+    this.viewportTotal = body.length;
+    if (this.manualScroll && this.scrollAnchor) {
+      const anchor = this.scrollAnchor;
+      const start = anchor.kind === "prose" ? proseStart : recordSpans.find((span) => span.id === anchor.id)?.start;
+      if (start !== undefined) this.viewportStart = start + anchor.offset;
+    }
+    this.viewportStart = Math.min(maxStart, this.manualScroll ? this.viewportStart : this.following ? maxStart : Math.max(0, selectedLine - Math.floor(contentBudget / 2)));
+    if (this.manualScroll) {
+      const record = recordSpans.find((span) => span.start <= this.viewportStart && span.end > this.viewportStart);
+      this.scrollAnchor = record ? { kind: "record", id: record.id, offset: this.viewportStart - record.start }
+        : proseStart !== undefined ? { kind: "prose", offset: this.viewportStart - proseStart } : undefined;
+    }
+    const visible = body.slice(this.viewportStart, this.viewportStart + contentBudget).map((row) => {
+      if (typeof row === "string") return row;
+      const label = `${selected?.id === row.id ? ">" : " "} ${this.expanded.has(row.id) ? "-" : "+"} ${row.kind === "tool" ? "  " : ""}${row.kind === "turn" ? "" : roleLabel(row.role)} [${row.outcome.kind}] ${row.title} / ${this.duration(row)} ${recordSummary(row, state.history.records)}`;
+      return paintRole(pad(label, bodyWidth), row.kind === "turn" ? undefined : row.role);
+    });
+    while (visible.length < contentBudget) visible.push("");
+    const below = Math.max(0, body.length - this.viewportStart - contentBudget);
+    const position = `↑ ${this.viewportStart} / ↓ ${below}`;
+    visible.push(...statusLines, `${position} | Wheel/PgUp/PgDn scroll | ${this.following ? "Following" : "Paused, End follows"}`);
     const frameRole = live.role ?? (latestRun?.kind === "run" ? latestRun.role : undefined);
-    const main = frame(title, body, currentWidth, mainHeight, this.viewedTurnId ? undefined : frameRole);
+    const main = frame(title, [...heading, ...visible], currentWidth, mainHeight, viewingCurrent ? frameRole : undefined);
     if (!wide) return [pad(`History / ${turns.filter((turn) => turn.id !== state.history.currentTurnId).length} past turns${this.focus === "history" ? " [focus]" : ""} | F6 then Enter opens | ${this.unread} unread | End current`, width), ...main];
     const history = frame(`HISTORY${this.focus === "history" ? " [focus]" : ""}`, this.renderHistory(state, railWidth - 2, height - 2), railWidth, height);
     return history.map((line, index) => `${line} ${main[index] ?? " ".repeat(currentWidth)}`);

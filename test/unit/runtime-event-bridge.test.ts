@@ -59,3 +59,32 @@ describe("runtime event bridge", () => {
     expect(unhandled).toEqual([]);
   });
 });
+
+it("keeps provider failures separate even when a partial tool call was streamed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-bridge-provider-"));
+  const bridge = new RuntimeEventBridge(new TelemetryLogger({ filePath: join(root, "events"), jsonLogs: false, verbose: false }), new Metrics());
+  const session = new FakeSession("A", undefined, async () => {
+    const message = assistantMessage(""); message.stopReason = "error"; message.errorMessage = "provider authentication failed";
+    message.content.push({ type: "toolCall", id: "partial", name: "pi-plan", arguments: {} });
+    await session.emit({ type: "turn_end", message, toolResults: [] });
+  });
+  const binding = createFakeBinding("A", new FakeRuntime(root, session, "A")); await bridge.bind(binding);
+  try { await expect(bridge.promptAndWaitForTurnEnd(binding, "task", { formatOnly: true, responseId: "response" })).rejects.toThrow("provider authentication failed"); }
+  finally { bridge.dispose(); }
+});
+
+it.each(["pi-plan", "pi-execute", "pi-handoff", "pi-completion", "pi-final", "pi-check-in"])("classifies %s as a response-format failure without unsubscribing", async (toolName) => {
+  const root = mkdtempSync(join(tmpdir(), "pi-bridge-protocol-"));
+  const bridge = new RuntimeEventBridge(new TelemetryLogger({ filePath: join(root, "events"), jsonLogs: false, verbose: false }), new Metrics());
+  let calls = 0;
+  const session = new FakeSession("A", undefined, async () => {
+    if (++calls === 1) await session.emit({ type: "tool_execution_start", toolCallId: "misuse", toolName, args: {} });
+    else await session.emit(assistantTurnEnd("Recovered in the same session"));
+  });
+  const binding = createFakeBinding("A", new FakeRuntime(root, session, "A")); await bridge.bind(binding);
+  try {
+    await expect(bridge.promptAndWaitForTurnEnd(binding, "original", { responseId: "current-response" })).rejects.toMatchObject({ responseId: "current-response", toolName });
+    expect(session.listeners.size).toBe(1);
+    await expect(bridge.promptAndWaitForTurnEnd(binding, "explicit next submission")).resolves.toMatchObject({ role: "assistant" });
+  } finally { bridge.dispose(); }
+});

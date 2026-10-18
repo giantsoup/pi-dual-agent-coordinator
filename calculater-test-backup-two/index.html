@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calculator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="calculator" role="application" aria-label="Calculator">
+
+    <!-- Display -->
+    <div id="display" class="display" aria-live="polite" aria-atomic="true">0</div>
+
+    <!-- Button grid -->
+    <div class="buttons" role="group" aria-label="Calculator buttons">
+
+      <!-- Row 1: Clear, Backspace, Sign, Divide -->
+      <button class="calc-btn btn-clear" data-action="clear" aria-label="Clear">AC</button>
+      <button class="calc-btn btn-backspace" data-action="backspace" aria-label="Backspace">⌫</button>
+      <button class="calc-btn btn-sign" data-action="sign" aria-label="Toggle sign">±</button>
+      <button class="calc-btn btn-op" data-action="operator" data-op="÷" aria-label="Divide">÷</button>
+
+      <!-- Row 2: 7, 8, 9, Multiply -->
+      <button class="calc-btn btn-digit" data-action="digit" data-value="7" aria-label="Seven">7</button>
+      <button class="calc-btn btn-digit" data-action="digit" data-value="8" aria-label="Eight">8</button>
+      <button class="calc-btn btn-digit" data-action="digit" data-value="9" aria-label="Nine">9</button>
+      <button class="calc-btn btn-op" data-action="operator" data-op="×" aria-label="Multiply">×</button>
+
+      <!-- Row 3: 4, 5, 6, Subtract -->
+      <button class="calc-btn btn-digit" data-action="digit" data-value="4" aria-label="Four">4</button>
+      <button class="calc-btn btn-digit" data-action="digit" data-value="5" aria-label="Five">5</button>
+      <button class="calc-btn btn-digit" data-action="digit" data-value="6" aria-label="Six">6</button>
+      <button class="calc-btn btn-op" data-action="operator" data-op="-" aria-label="Subtract">−</button>
+
+      <!-- Row 4: 1, 2, 3, Add -->
+      <button class="calc-btn btn-digit" data-action="digit" data-value="1" aria-label="One">1</button>
+      <button class="calc-btn btn-digit" data-action="digit" data-value="2" aria-label="Two">2</button>
+      <button class="calc-btn btn-digit" data-action="digit" data-value="3" aria-label="Three">3</button>
+      <button class="calc-btn btn-op" data-action="operator" data-op="+" aria-label="Add">+</button>
+
+      <!-- Row 5: Sign toggle (already done), 0, Decimal, Equals -->
+      <button class="calc-btn btn-digit" data-action="digit" data-value="0" aria-label="Zero" style="grid-column: span 2;">0</button>
+      <button class="calc-btn btn-decimal" data-action="decimal" aria-label="Decimal point">.</button>
+      <button class="calc-btn btn-equals" data-action="equals" aria-label="Equals">=</button>
+
+    </div>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

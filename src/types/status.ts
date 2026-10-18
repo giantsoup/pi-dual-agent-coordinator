@@ -1,3 +1,4 @@
+import type { ResponseProgress } from "../coordinator/response-progress.js";
 import type { Role } from "./role.js";
 import type {
   ConversationMode,
@@ -53,6 +54,7 @@ export interface CoordinatorStatusSnapshot {
   coordinatorActivity?: string | undefined;
   coordinatorReason?: string | undefined;
   lastCompletionSummary?: string | undefined;
+  responseProgress?: ResponseProgress | undefined;
   repairCount: number;
   maxReviewRounds: number;
   timeoutMs?: number;

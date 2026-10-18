@@ -14,7 +14,7 @@ function field(text: string, name: string): string {
   return value;
 }
 
-async function setup(stage: "planning" | "execution" | "review", timeoutMs = 10_000) {
+async function setup(stage: "planning" | "execution" | "review" | "repair", timeoutMs = 10_000) {
   const root = await mkdtemp(join(tmpdir(), "pi-terminal-cancel-")); roots.push(root);
   let arrived = () => {};
   const ready = new Promise<void>((resolve) => { arrived = resolve; });
@@ -26,7 +26,8 @@ async function setup(stage: "planning" | "execution" | "review", timeoutMs = 10_
     jsonLogs: false, verbose: false, timeoutMs,
     createRoleRuntime: async (options) => {
       const session = new FakeSession(`${options.role}-session`, undefined, async (text) => {
-        const current = options.role === "B" ? "execution" : text.includes("Coordinator review") ? "review" : "planning";
+        const current = options.role === "B" ? "execution" : text.includes("Coordinator review") ? "review" : text.includes("repair prompt") ? "repair" : "planning";
+        if (stall && stage === "repair" && current === "planning") { await session.emit(assistantTurnEnd('```pi-plan\n{}\n```')); return; }
         if (stall && current === stage) { arrived(); await gate; return; }
         if (options.role === "B") {
           await session.emit(assistantTurnEnd('```pi-completion\n' + JSON.stringify({schemaVersion:1,workflowId:field(text,"Workflow ID"),handoffId:field(text,"Handoff ID"),iteration:1,summary:"Done",changedPaths:[]}) + '\n```'));
@@ -45,11 +46,11 @@ async function setup(stage: "planning" | "execution" | "review", timeoutMs = 10_
 }
 
 describe("terminal operation cancellation", () => {
-  it.each(["planning", "execution", "review"] as const)("cancels %s without starting another stage, then accepts new work", async (stage) => {
+  it.each(["planning", "execution", "review", "repair"] as const)("cancels %s without starting another stage, then accepts new work", async (stage) => {
     const { coordinator, sessions, ready } = await setup(stage);
     try {
-      if (stage !== "planning") await coordinator.submitUserInput("plan");
-      const work = stage === "planning" ? coordinator.submitUserInput("plan") : coordinator.approvePendingPlan();
+      if (stage !== "planning" && stage !== "repair") await coordinator.submitUserInput("plan");
+      const work = stage === "planning" || stage === "repair" ? coordinator.submitUserInput("plan") : coordinator.approvePendingPlan();
       await ready;
       await expect(coordinator.submitUserInput("concurrent")).rejects.toThrow("Work is running");
       const counts = [...sessions.values()].map((session) => session.prompts.length);
@@ -76,6 +77,17 @@ describe("terminal operation cancellation", () => {
       expect((await coordinator.getWorkflowStatus()).ledgerTail?.status).toBe("timed_out");
       expect(coordinator.getStatus().operation?.kind).toBe("timed_out");
       expect((await coordinator.submitUserInput("plan again")).pendingPlan).toBeDefined();
+    } finally { await coordinator.dispose(); }
+  });
+
+  it("keeps the overall deadline active during format repairs", async () => {
+    const { coordinator, sessions } = await setup("repair", 30);
+    try {
+      const result = await coordinator.submitUserInput("plan");
+      expect(result.userResponse).toContain("Deadline exceeded");
+      expect(sessions.get("A")?.prompts).toHaveLength(2);
+      expect(sessions.get("B")?.prompts).toHaveLength(0);
+      expect((await coordinator.getWorkflowStatus()).ledgerTail?.status).toBe("timed_out");
     } finally { await coordinator.dispose(); }
   });
 

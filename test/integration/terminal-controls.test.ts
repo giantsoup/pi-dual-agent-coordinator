@@ -1,18 +1,57 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { Coordinator } from "../../src/coordinator/coordinator.js";
 import { createRoleRuntime, type RoleRuntimeBinding } from "../../src/runtime/create-role-runtime.js";
-import { fixtureResponse } from "../../src/security/fixture-provider.js";
+import { fixtureResponse, fixtureChatResponse } from "../../src/security/fixture-provider.js";
 import { applyCoordinatorDefaultsToCliOptions, loadCoordinatorConfig } from "../../src/app/coordinator-config.js";
 import { parseCliArgs, parseReplCommand, REPL_COMPLETION_COMMANDS } from "../../src/app/cli.js";
 
 const roots: string[] = [];
-afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map((root) => rm(root, {recursive:true,force:true}))); });
+const originalCwd = process.cwd();
+afterEach(async () => { process.chdir(originalCwd); vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map((root) => rm(root, {recursive:true,force:true}))); });
 
 describe("terminal configuration through real Pi runtimes", () => {
+  it.each(["A", "B"] satisfies ("A" | "B")[])("changes %s's model before its first persisted response", async (role) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-fresh-model-")); roots.push(root);
+    const workspace = join(root, "workspace"); await mkdir(workspace);
+    vi.stubEnv("PI_DUAL_COORDINATOR_HOME", join(root, "config"));
+    const bindings = new Map<string, RoleRuntimeBinding>();
+    const coordinator = new Coordinator({ cwd: workspace, sessionRoot: join(root, "state"), sessionMode: "persistent", jsonLogs: false, verbose: false,
+      createRoleRuntime: async (input) => {
+        const binding = await createRoleRuntime({ ...input, providerTestBackend: { cwd: workspace, modelIds: [], load: async () => `dummy-${randomUUID()}`,
+          request: async () => input.role === "A" ? fixtureResponse("First response") : fixtureChatResponse("First response") } });
+        bindings.set(input.role, binding);
+        return binding;
+      } });
+    await coordinator.start();
+    try {
+      const original = bindings.get(role);
+      if (!original?.sessionFile) throw new Error("Expected a persistent session path");
+      await expect(access(original.sessionFile)).rejects.toMatchObject({ code: "ENOENT" });
+      const otherManager = bindings.get(role === "A" ? "B" : "A")?.session.sessionManager;
+      if (!(otherManager instanceof SessionManager)) throw new Error("Expected the real Pi session manager");
+      await expect(createRoleRuntime({ role, cwd: workspace, sessionRoot: join(root, "state"), sessionMode: "persistent", initialSessionManager: otherManager,
+        providerTestBackend: { cwd: workspace, modelIds: [], load: async () => "dummy-key", request: async () => fixtureResponse("Unused") }
+      })).rejects.toThrow("private session directory");
+      const model = role === "A" ? "openai/gpt-5.4" : "lm-studio/qwen3-coder-next";
+      await coordinator.configureRole(role, { model, save: true });
+      expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === role)?.modelCanonical).toBe(model);
+      const current = bindings.get(role);
+      expect(current?.sessionId).toBe(original.sessionId);
+      expect(current?.sessionFile).toBe(original.sessionFile);
+      expect(current?.session.messages).toHaveLength(0);
+      await current?.session.prompt("First prompt after model change");
+      if (!current?.sessionFile) throw new Error("Expected the replacement session path");
+      await expect(access(current.sessionFile)).resolves.toBeUndefined();
+      expect(JSON.stringify(current.session.messages)).toContain("First response");
+      expect((await loadCoordinatorConfig()).config?.defaults).toMatchObject(role === "A" ? { modelA: model } : { modelB: model });
+    } finally { await coordinator.dispose(); }
+  }, 30_000);
+
   it("restores conversation context, preserves role isolation, and saves defaults only explicitly", async () => {
     const root = await mkdtemp(join(tmpdir(),"pi-terminal-controls-")); roots.push(root);
     const workspace = join(root,"workspace"); await mkdir(workspace);

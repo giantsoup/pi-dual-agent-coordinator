@@ -1,15 +1,20 @@
+import { responseProgressSchema, type ResponseProgress } from "./response-progress.js";
+import { repairResponse, ResponseRepairExhaustedError } from "./response-repair.js";
+import { responseShape, planProposalEnvelopeSchema, executionPlanEnvelopeSchema } from "../workflow/workflow-schema.js";
 import { safeDisplayText } from "../security/display-text.js";
 import { loadHistoryEvents } from "../app/interactive/history.js";
 import type { HistoryRecord } from "../types/history.js";
 import { readSessionArchive, archiveRunEntries } from "../runtime/session-history.js";
-import { supportsXhigh } from "@mariozechner/pi-ai";
+import { supportsXhigh, type Model } from "@mariozechner/pi-ai";
 import { randomUUID } from "node:crypto";
 import { join, relative, isAbsolute } from "node:path";
 import { realpath } from "node:fs/promises";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
 import { loadCoordinatorConfig, writeCoordinatorConfig } from "../app/coordinator-config.js";
-import { createSecureModelRegistry, isRoleModel } from "../security/models.js";
+import { createSecureModelRegistry, isRoleModel, gptModelChoices, EXECUTION_MODEL } from "../security/models.js";
+import { LmStudioModels, LocalModelSwitchError, type LocalModelHost, type PreparedLocalModel } from "../security/lm-studio.js";
+import type { ModelPickerCatalog, ModelSwitchProgress } from "../types/model-selection.js";
 import { SessionManager, getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
   deriveActivityUpdate,
@@ -26,7 +31,7 @@ import {
   OperationStoppedError,
   type RuntimeUiBridgeEvent
 } from "./bind-runtime-events.js";
-import { createEmptyHandoffState } from "./handoff-state-machine.js";
+import { applyTransition, createEmptyHandoffState } from "./handoff-state-machine.js";
 import { WorkflowOrchestrator, createWorkflowHandoffEnvelope } from "./workflow-orchestrator.js";
 import {
   createRoleRuntime,
@@ -88,6 +93,7 @@ export interface CoordinatorOptions {
   supersedeRecoveredWorkflowOnStart?: boolean;
   timeoutMs?: number;
   createRoleRuntime?: typeof createRoleRuntime;
+  localModels?: LocalModelHost;
   stdout?: NodeJS.WriteStream;
   stderr?: NodeJS.WriteStream;
 }
@@ -111,6 +117,7 @@ export class Coordinator {
   };
   private workflowState: WorkflowState = createEmptyHandoffState();
   private lastSummary: string | undefined;
+  private responseProgress: ResponseProgress | undefined;
   private pendingPlan: PendingExecutionPlanSnapshot | undefined;
   private uiState: { phase: CoordinatorUiPhase; activeRole: Role } = {
     phase: "planning",
@@ -122,6 +129,10 @@ export class Coordinator {
   private operationKind: NonNullable<CoordinatorStatusSnapshot["operation"]>["kind"] = "idle";
   private disposed = false;
   private configuring = false;
+  private configurationController: AbortController | undefined;
+  private readonly localModels: LocalModelHost | undefined;
+  private readonly discoveredModels = new Map<string, Model<"openai-completions">>();
+  private localModelUnavailable = false;
   private configurationDone = Promise.resolve();
   private finishConfiguration = () => {};
   private readonly runtimeActivity = new Map<Role, ActivitySnapshot>();
@@ -143,6 +154,7 @@ export class Coordinator {
     });
     this.recoveryLoader = new RecoveryLoader(this.ledger);
     this.runtimeFactory = options.createRoleRuntime ?? createRoleRuntime;
+    this.localModels = options.localModels ?? (options.createRoleRuntime ? undefined : new LmStudioModels());
     this.eventBridge = new RuntimeEventBridge(this.logger, this.metrics);
     this.workflowOrchestrator = new WorkflowOrchestrator(
       this.ledger,
@@ -161,45 +173,63 @@ export class Coordinator {
     });
   }
 
-  public async start(): Promise<void> {
-    this.workflowState = await this.recoveryLoader.load();
-    this.resolvedMcpConfig = await loadResolvedMcpConfig({
-      cwd: this.options.cwd,
-      agentDir: this.options.agentDir ?? getAgentDir(),
-      enabled: this.options.mcpEnabled ?? false,
-      explicitConfigPaths: this.options.mcpConfigPaths
-    });
-    const bindingA = await this.runtimeFactory({
-      role: "A",
-      cwd: this.options.cwd,
-      agentDir: this.options.agentDir,
-      sessionRoot: this.sessionRoot,
-      modelOverride: this.options.modelA,
-      thinkingOverride: this.options.thinkingA,
-      sessionMode: this.options.sessionMode,
-      mcp: this.resolvedMcpConfig
-    });
-    this.registry.set(bindingA);
+  public async start(onProgress?: (role: Role, progress: ModelSwitchProgress) => void): Promise<void> {
+    const controller = this.beginConfiguration();
     try {
-      const bindingB = await this.runtimeFactory({
-        role: "B",
+      this.workflowState = await this.recoveryLoader.load();
+      const lastResponse = this.getHistoryEvents().events.reverse().find((event) => event.eventType.startsWith("response."));
+      const restoredProgress = responseProgressSchema.safeParse(lastResponse?.details);
+      if (restoredProgress.success) this.responseProgress = restoredProgress.data;
+      this.resolvedMcpConfig = await loadResolvedMcpConfig({
+        cwd: this.options.cwd,
+        agentDir: this.options.agentDir ?? getAgentDir(),
+        enabled: this.options.mcpEnabled ?? false,
+        explicitConfigPaths: this.options.mcpConfigPaths
+      });
+      const bindingA = await this.runtimeFactory({
+        role: "A",
         cwd: this.options.cwd,
         agentDir: this.options.agentDir,
         sessionRoot: this.sessionRoot,
-        modelOverride: this.options.modelB,
-        thinkingOverride: this.options.thinkingB,
+        modelOverride: this.options.modelA,
+        thinkingOverride: this.options.thinkingA,
         sessionMode: this.options.sessionMode,
         mcp: this.resolvedMcpConfig
       });
-      this.registry.set(bindingB);
-      await this.eventBridge.bind(bindingA);
-      await this.eventBridge.bind(bindingB);
-      this.setUiState("planning", "A");
-      await this.supersedeRecoveredWorkflowOnStartIfNeeded();
-    } catch (error) {
-      await this.registry.disposeAll();
-      throw error;
-    }
+      this.registry.set(bindingA);
+      let prepared: PreparedLocalModel | undefined;
+      try {
+        if (this.localModels) {
+          prepared = await this.localModels.prepare((this.options.modelB ?? EXECUTION_MODEL).replace(/^lm-studio\//, ""), undefined,
+            controller.signal, (progress) => onProgress?.("B", progress));
+          this.discoveredModels.set(prepared.model.id, prepared.model);
+        }
+        controller.signal.throwIfAborted();
+        const bindingB = await this.runtimeFactory({
+          role: "B",
+          cwd: this.options.cwd,
+          agentDir: this.options.agentDir,
+          sessionRoot: this.sessionRoot,
+          modelOverride: this.options.modelB,
+          localModel: prepared?.model,
+          thinkingOverride: this.options.thinkingB,
+          sessionMode: this.options.sessionMode,
+          mcp: this.resolvedMcpConfig
+        });
+        this.registry.set(bindingB);
+        controller.signal.throwIfAborted();
+        await this.eventBridge.bind(bindingA);
+        await this.eventBridge.bind(bindingB);
+        controller.signal.throwIfAborted();
+        this.setUiState("planning", "A");
+        await this.supersedeRecoveredWorkflowOnStartIfNeeded();
+        controller.signal.throwIfAborted();
+        prepared?.commit();
+      } catch (error) {
+        await cleanupAll([() => prepared?.rollback(), () => this.registry.disposeAll()]);
+        throw error;
+      }
+    } finally { this.endConfiguration(); }
   }
 
   public submitUserInput(text: string): Promise<CoordinatorTurnResult> {
@@ -375,27 +405,31 @@ export class Coordinator {
     this.assertIdle();
     this.beginConfiguration();
     try {
-      const binding = this.requireBinding(role);
-      const updated = await applyRuntimeOperation(binding, action);
-      this.registry.set(updated);
-      await this.eventBridge.bind(updated);
-      this.pendingPlan = undefined;
-      this.runtimeActivity.delete(role);
-      this.lastToolNames.delete(role);
-      this.coordinatorActivity = undefined;
-      await this.supersedeActiveWorkflowIfNeeded(role, updated);
-      await this.eventBridge.waitForIdle();
-      if (action.type === "new") {
-        this.lastSummary = undefined;
-        this.operationKind = "idle";
-        this.setUiState("planning", "A");
-        this.clearAllActivity();
-        this.logger.log(normalizeLifecycleEvent({
-          role, sessionId: updated.sessionId, sessionFile: updated.sessionFile,
-          eventType: "ui.conversation_reset"
-        }));
-      }
+      await this.replaceRuntimeInternal(role, action);
     } finally { this.endConfiguration(); }
+  }
+
+  private async replaceRuntimeInternal(role: Role, action: RuntimeReplacementAction): Promise<void> {
+    const binding = this.requireBinding(role);
+    const updated = await applyRuntimeOperation(binding, action);
+    this.registry.set(updated);
+    await this.eventBridge.bind(updated);
+    this.pendingPlan = undefined;
+    this.runtimeActivity.delete(role);
+    this.lastToolNames.delete(role);
+    this.coordinatorActivity = undefined;
+    await this.supersedeActiveWorkflowIfNeeded(role, updated);
+    await this.eventBridge.waitForIdle();
+    if (action.type === "new") {
+      this.lastSummary = undefined;
+      this.operationKind = "idle";
+      this.setUiState("planning", "A");
+      this.clearAllActivity();
+      this.logger.log(normalizeLifecycleEvent({
+        role, sessionId: updated.sessionId, sessionFile: updated.sessionFile,
+        eventType: "ui.conversation_reset"
+      }));
+    }
   }
 
   public getStatus(): CoordinatorStatusSnapshot {
@@ -404,6 +438,7 @@ export class Coordinator {
       const snapshot = this.runtimeActivity.get(binding.role);
       return {
         ...health,
+        ...(binding.role === "B" && this.localModelUnavailable ? { healthy: false } : {}),
         currentActivity: snapshot ? renderActivityText(snapshot) : undefined,
         currentReason: snapshot ? renderReasonText(snapshot) : undefined,
         currentTarget: snapshot?.target,
@@ -447,7 +482,8 @@ export class Coordinator {
         ? renderReasonText(this.coordinatorActivity)
         : undefined,
       lastCompletionSummary: workflow?.latestCompletion?.summary,
-      repairCount: workflow?.repairCount ?? 0,
+      responseProgress: this.responseProgress,
+      repairCount: this.responseProgress?.responseKind === "planning" ? this.responseProgress.repairCount : workflow?.repairCount ?? 0,
       maxReviewRounds: this.options.maxReviewRounds ?? 3,
       timeoutMs: this.options.timeoutMs ?? 600_000,
       runtimes: list,
@@ -491,9 +527,20 @@ export class Coordinator {
   }
 
   public getAvailableModels(role?: Role): Array<{ canonical: string; name: string; reasoning: boolean; thinkingLevels: SupportedThinkingLevel[] }> {
-    return createSecureModelRegistry().getAll()
-      .filter((model) => role ? isRoleModel(role, model) : isRoleModel("A", model) || isRoleModel("B", model))
-      .map((model) => ({ canonical: `${model.provider}/${model.id}`, name: model.name, reasoning: model.reasoning, thinkingLevels: !model.reasoning ? ["off"] : supportsXhigh(model) ? ["off", "minimal", "low", "medium", "high", "xhigh"] : ["off", "minimal", "low", "medium", "high"] }));
+    const discovered = [...this.discoveredModels.values()];
+    return createSecureModelRegistry(undefined, discovered).getAll()
+      .filter((model) => role ? isRoleModel(role, model, discovered) : isRoleModel("A", model) || isRoleModel("B", model, discovered))
+      .map((model) => ({ canonical: `${model.provider}/${model.id}`, name: model.name, reasoning: model.reasoning, thinkingLevels: !model.reasoning ? ["off"] : gptModelChoices.some((current) => current.id === model.id) ? ["low", "medium", "high"] : supportsXhigh(model) ? ["off", "minimal", "low", "medium", "high", "xhigh"] : ["off", "minimal", "low", "medium", "high"] }));
+  }
+
+  public async getModelPickerCatalog(role: Role, signal?: AbortSignal): Promise<ModelPickerCatalog> {
+    const current = this.registry.get(role);
+    const models = role === "A" ? gptModelChoices.map((model) => ({ canonical: `openai/${model.id}`, name: model.name, description: model.description }))
+      : this.localModels ? (await this.localModels.listModels(signal)).map((item) => {
+        this.discoveredModels.set(item.model.id, item.model);
+        return { canonical: `lm-studio/${item.model.id}`, name: item.model.name, description: item.description, loaded: item.loaded, disabledReason: item.disabledReason };
+      }) : this.getAvailableModels("B").map((model) => ({ canonical: model.canonical, name: model.name, description: "Local LM Studio model", loaded: true }));
+    return { role, models, currentModel: current?.session.model ? `${current.session.model.provider}/${current.session.model.id}` : undefined, currentThinking: current?.session.thinkingLevel };
   }
 
   public async getSavedSessions(role: Role) {
@@ -509,47 +556,81 @@ export class Coordinator {
     return readSessionHistory(canonical).messages;
   }
 
-  public async configureRole(role: Role, input: { model?: string; thinking?: SupportedThinkingLevel; save: boolean }): Promise<void> {
+  public async configureRole(role: Role, input: { model?: string; thinking?: SupportedThinkingLevel; save: boolean }, onProgress?: (progress: ModelSwitchProgress) => void): Promise<void> {
     this.assertIdle();
-    this.beginConfiguration();
+    const controller = this.beginConfiguration();
     let replacement: RoleRuntimeBinding | undefined;
+    let prepared: PreparedLocalModel | undefined;
+    let committed = false;
+    let previous: RoleRuntimeBinding | undefined;
+    let bindingAttempted = false;
+    const signal = controller.signal;
     try {
-      const previous = this.requireBinding(role);
+      previous = this.requireBinding(role);
       const model = input.model ?? `${previous.session.model?.provider}/${previous.session.model?.id}`;
+      if (role === "B" && this.localModels) await this.getModelPickerCatalog("B", signal);
       const selected = this.getAvailableModels(role).find((candidate) => candidate.canonical === model);
       if (!selected) throw new Error(`Choose ${role === "A" ? "an approved OpenAI Responses" : "a local LM Studio"} model from /model ${role}.`);
-      const thinking = input.thinking ?? selected.thinkingLevels.find((level) => level === previous.session.thinkingLevel) ?? (selected.reasoning ? "high" : "off");
+      const previousThinking = previous.session.thinkingLevel;
+      const thinking = input.thinking ?? selected.thinkingLevels.find((level) => level === previousThinking) ?? (selected.reasoning ? "high" : "off");
       if (!selected.thinkingLevels.includes(thinking)) throw new Error(`Supported thinking levels for this model: ${selected.thinkingLevels.join(", ")}`);
+      if (role === "B" && this.localModels) {
+        prepared = await this.localModels.prepare(model.replace(/^lm-studio\//, ""), previous.session.model?.id, signal, (progress) => onProgress?.(progress));
+      }
+      signal.throwIfAborted();
+      onProgress?.({ phase: "applying", message: `Preparing Agent ${role}'s conversation and ${thinking} reasoning…` });
       replacement = await this.runtimeFactory({ role, cwd: this.options.cwd, agentDir: this.options.agentDir,
         sessionRoot: this.sessionRoot, sessionMode: this.options.sessionMode,
-        modelOverride: model, thinkingOverride: thinking, mcp: this.resolvedMcpConfig,
-        ...(previous.sessionFile ? { initialSessionPath: previous.sessionFile } : {}),
-        ...(this.options.sessionMode === "memory" ? { initialMessages: previous.session.messages } : {}) });
+        modelOverride: model, localModel: prepared?.model, thinkingOverride: thinking, mcp: this.resolvedMcpConfig,
+        initialSessionManager: previous.session.sessionManager instanceof SessionManager ? previous.session.sessionManager : undefined });
+      signal.throwIfAborted();
+      bindingAttempted = true;
       await this.eventBridge.bind(replacement);
-      try {
-        if (input.save) {
-          const loaded = await loadCoordinatorConfig();
-          if (loaded.warnings.length) throw new Error("Resolve coordinator config warnings before saving defaults.");
-          await writeCoordinatorConfig({
-            ...loaded.config,
-            version: 1,
-            defaults: {
-              ...loaded.config?.defaults,
-              ...(role === "A" ? { modelA: model, thinkingA: thinking } : { modelB: model, thinkingB: thinking })
-            }
-          });
-        }
-      } catch (error) {
-        await this.eventBridge.bind(previous);
-        throw error;
+      signal.throwIfAborted();
+      if (input.save) {
+        const loaded = await loadCoordinatorConfig();
+        if (loaded.warnings.length) throw new Error("Resolve coordinator config warnings before saving defaults.");
+        await writeCoordinatorConfig({
+          ...loaded.config,
+          version: 1,
+          defaults: {
+            ...loaded.config?.defaults,
+            ...(role === "A" ? { modelA: model, thinkingA: thinking } : { modelB: model, thinkingB: thinking })
+          }
+        });
       }
       this.registry.set(replacement);
+      committed = true;
+      prepared?.commit();
+      if (role === "B") this.localModelUnavailable = false;
       replacement = undefined;
       if (role === "A") { this.options.modelA = model; this.options.thinkingA = thinking; }
       else { this.options.modelB = model; this.options.thinkingB = thinking; }
       this.pendingPlan = undefined;
       this.clearAllActivity();
       await previous.dispose();
+    } catch (error) {
+      if (error instanceof LocalModelSwitchError && error.recovery === "unavailable") this.localModelUnavailable = true;
+      const discarded = replacement; replacement = undefined;
+      let recoveryError: LocalModelSwitchError | undefined;
+      let cleanupError: unknown;
+      try { await cleanupAll([
+        async () => {
+          if (!committed && prepared) {
+            try { await prepared.rollback(); }
+            catch {
+              this.localModelUnavailable = true;
+              recoveryError = new LocalModelSwitchError("The model switch failed and the previous local model could not be restored. Choose Agent B's model again before continuing.", signal.aborted, "unavailable");
+            }
+          }
+        },
+        () => !committed && bindingAttempted && previous ? this.eventBridge.bind(previous) : undefined,
+        () => discarded?.dispose()
+      ]); } catch (failure) { cleanupError = failure; }
+      if (recoveryError) throw recoveryError;
+      if (cleanupError) throw cleanupError;
+      if (signal.aborted && !(error instanceof LocalModelSwitchError)) throw new LocalModelSwitchError("Model switch cancelled. Previous model state restored.", true, "restored");
+      throw error;
     } finally {
       try { await replacement?.dispose(); }
       finally { this.endConfiguration(); }
@@ -615,6 +696,10 @@ export class Coordinator {
   }
 
   public async cancelActive(reason: "cancelled" | "timed_out" = "cancelled"): Promise<void> {
+    if (this.configurationController) {
+      this.configurationController.abort();
+      await this.configurationDone;
+    }
     const operation = this.activeOperation;
     if (!operation) return;
     if (!operation.stopping) {
@@ -627,14 +712,17 @@ export class Coordinator {
     await operation.done;
   }
 
-  private beginConfiguration(): void {
+  private beginConfiguration(): AbortController {
     if (this.disposed) throw new Error("Coordinator disposed.");
     this.configuring = true;
+    this.configurationController = new AbortController();
     this.configurationDone = new Promise<void>((resolve) => { this.finishConfiguration = resolve; });
+    return this.configurationController;
   }
 
   private endConfiguration(): void {
     this.configuring = false;
+    this.configurationController = undefined;
     this.finishConfiguration();
   }
 
@@ -644,6 +732,7 @@ export class Coordinator {
 
   private async runOperation(run: () => Promise<CoordinatorTurnResult>, objective: string, originatingTurnId?: string): Promise<CoordinatorTurnResult> {
     this.assertIdle();
+    if (this.localModelUnavailable) throw new Error("Agent B's local model is unavailable. Choose a model with F3 or /model B before continuing.");
     if (this.disposed) throw new Error("Coordinator disposed.");
     const controller = new AbortController();
     let finish = () => {};
@@ -651,6 +740,7 @@ export class Coordinator {
     const operation: NonNullable<typeof this.activeOperation> = { controller, id: createRequestId(), done, finish, outcome: "cancelled" };
     this.activeOperation = operation;
     this.operationKind = "running";
+    this.responseProgress = undefined;
     this.operatorTurnId = originatingTurnId ?? randomUUID();
     this.eventBridge.setOperatorTurn(this.operatorTurnId);
     const logTurn = (eventType: string, details: Record<string, unknown>) => {
@@ -680,10 +770,11 @@ export class Coordinator {
       const status = !cleanupFailed && error instanceof OperationStoppedError ? operation.outcome : "failed";
       const workflow = this.getActiveWorkflow();
       const binding = this.requireBinding(this.uiState.activeRole);
-      await this.ledger.append({ workflowId: workflow?.workflowId ?? operation.id,
-        iteration: workflow?.currentIteration ?? 0, requestId: workflow?.requestId ?? operation.id,
+      await this.ledger.append({ workflowId: error instanceof ResponseRepairExhaustedError ? error.details.workflowId ?? error.details.requestId : workflow?.workflowId ?? operation.id,
+        iteration: workflow?.currentIteration ?? 0, requestId: error instanceof ResponseRepairExhaustedError ? error.details.requestId : workflow?.requestId ?? operation.id,
         status, role: "coordinator", sessionId: binding.sessionId, sessionFile: binding.sessionFile,
-        timestamp: new Date().toISOString(), details: { reason: status, preservedChanges: true } });
+        timestamp: new Date().toISOString(), details: { reason: error instanceof Error ? error.message : String(error), preservedChanges: true,
+          ...(error instanceof ResponseRepairExhaustedError ? error.details : {}) } });
       this.workflowState = await this.recoveryLoader.load();
       this.operationKind = status;
       this.lastSummary = `${status === "timed_out" ? "Deadline exceeded" : status === "cancelled" ? "Work cancelled" : "Work failed"}. Completed file changes are preserved. Submit explicitly to run again.`;
@@ -756,51 +847,36 @@ export class Coordinator {
     | { kind: "plan"; userResponse: string; plan: NonNullable<ReturnType<typeof maybeParsePlanProposalEnvelope>> }
     | { kind: "execute"; executionPlan: NonNullable<ReturnType<typeof maybeParseExecutionPlanEnvelope>> }
   > {
-    const response = await this.eventBridge.promptAndWaitForTurnEnd(
-      options.bindingA,
-      withPromptProvenance(
-        "planning_user",
-        renderPlanningTurnMessage(options.userInput),
-        {
-          requestId: options.requestId,
-          sessionRole: "A"
+    let originalBlock: "pi-plan" | "pi-execute" | undefined;
+    return repairResponse({ bridge: this.eventBridge, binding: options.bindingA, kind: "planning",
+      identifiers: { requestId: options.requestId },
+      shape: "Nonempty planning prose, or exactly one fenced pi-plan or pi-execute JSON block. pi-plan requires operator approval; never convert it to pi-execute. " + responseShape(planProposalEnvelopeSchema, executionPlanEnvelopeSchema),
+      submit: (responseId) => this.eventBridge.promptAndWaitForTurnEnd(options.bindingA,
+        withPromptProvenance("planning_user", renderPlanningTurnMessage(options.userInput), { requestId: options.requestId, sessionRole: "A" }), { responseId }),
+      onFormatFailure: (error, attempt) => {
+        if (attempt === 1 && (error.toolName === "pi-plan" || error.toolName === "pi-execute")) originalBlock = error.toolName;
+      },
+      validate: (message, attempt) => {
+        if (attempt === 1) {
+          const text = extractAssistantText(message);
+          if (countMachineBlocks(text, PLAN_BLOCK_TYPE) === 1) originalBlock = "pi-plan";
+          else if (countMachineBlocks(text, EXECUTE_BLOCK_TYPE) === 1) originalBlock = "pi-execute";
         }
-      )
-    );
-    const first = resolvePlanningTurn(response);
-    if (first.kind !== "invalid_machine_block") {
-      return first;
-    }
-
-    this.coordinatorActivity = {
-      role: "coordinator",
-      phase: "planning",
-      kind: "repair",
-      label: "repairing Agent A planning response",
-      reason: first.reason,
-      startedAt: new Date().toISOString()
-    };
-
-    try {
-      const repairedResponse = await this.eventBridge.promptAndWaitForTurnEnd(
-        options.bindingA,
-        withPromptProvenance(
-          "planning_repair",
-          renderPlanningRepairMessage(first.reason),
-          {
-            requestId: options.requestId,
-            sessionRole: "A"
-          }
-        )
-      );
-      const repaired = resolvePlanningTurn(repairedResponse);
-      if (repaired.kind === "invalid_machine_block") {
-        throw new Error(`Agent A planning response remained invalid after repair: ${repaired.reason}`);
+        const response = resolvePlanningTurn(message);
+        if (attempt > 1 && response.kind === "execute" && originalBlock !== "pi-execute") {
+          return { reason: "Format repair cannot introduce execution approval. Return planning prose or pi-plan for operator approval." };
+        }
+        return response.kind === "invalid_machine_block" ? { reason: response.reason } : { value: response };
+      },
+      onProgress: () => this.setUiState("repair", "A"),
+      onRepair: async (progress) => {
+        const record: HandoffRecord = { workflowId: progress.requestId, iteration: 0, status: "repair_requested", role: "coordinator",
+          requestId: progress.requestId, sessionId: options.bindingA.sessionId, sessionFile: options.bindingA.sessionFile,
+          timestamp: new Date().toISOString(), details: { ...progress } };
+        await this.ledger.append(record);
+        this.workflowState = applyTransition(this.workflowState, record);
       }
-      return repaired;
-    } finally {
-      this.coordinatorActivity = undefined;
-    }
+    });
   }
 
   private async executeApprovedPlan(options: {
@@ -910,8 +986,9 @@ export class Coordinator {
       return;
     }
 
-    await this.replaceRuntime("A", { type: "new", role: "A" });
-    await this.replaceRuntime("B", { type: "new", role: "B" });
+    await this.replaceRuntimeInternal("A", { type: "new", role: "A" });
+    this.configurationController?.signal.throwIfAborted();
+    await this.replaceRuntimeInternal("B", { type: "new", role: "B" });
     this.lastSummary =
       `Workflow ${activeWorkflow.workflowId} was superseded when PI Dual started fresh runtime sessions.`;
   }
@@ -945,6 +1022,10 @@ export class Coordinator {
   }
 
   private observeActivityEvent(event: NormalizedTelemetryEvent): void {
+    if (event.eventType.startsWith("response.")) {
+      const progress = responseProgressSchema.safeParse(event.details);
+      if (progress.success) this.responseProgress = progress.data;
+    }
     if (
       (event.eventType === "pi.tool_execution_start" ||
         event.eventType === "pi.tool_execution_update" ||
@@ -1010,16 +1091,6 @@ function renderPlanningTurnMessage(userInput: string): string {
   ].join("\n");
 }
 
-function renderPlanningRepairMessage(reason: string): string {
-  return [
-    "Planning repair prompt for Agent A.",
-    `Your previous planning response could not be accepted: ${reason}`,
-    "Reply with either normal prose and no machine block, exactly one valid `pi-plan` block, or exactly one valid `pi-execute` block.",
-    "Do not emit `pi-handoff`, `pi-completion`, or `pi-final` in planning mode.",
-    "`pi-plan` and `pi-execute` are mutually exclusive."
-  ].join("\n");
-}
-
 function labelPhase(phase: CoordinatorUiPhase): string {
   switch (phase) {
     case "planning":
@@ -1042,6 +1113,7 @@ function resolvePlanningTurn(message: Parameters<typeof maybeParseExecutionPlanE
   | { kind: "plan"; userResponse: string; plan: NonNullable<ReturnType<typeof maybeParsePlanProposalEnvelope>> }
   | { kind: "execute"; executionPlan: NonNullable<ReturnType<typeof maybeParseExecutionPlanEnvelope>> }
   | { kind: "invalid_machine_block"; reason: string } {
+  if (message?.role === "assistant" && message.stopReason === "length") return { kind: "invalid_machine_block", reason: "Truncated planning response." };
   const text = extractAssistantText(message);
   const counts = {
     plan: countMachineBlocks(text, PLAN_BLOCK_TYPE),

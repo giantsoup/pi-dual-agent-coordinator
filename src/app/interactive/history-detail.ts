@@ -53,6 +53,7 @@ export function projectHistoryDetail(record: HistoryRecord, records: HistoryReco
     if (!text) reason ??= "Visible assistant prose unavailable: none retained for this run. Hidden reasoning and workflow blocks are excluded.";
     text += `\n\nCalls:\n${calls.map((call) => `${call.outcome.kind}: ${call.title} [${call.id}]`).join("\n")}`;
   }
+  if (record.kind === "turn" && record.responseProgress && section !== "metadata" && section !== "request") text += `\n\n${record.responseProgress.label}\n${record.responseProgress.reason ?? ""}`;
   const lines = safeDisplayText(text).split("\n");
   const start = Math.max(0, Math.min(Math.floor(offset), Math.max(0, lines.length - 1)));
   return { recordId: record.id, section, offset: start, lines: lines.slice(start, start + Math.max(1, Math.min(200, limit))), totalLines: lines.length, reason: reason ? safeDisplayText(reason) : undefined };

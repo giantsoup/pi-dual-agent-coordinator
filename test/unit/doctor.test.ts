@@ -25,22 +25,27 @@ it("rejects subscription models and legacy auth without evaluating secret comman
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-it("requires the local executor to be loaded with enough context", async () => {
+it("accepts a downloaded model for automatic loading and rejects incompatible context", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "pi-doctor-local-"));
   let contextLength = 4096;
+  let maxContext = 32768;
   const request = vi.fn<typeof fetch>(async (url, init) => {
     expect(url).toBe("http://127.0.0.1:1234/api/v1/models");
     expect(init?.redirect).toBe("error");
-    return Response.json({ models: [{ loaded_instances: [{ id: "qwen3.6-35b-a3b", config: { context_length: contextLength } }] }] });
+    return Response.json({ models: [{ type: "llm", key: "qwen3.6-35b-a3b", display_name: "Qwen", max_context_length: maxContext,
+      capabilities: { trained_for_tool_use: true }, loaded_instances: [{ id: "qwen3.6-35b-a3b", config: { context_length: contextLength } }] }] });
   });
   vi.stubGlobal("fetch", request);
   try {
     const options = { cwd, agentDir: cwd, modelB: "lm-studio/qwen3.6-35b-a3b", mcpEnabled: false };
     const insufficient = await inspectRuntimeSetup(options);
     expect(insufficient.checks.find((check) => check.name === "Agent B model")?.status).toBe("fail");
+    maxContext = 262144;
+    const unloaded = await inspectRuntimeSetup(options);
+    expect(unloaded.checks.find((check) => check.name === "Agent B model")).toMatchObject({ status: "pass", detail: expect.stringContaining("load automatically") });
     contextLength = 65536;
     const ready = await inspectRuntimeSetup(options);
     expect(ready.checks.find((check) => check.name === "Agent B model")?.status).toBe("pass");
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(3);
   } finally { vi.unstubAllGlobals(); await rm(cwd, { recursive: true, force: true }); }
 });

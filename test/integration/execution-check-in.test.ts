@@ -31,6 +31,7 @@ function field(text: string, name: string): string {
 
 async function scenario(options: {
   toolTurns: number;
+  failedRequests?: number[];
   decision?: "redirect" | "blocked";
   checkIn?: (turnCount: number, coordinator: Coordinator) => Promise<string | undefined>;
 }) {
@@ -58,6 +59,7 @@ async function scenario(options: {
             workerRequests += 1;
             workerBodies.push(text);
             order.push(`B${workerRequests}`);
+            if (options.failedRequests?.includes(workerRequests)) return fixtureChatToolResponse("read", { path: "missing.txt" }, `failed-${workerRequests}`);
             if (workerRequests <= options.toolTurns) return fixtureChatToolResponse("write", {
               path: "progress.txt", content: `step ${workerRequests}`
             }, `step-${workerRequests}`);
@@ -70,12 +72,12 @@ async function scenario(options: {
           // The last input item is the current coordinator prompt; earlier check-ins remain in history.
           if (!body || typeof body !== "object" || !("input" in body) || !Array.isArray(body.input)) throw new Error("Missing Responses input");
           const prompt = allText(body.input.at(-1));
-          if (prompt.includes("Coordinator process check-in")) {
-            const turnCount = Number(/after (\d+) completed model turns/.exec(prompt)?.[1]);
+          if (prompt.includes("Coordinator process check-in") || prompt.includes("Agent A check-in response attempt")) {
+            const turnCount = Number(/after (\d+) (?:completed|successful) model turns/.exec(prompt)?.[1]);
             checkIns.push(turnCount);
             order.push(`A${turnCount}`);
-            expect(await readFile(join(cwd, "progress.txt"), "utf8")).toBe(`step ${turnCount}`);
-            expect(prompt).toContain(`Turn ${turnCount}:`);
+            expect(await readFile(join(cwd, "progress.txt"), "utf8")).toBe(`step ${workerRequests}`);
+            expect(text).toContain(`Turn ${turnCount}:`);
             const override = await options.checkIn?.(turnCount, coordinator);
             if (override !== undefined) return fixtureResponse(override);
             return fixtureResponse("```pi-check-in\n" + JSON.stringify({
@@ -103,7 +105,7 @@ async function scenario(options: {
     const unsubscribe = coordinator.subscribeEvents((event) => events.push(event));
     try {
       const result = await coordinator.submitUserInput("Execute the approved file change now.");
-      return { result, workerRequests, plannerRequests, checkIns, events, order, workerBodies };
+      return { result, workerRequests, plannerRequests, checkIns, events, order, workerBodies, status: coordinator.getStatus() };
     } finally { unsubscribe(); }
   } finally { await coordinator.dispose(); }
 }
@@ -135,6 +137,14 @@ describe("execution process check-ins through real Pi sessions and tools", () =>
     });
   }, 120_000);
 
+  it("does not count a real failed B tool call toward the ten successful turns", async () => {
+    const run = await scenario({ toolTurns: 11, failedRequests: [5] });
+    expect(run.result.workflow?.status).toBe("completed");
+    expect(run.checkIns).toEqual([10]);
+    expect(run.order.slice(9, 13)).toEqual(["B10", "B11", "A10", "B12"]);
+    expect(run.events.find((event) => event.eventType === "workflow.execution_turn_failed")?.details.completedTurns).toBe(4);
+  }, 120_000);
+
   it("sends a final response on turn 10 directly to the normal review", async () => {
     const run = await scenario({ toolTurns: 9 });
     expect(run.result.workflow?.status).toBe("completed");
@@ -147,7 +157,23 @@ describe("execution process check-ins through real Pi sessions and tools", () =>
     expect(run.result.workflow?.status).toBe("blocked");
     expect(run.workerRequests).toBe(10);
     expect(run.result.userResponse).toContain("requires exactly one pi-check-in block");
+    expect(run.checkIns).toHaveLength(10);
+    expect(run.events.filter((event) => event.eventType === "workflow.repair_requested")).toHaveLength(9);
+    expect(run.events.filter((event) => event.eventType === "response.exhausted")).toHaveLength(1);
+    expect(run.status.responseProgress).toMatchObject({ responseKind: "check-in", attempt: 10, repairCount: 9 });
     expect(run.events.find((event) => event.eventType === "workflow.blocked")?.role).toBe("A");
+  }, 120_000);
+
+  it("keeps B paused through nine wrong handoffs and resumes only after the tenth valid check-in", async () => {
+    let attempt = 0;
+    const run = await scenario({ toolTurns: 10, checkIn: async () => ++attempt < 10
+      ? '```pi-handoff\n{"schemaVersion":1,"iteration":3}\n```' : undefined });
+    expect(run.result.workflow?.status).toBe("completed");
+    expect(run.workerRequests).toBe(11);
+    expect(run.checkIns).toEqual(Array(10).fill(10));
+    expect(run.order.slice(9, 21)).toEqual(["B10", ...Array(10).fill("A10"), "B11"]);
+    const attempts = run.events.filter((event) => event.eventType === "response.attempt_started" && event.details.responseKind === "check-in");
+    expect(attempts.map((event) => event.details.attempt)).toEqual([1,2,3,4,5,6,7,8,9,10]);
   }, 120_000);
 
   it("cancels a paused check-in without starting the next worker request", async () => {

@@ -9,7 +9,7 @@ import { ToolIsolation } from "../security/isolation.js";
 import { credentialAccount, credentialHelper, credentialStatus } from "../security/credentials.js";
 import { assertSafeProviderEnvironment } from "../security/provider-broker.js";
 import { hasLegacyOpenAiAuth } from "./setup.js";
-import { assertLmStudioModelReady } from "../security/lm-studio.js";
+import { LmStudioModels } from "../security/lm-studio.js";
 
 export interface RuntimeSetupCheck { name: string; status: "pass" | "warn" | "fail"; detail: string; }
 export interface RuntimeSetupReport {
@@ -47,12 +47,14 @@ export async function inspectRuntimeSetup(options: RuntimeSetupOptions): Promise
   const registry = createSecureModelRegistry();
   for (const [role, reference] of [["A", resolveEffectiveModelA(options, loaded.config).value ?? SMART_MODEL], ["B", resolveEffectiveModelB(options, loaded.config).value ?? EXECUTION_MODEL]] as const) {
     await test(`Agent ${role} model`, async () => {
+      if (role === "B") {
+        const selected = (await new LmStudioModels().listModels()).find((item) => reference === `lm-studio/${item.model.id}` || reference === item.model.id);
+        if (!selected) throw new Error("Selected Agent B model is not downloaded in LM Studio. Open LM Studio and download it first.");
+        if (selected.disabledReason) throw new Error(selected.disabledReason);
+        return `lm-studio/${selected.model.id}, local inference at ${LM_STUDIO_BASE_URL}; ${selected.loaded ? "loaded and ready" : "will load automatically at startup"}.`;
+      }
       const model = registry.getAll().find((candidate) => reference === `${candidate.provider}/${candidate.id}` || reference === candidate.id);
       if (!model || !isRoleModel(role, model)) throw new Error(`Agent ${role} requires ${role === "A" ? "an approved OpenAI Responses model" : "a local LM Studio model, such as " + EXECUTION_MODEL}.`);
-      if (role === "B") {
-        await assertLmStudioModelReady(model);
-        return `lm-studio/${model.id}, local inference at ${LM_STUDIO_BASE_URL}; no OpenAI credential used.`;
-      }
       return `openai/${model.id}, API-key authentication through the trusted broker.`;
     });
   }

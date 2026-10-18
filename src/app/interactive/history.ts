@@ -1,3 +1,4 @@
+import { responseProgressSchema } from "../../coordinator/response-progress.js";
 import { z } from "zod";
 import { readFileSync } from "node:fs";
 import type { HistoryRecord, HistorySnapshot, RecordOutcome } from "../../types/history.js";
@@ -83,6 +84,11 @@ export class HistoryIndex {
             put({ ...record, outcome: terminal.kind === "completed" || terminal.kind === "waiting_approval" ? { kind: "interrupted", endedAt: event.timestamp } : terminal });
           }
         }
+      }
+      if (event.eventType.startsWith("response.")) {
+        const progress = responseProgressSchema.safeParse(d);
+        const latest = this.records.get(turn.id);
+        if (progress.success && latest?.kind === "turn") put({ ...latest, responseProgress: progress.data });
       }
       if (event.eventType === "workflow.execution_progress") {
         const progress = executionProgressSchema.safeParse(d);

@@ -1,3 +1,5 @@
+import { repairResponse, ResponseRepairExhaustedError, type ResponseProgress } from "./response-repair.js";
+import { responseShape, handoffEnvelopeSchema, finalDecisionSchema, completionRecordSchema } from "../workflow/workflow-schema.js";
 import { randomUUID } from "node:crypto";
 
 import { withPromptProvenance } from "../app/prompt-provenance.js";
@@ -6,7 +8,7 @@ import { createExecutionSupervisor, ExecutionCheckInError } from "./execution-su
 import { createHandoffId } from "../handoff/handoff-id.js";
 import { applyTransition } from "./handoff-state-machine.js";
 import { deliverHandoff } from "./deliver-handoff.js";
-import { renderCapExceededMessage, renderRepairMessage } from "../workflow/render-final-message.js";
+import { renderCapExceededMessage } from "../workflow/render-final-message.js";
 import { renderReviewMessage } from "../workflow/render-review-message.js";
 import { resolveAgentAResponse, resolveAgentBResponse } from "./review-cycle.js";
 import { normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
@@ -78,7 +80,7 @@ export class WorkflowOrchestrator {
         : undefined;
 
       this.setUiState("planning", "A");
-      let agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
+      const submit = (responseId: string) => this.bridge.promptAndWaitForTurnEnd(
         options.bindingA,
         withPromptProvenance(
           "user_task",
@@ -96,17 +98,19 @@ export class WorkflowOrchestrator {
             sessionRole: "A"
           }
         ),
-        initialPromptOptions
+        { ...initialPromptOptions, responseId }
       );
 
       const aOutcome = await this.acceptAgentAResponse({
         bindingA: options.bindingA,
         bindingB: options.bindingB,
         workflowId,
+        responseKind: "handoff",
         allowedHandoffIterations: [1],
         allowedFinalIterations: [1],
         requestId: options.requestId,
-        message: agentAMessage
+        submit,
+        iteration: 1
       });
 
       if (aOutcome.kind === "final") {
@@ -145,12 +149,12 @@ export class WorkflowOrchestrator {
     } catch (error) {
       if (error instanceof OperationStoppedError) throw error;
       const failure =
-        error instanceof WorkflowProtocolError
+        error instanceof ResponseRepairExhaustedError
           ? {
-              workflowId: error.details.workflowId,
-              iteration: error.details.iteration,
+              workflowId: error.details.workflowId ?? workflowId,
+              iteration: error.details.iteration ?? 1,
               binding: error.details.role === "A" ? options.bindingA : options.bindingB,
-              reason: error.details.reason
+              reason: error.details.reason ?? error.message
             }
           : {
               workflowId,
@@ -167,9 +171,10 @@ export class WorkflowOrchestrator {
         status: "blocked",
         userTask: options.userTask,
         details: {
+          ...(error instanceof ResponseRepairExhaustedError ? error.details : {}),
           reason: failure.reason,
-          role: error instanceof WorkflowProtocolError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : "coordinator",
-          unexpectedError: !(error instanceof WorkflowProtocolError || error instanceof ExecutionCheckInError)
+          role: error instanceof ResponseRepairExhaustedError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : "coordinator",
+          unexpectedError: !(error instanceof ResponseRepairExhaustedError || error instanceof ExecutionCheckInError)
         }
       });
       state = await this.persistRecord(state, blockedRecord);
@@ -217,12 +222,12 @@ export class WorkflowOrchestrator {
     } catch (error) {
       if (error instanceof OperationStoppedError) throw error;
       const failure =
-        error instanceof WorkflowProtocolError
+        error instanceof ResponseRepairExhaustedError
           ? {
-              workflowId: error.details.workflowId,
-              iteration: error.details.iteration,
+              workflowId: error.details.workflowId ?? options.initialEnvelope.workflowId,
+              iteration: error.details.iteration ?? options.initialEnvelope.iteration,
               binding: error.details.role === "A" ? options.bindingA : options.bindingB,
-              reason: error.details.reason
+              reason: error.details.reason ?? error.message
             }
           : deriveUnexpectedApprovedPlanFailure(options, this.currentState, error);
 
@@ -234,9 +239,10 @@ export class WorkflowOrchestrator {
         status: "blocked",
         userTask: options.userTask,
         details: {
+          ...(error instanceof ResponseRepairExhaustedError ? error.details : {}),
           reason: failure.reason,
-          role: error instanceof WorkflowProtocolError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : "coordinator",
-          unexpectedError: !(error instanceof WorkflowProtocolError || error instanceof ExecutionCheckInError)
+          role: error instanceof ResponseRepairExhaustedError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : "coordinator",
+          unexpectedError: !(error instanceof ResponseRepairExhaustedError || error instanceof ExecutionCheckInError)
         }
       });
       const state = await this.persistRecord(this.currentState ?? options.state, blockedRecord);
@@ -266,179 +272,74 @@ export class WorkflowOrchestrator {
     }
   }
 
+  private async recordRepair(binding: RoleRuntimeBinding, progress: ResponseProgress): Promise<void> {
+    await this.persistRecordNoStateMutation({
+      workflowId: progress.workflowId ?? progress.requestId, handoffId: progress.handoffId,
+      iteration: progress.iteration ?? 0, requestId: progress.requestId, status: "repair_requested", role: "coordinator",
+      sessionId: binding.sessionId, sessionFile: binding.sessionFile, timestamp: new Date().toISOString(),
+      details: { ...progress }
+    });
+  }
+
   private async acceptAgentAResponse(options: {
     bindingA: RoleRuntimeBinding;
     bindingB: RoleRuntimeBinding;
     workflowId: string;
+    iteration: number;
     allowedHandoffIterations: number[];
     allowedFinalIterations: number[];
     requestId: string;
-    message: Awaited<ReturnType<RuntimeEventBridge["promptAndWaitForTurnEnd"]>>;
+    submit: (responseId: string) => ReturnType<RuntimeEventBridge["promptAndWaitForTurnEnd"]>;
+    responseKind?: "handoff" | "review";
     expectedBlockType?: "pi-final" | "pi-handoff-or-pi-final";
   }): Promise<
     | { kind: "handoff"; envelope: HandoffEnvelope }
     | { kind: "final"; finalDecision: FinalDecisionRecord }
   > {
-    const first = resolveAgentAResponse({
-      message: options.message,
-      workflowId: options.workflowId,
-      allowedHandoffIterations: options.allowedHandoffIterations,
-      allowedFinalIterations: options.allowedFinalIterations
-    });
-    if (first.kind !== "invalid" && this.matchesExpectedBlock(first.kind, options.expectedBlockType)) {
-      return first;
-    }
-
-    const repairRecord = createRepairRecord({
-      workflowId: options.workflowId,
-      iteration: [
-        ...options.allowedFinalIterations,
-        ...options.allowedHandoffIterations
-      ].sort((left, right) => right - left)[0] ?? 1,
-      requestId: options.requestId,
-      binding: options.bindingA,
-      reason: first.kind === "invalid" ? first.reason : "unexpected block type from Agent A"
-    });
-    await this.persistRecordNoStateMutation(repairRecord);
-    this.logWorkflowEvent("workflow.repair_requested", options.bindingA, {
-      bindingA: options.bindingA,
-      bindingB: options.bindingB,
-      requestId: options.requestId
-    }, {
-      workflowId: options.workflowId,
-      handoffId: undefined,
-      iteration:
-        [...options.allowedFinalIterations, ...options.allowedHandoffIterations].sort(
-          (left, right) => right - left
-        )[0] ?? 1,
-      reason: repairRecord.details?.reason
-    });
-
-    this.setUiState("repair", "A");
-    const repairedMessage = await this.bridge.promptAndWaitForTurnEnd(
-      options.bindingA,
-      withPromptProvenance(
-        "coordinator_repair",
-        renderRepairMessage(
-          "A",
-          options.expectedBlockType ?? "pi-handoff-or-pi-final",
-          first.kind === "invalid" ? first.reason : "unexpected block type",
-          options.allowedFinalIterations.length === 1 &&
-            options.allowedHandoffIterations.length === 1
-            ? `For this turn, \`pi-final.iteration\` must be ${options.allowedFinalIterations[0]} and \`pi-handoff.iteration\` must be ${options.allowedHandoffIterations[0]}.`
-            : undefined
-        ),
-        {
-          requestId: options.requestId,
-          workflowId: options.workflowId,
-          iteration:
-            [...options.allowedFinalIterations, ...options.allowedHandoffIterations].sort(
-              (left, right) => right - left
-            )[0] ?? 1,
-          sessionRole: "A"
-        }
-      )
-    );
-    const repaired = resolveAgentAResponse({
-      message: repairedMessage,
-      workflowId: options.workflowId,
-      allowedHandoffIterations: options.allowedHandoffIterations,
-      allowedFinalIterations: options.allowedFinalIterations
-    });
-    if (repaired.kind !== "invalid" && this.matchesExpectedBlock(repaired.kind, options.expectedBlockType)) {
-      return repaired;
-    }
-
-    throw new WorkflowProtocolError({
-      role: "A",
-      workflowId: options.workflowId,
-      iteration:
-        [...options.allowedFinalIterations, ...options.allowedHandoffIterations].sort(
-          (left, right) => right - left
-        )[0] ?? 1,
-      reason:
-        repaired.kind === "invalid" ? repaired.reason : "unexpected block type from Agent A after repair"
+    return repairResponse({ bridge: this.bridge, binding: options.bindingA,
+      kind: options.expectedBlockType === "pi-final" ? "final" : options.responseKind ?? "review",
+      identifiers: { workflowId: options.workflowId, requestId: options.requestId, iteration: options.iteration },
+      shape: [
+        options.expectedBlockType === "pi-final" ? "Exactly one fenced pi-final JSON block." : "Exactly one fenced pi-handoff or pi-final JSON block.",
+        `pi-handoff.iteration must be one of ${JSON.stringify(options.allowedHandoffIterations)}. pi-final.iteration must be one of ${JSON.stringify(options.allowedFinalIterations)}.`,
+        responseShape(...(options.expectedBlockType === "pi-final" ? [finalDecisionSchema] : [handoffEnvelopeSchema, finalDecisionSchema]))
+      ].join("\n"),
+      submit: options.submit,
+      onRepair: (progress) => this.recordRepair(options.bindingA, progress),
+      onProgress: () => this.setUiState("repair", "A"),
+      validate: (message) => {
+        const response = resolveAgentAResponse({ ...options, message });
+        if (response.kind === "invalid") return { reason: response.reason };
+        if (!this.matchesExpectedBlock(response.kind, options.expectedBlockType)) return { reason: "Unexpected block type from Agent A." };
+        return { value: response };
+      }
     });
   }
 
   private async acceptAgentBResponse(options: {
     bindingB: RoleRuntimeBinding;
-    bindingA: RoleRuntimeBinding;
     workflowId: string;
     handoffId: string;
     iteration: number;
     requestId: string;
-    message: Awaited<ReturnType<RuntimeEventBridge["promptAndWaitForTurnEnd"]>>;
-    onTurnEnd: NonNullable<SessionPromptOptions["onTurnEnd"]>;
+    submit: (responseId: string) => ReturnType<RuntimeEventBridge["promptAndWaitForTurnEnd"]>;
   }): Promise<CompletionRecord> {
-    const first = resolveAgentBResponse({
-      message: options.message,
-      workflowId: options.workflowId,
-      handoffId: options.handoffId,
-      iteration: options.iteration
-    });
-    if (first.kind === "completion") {
-      return first.completion;
-    }
-
-    const repairRecord = createRepairRecord({
-      workflowId: options.workflowId,
-      iteration: options.iteration,
-      requestId: options.requestId,
-      binding: options.bindingB,
-      handoffId: options.handoffId,
-      reason: first.reason
-    });
-    await this.persistRecordNoStateMutation(repairRecord);
-    this.logWorkflowEvent("workflow.repair_requested", options.bindingB, {
-      bindingA: options.bindingA,
-      bindingB: options.bindingB,
-      requestId: options.requestId
-    }, {
-      workflowId: options.workflowId,
-      handoffId: options.handoffId,
-      iteration: options.iteration,
-      reason: repairRecord.details?.reason
-    });
-
-    this.setUiState("repair", "B");
-    const repairedMessage = await this.bridge.promptAndWaitForTurnEnd(
-      options.bindingB,
-      withPromptProvenance(
-        "coordinator_repair",
-        renderRepairMessage("B", "pi-completion", first.reason),
-        {
-          requestId: options.requestId,
-          workflowId: options.workflowId,
-          handoffId: options.handoffId,
-          iteration: options.iteration,
-          sessionRole: "B"
-        }
-      ),
-      { onTurnEnd: options.onTurnEnd }
-    );
-    const repaired = resolveAgentBResponse({
-      message: repairedMessage,
-      workflowId: options.workflowId,
-      handoffId: options.handoffId,
-      iteration: options.iteration
-    });
-    if (repaired.kind === "completion") {
-      return repaired.completion;
-    }
-
-    throw new WorkflowProtocolError({
-      role: "B",
-      workflowId: options.workflowId,
-      iteration: options.iteration,
-      reason: repaired.reason
+    return repairResponse({ bridge: this.bridge, binding: options.bindingB, kind: "completion",
+      identifiers: { workflowId: options.workflowId, handoffId: options.handoffId, requestId: options.requestId, iteration: options.iteration },
+      shape: "Exactly one fenced pi-completion JSON block. " + responseShape(completionRecordSchema),
+      submit: options.submit, onRepair: (progress) => this.recordRepair(options.bindingB, progress),
+      onProgress: () => this.setUiState("repair", "B"),
+      validate: (message) => {
+        const response = resolveAgentBResponse({ ...options, message });
+        return response.kind === "invalid" ? { reason: response.reason } : { value: response.completion };
+      }
     });
   }
 
   private async persistRecord(state: WorkflowState, record: HandoffRecord): Promise<WorkflowState> {
     this.bridge.assertActive();
     await this.ledger.append(record);
-    const nextState = applyTransition(state, record);
+    const nextState = applyTransition(this.currentState ?? state, record);
     this.currentState = nextState;
     this.onStateChange(nextState);
     return nextState;
@@ -529,30 +430,23 @@ export class WorkflowOrchestrator {
         bridge: this.bridge,
         envelope,
         setUiState: this.setUiState,
+        onRepair: (progress) => this.recordRepair(options.bindingA, progress),
         logEvent: (eventType, details) => this.logWorkflowEvent(eventType, eventType === "workflow.execution_progress" ? options.bindingB : options.bindingA, options, details)
       });
-      const { delivered, message: agentBMessage } = await deliverHandoff({
-        prepared,
-        binding: options.bindingB,
-        bridge: this.bridge,
-        onTurnEnd
-      });
-      state = await this.persistRecord(state, delivered);
-      this.logWorkflowEvent("workflow.iteration_delivered", options.bindingB, options, {
-        workflowId: options.workflowId,
-        handoffId: delivered.handoffId,
-        iteration
-      });
-
       const bOutcome = await this.acceptAgentBResponse({
         bindingB: options.bindingB,
-        bindingA: options.bindingA,
         workflowId: options.workflowId,
         handoffId: prepared.handoffId ?? envelope.handoffId,
         iteration,
         requestId: options.requestId,
-        message: agentBMessage,
-        onTurnEnd
+        submit: async (responseId) => {
+          const { delivered, message } = await deliverHandoff({ prepared, binding: options.bindingB, bridge: this.bridge, onTurnEnd, responseId });
+          state = await this.persistRecord(state, delivered);
+          this.logWorkflowEvent("workflow.iteration_delivered", options.bindingB, options, {
+            workflowId: options.workflowId, handoffId: delivered.handoffId, iteration
+          });
+          return message;
+        }
       });
 
       const completed = createCompletedRecord({
@@ -571,7 +465,7 @@ export class WorkflowOrchestrator {
       const workflow = selectWorkflowSnapshot(state, options.workflowId);
       if (iteration >= options.maxReviewRounds) {
         this.setUiState("review", "A");
-        const agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
+        const submit = (responseId: string) => this.bridge.promptAndWaitForTurnEnd(
           options.bindingA,
           withPromptProvenance(
             "coordinator_control",
@@ -583,7 +477,7 @@ export class WorkflowOrchestrator {
               iteration,
               sessionRole: "A"
             }
-          )
+          ), { responseId }
         );
         const cappedOutcome = await this.acceptAgentAResponse({
           bindingA: options.bindingA,
@@ -592,7 +486,8 @@ export class WorkflowOrchestrator {
           allowedHandoffIterations: [],
           allowedFinalIterations: [iteration],
           requestId: options.requestId,
-          message: agentAMessage,
+          submit,
+          iteration,
           expectedBlockType: "pi-final"
         });
 
@@ -653,7 +548,7 @@ export class WorkflowOrchestrator {
       }
 
       this.setUiState("review", "A");
-      const agentAMessage = await this.bridge.promptAndWaitForTurnEnd(
+      const submit = (responseId: string) => this.bridge.promptAndWaitForTurnEnd(
         options.bindingA,
         withPromptProvenance(
           "coordinator_review",
@@ -665,7 +560,7 @@ export class WorkflowOrchestrator {
             iteration,
             sessionRole: "A"
           }
-        )
+        ), { responseId }
       );
       const aOutcome = await this.acceptAgentAResponse({
         bindingA: options.bindingA,
@@ -674,7 +569,8 @@ export class WorkflowOrchestrator {
         allowedHandoffIterations: [iteration + 1],
         allowedFinalIterations: [iteration],
         requestId: options.requestId,
-        message: agentAMessage
+        submit,
+        iteration
       });
 
       if (aOutcome.kind === "final") {
@@ -799,30 +695,6 @@ function createFinalizedRecord(options: {
   };
 }
 
-function createRepairRecord(options: {
-  workflowId: string;
-  iteration: number;
-  requestId: string;
-  binding: RoleRuntimeBinding;
-  handoffId?: string | undefined;
-  reason: string;
-}): HandoffRecord {
-  return {
-    workflowId: options.workflowId,
-    handoffId: options.handoffId,
-    iteration: options.iteration,
-    status: "repair_requested",
-    role: "coordinator",
-    requestId: options.requestId,
-    sessionId: options.binding.sessionId,
-    sessionFile: options.binding.sessionFile,
-    timestamp: new Date().toISOString(),
-    details: {
-      reason: options.reason
-    }
-  };
-}
-
 function createTerminalRecord(options: {
   workflowId: string;
   iteration: number;
@@ -929,19 +801,6 @@ function deriveUnexpectedApprovedPlanFailure(
     binding,
     reason: error instanceof Error ? error.message : String(error)
   };
-}
-
-export class WorkflowProtocolError extends Error {
-  public constructor(
-    public readonly details: {
-      role: "A" | "B";
-      workflowId: string;
-      iteration: number;
-      reason: string;
-    }
-  ) {
-    super(`${details.role} protocol error: ${details.reason}`);
-  }
 }
 
 export function createWorkflowHandoffEnvelope(options: {

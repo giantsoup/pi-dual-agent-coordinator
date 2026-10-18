@@ -1,9 +1,11 @@
+import { resolveAgentBResponse } from "./review-cycle.js";
 import type { z } from "zod";
 
 import { withPromptProvenance } from "../app/prompt-provenance.js";
 import { summarizeToolActivity } from "../app/activity-summary.js";
 import { extractAssistantText } from "../handoff/handoff-envelope.js";
-import { checkInSchema } from "../workflow/workflow-schema.js";
+import { repairResponse, ResponseRepairExhaustedError, type ResponseProgress } from "./response-repair.js";
+import { checkInSchema, responseShape } from "../workflow/workflow-schema.js";
 import { EXECUTION_CHECK_IN_INTERVAL, type ExecutionProgress } from "../workflow/execution-progress.js";
 import { redactText, redactValue } from "../security/redact.js";
 import type { HandoffEnvelope } from "../types/handoff.js";
@@ -20,6 +22,7 @@ export function createExecutionSupervisor(options: {
   envelope: HandoffEnvelope;
   setUiState: (phase: CoordinatorUiPhase, role: "A" | "B") => void;
   logEvent: (eventType: string, details: Record<string, unknown>) => void;
+  onRepair?: ((progress: ResponseProgress) => Promise<void>) | undefined;
 }): NonNullable<SessionPromptOptions["onTurnEnd"]> {
   let turnCount = 0;
   const recentTurns: string[] = [];
@@ -35,12 +38,24 @@ export function createExecutionSupervisor(options: {
     options.bridge.assertActive();
     signal.throwIfAborted();
     if (event.message.role !== "assistant" || event.message.stopReason === "error" || event.message.stopReason === "aborted") return;
+    const calls = event.message.content.filter((part) => part.type === "toolCall");
+    const successful = event.message.stopReason !== "length" && (calls.length > 0
+      ? calls.every((call) => event.toolResults.some((result) => result.toolCallId === call.id && !result.isError))
+      : resolveAgentBResponse({ message: event.message, workflowId: envelope.workflowId, handoffId: envelope.handoffId,
+          iteration: envelope.iteration, ...(envelope.requestId ? { requestId: envelope.requestId } : {}) }).kind === "completion");
+    if (!successful) {
+      options.logEvent("workflow.execution_turn_failed", { workflowId: envelope.workflowId, handoffId: envelope.handoffId,
+        iteration: envelope.iteration, completedTurns: turnCount,
+        reason: calls.length > 0 ? "B tool turn failed or has incomplete results; check-in counter unchanged." : "B completion response rejected; check-in counter unchanged." });
+      if (calls.length === 0) publishProgress({ kind: "final_review" });
+      return;
+    }
     turnCount += 1;
     recentTurns.push(renderTurnEvidence(event, turnCount, options.cwd));
     if (recentTurns.length > EXECUTION_CHECK_IN_INTERVAL) recentTurns.shift();
 
-    // A final response already goes to Agent A through the completion/review protocol.
-    if (!event.message.content.some((part) => part.type === "toolCall")) {
+    // A valid completion already goes to Agent A through the completion/review protocol.
+    if (calls.length === 0) {
       publishProgress({ kind: "final_review" });
       return;
     }
@@ -54,10 +69,15 @@ export function createExecutionSupervisor(options: {
     publishProgress({ kind: "checking", afterTurn: turnCount });
     options.logEvent("workflow.check_in_started", details);
     try {
-      const message = await options.bridge.promptAndWaitForTurnEnd(options.bindingA,
+      const decision = await repairResponse({
+        bridge: options.bridge, binding: options.bindingA, kind: "check-in", identifiers: { ...details, requestId: envelope.requestId ?? envelope.workflowId },
+        shape: "Exactly one fenced pi-check-in JSON block, with no surrounding prose. " + responseShape(checkInSchema),
+        onRepair: options.onRepair, onProgress: () => options.setUiState("repair", "A"),
+        validate: (message) => parseCheckIn(message, details),
+        submit: (responseId) => options.bridge.promptAndWaitForTurnEnd(options.bindingA,
         withPromptProvenance("coordinator_check_in", [
           "Coordinator process check-in for Agent A.",
-          `Agent B is paused after ${turnCount} completed model turns, including tool results.`,
+          `Agent B is paused after ${turnCount} successful model turns, including successful tool results.`,
           `Workflow ID: ${envelope.workflowId}`,
           `Handoff ID: ${envelope.handoffId}`,
           `Iteration: ${envelope.iteration}`,
@@ -76,10 +96,9 @@ export function createExecutionSupervisor(options: {
           "Recent B turns, bounded tool facts. Assistant prose, raw arguments, and tool output are excluded. Use targeted read-only inspection if the facts do not explain the current problem:",
           ...recentTurns,
           "Return only the pi-check-in JSON block for the identifiers and turn count above."
-        ].join("\n"), { ...details, requestId: envelope.requestId, sessionRole: "A" }));
+        ].join("\n"), { ...details, requestId: envelope.requestId, sessionRole: "A" }), { responseId }) });
       options.bridge.assertActive();
       signal.throwIfAborted();
-      const decision = parseCheckIn(message, details);
       options.logEvent("workflow.check_in_completed", { ...details, ...decision });
       if (decision.decision === "blocked") throw new ExecutionCheckInBlockedError(`Agent A blocked execution at turn ${turnCount}: ${decision.reason}`);
       nextCheckIn();
@@ -93,7 +112,7 @@ export function createExecutionSupervisor(options: {
       publishProgress({ kind: "stopped" });
       if (error instanceof OperationStoppedError || signal.aborted) throw error;
       if (!(error instanceof ExecutionCheckInBlockedError)) options.logEvent("workflow.check_in_failed", { ...details, reason: error instanceof Error ? error.message : String(error) });
-      if (error instanceof ExecutionCheckInError) throw error;
+      if (error instanceof ExecutionCheckInError || error instanceof ResponseRepairExhaustedError) throw error;
       throw new ExecutionCheckInError(`Agent A process check-in failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     } finally {
       options.setUiState("execution", "B");
@@ -103,19 +122,20 @@ export function createExecutionSupervisor(options: {
 
 function parseCheckIn(message: Parameters<typeof extractAssistantText>[0], expected: {
   workflowId: string; handoffId: string; iteration: number; turnCount: number;
-}): z.infer<typeof checkInSchema> {
+}): { value: z.infer<typeof checkInSchema> } | { reason: string } {
+  if (message.role === "assistant" && message.stopReason === "length") return { reason: "Truncated Agent A check-in response." };
   const match = /^\s*```pi-check-in\s*\n([\s\S]*?)\n```\s*$/.exec(extractAssistantText(message));
-  if (!match?.[1]) throw new Error("Agent A check-in requires exactly one pi-check-in block.");
+  if (!match?.[1]) return { reason: "Agent A check-in requires exactly one pi-check-in block." };
   let decision: z.infer<typeof checkInSchema>;
   try {
     decision = checkInSchema.parse(JSON.parse(match[1]));
   } catch {
-    throw new Error("Agent A check-in returned invalid JSON or decision fields.");
+    return { reason: "Agent A check-in returned invalid JSON or decision fields." };
   }
   if (decision.workflowId !== expected.workflowId || decision.handoffId !== expected.handoffId || decision.iteration !== expected.iteration || decision.turnCount !== expected.turnCount) {
-    throw new Error("Agent A check-in identifiers do not match the paused execution.");
+    return { reason: "Agent A check-in identifiers do not match the paused execution." };
   }
-  return decision;
+  return { value: decision };
 }
 
 function excerpt(text: string, limit: number): string {

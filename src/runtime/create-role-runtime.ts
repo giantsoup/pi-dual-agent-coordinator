@@ -41,6 +41,9 @@ export type SupportedThinkingLevel = ThinkingLevel;
 
 export type ModelTurnEnd = Extract<AgentSessionEvent, { type: "turn_end" }>;
 export interface SessionPromptOptions {
+  formatOnly?: boolean;
+  responseId?: string | undefined;
+  responseAttempt?: number;
   streamingBehavior?: "steer" | "followUp";
   preflightResult?: (success: boolean) => void;
   /** Awaited after tool results, before the next model request. Returned text steers that request. */
@@ -80,6 +83,7 @@ export interface CreateRoleRuntimeOptions {
   agentDir?: string | undefined;
   sessionRoot?: string | undefined;
   modelOverride?: string | undefined;
+  localModel?: Model<"openai-completions"> | undefined;
   thinkingOverride?: SupportedThinkingLevel | undefined;
   sessionMode: "persistent" | "memory";
   loadProjectResources?: boolean | undefined;
@@ -88,8 +92,8 @@ export interface CreateRoleRuntimeOptions {
   /** Trusted test seam, never accepted from CLI, config, extensions, or model input. */
   providerTestBackend?: Parameters<typeof createProviderBroker>[0] | undefined;
   noTools?: boolean | undefined;
-  initialSessionPath?: string | undefined;
-  initialMessages?: AgentMessage[] | undefined;
+  /** Adopt live state on model changes; Pi may not have flushed a session file yet. */
+  initialSessionManager?: SessionManager | undefined;
 }
 
 export interface RoleRuntimeBinding {
@@ -161,7 +165,6 @@ export async function createRoleRuntime(
 
   const isolation = new ToolIsolation(cwd, options.role);
   const resourceRoot = mkdtempSync(join(tmpdir(), "pi-dual-resources-"));
-  let initialMessages = options.initialMessages;
   let broker: Awaited<ReturnType<typeof createProviderBroker>> | undefined;
   let runtime: AgentSessionRuntime | undefined;
   let mcpRuntime: ReturnType<typeof createMcpExtension>;
@@ -169,27 +172,32 @@ export async function createRoleRuntime(
     isolation.verify();
     assertStateOutsideWorkspace(cwd, options.sessionRoot ?? getDefaultSessionRoot(cwd));
     const authStorage = AuthStorage.inMemory();
-    const modelRegistry = createSecureModelRegistry(authStorage);
+    const discovered = options.localModel ? [options.localModel] : [];
+    const modelRegistry = createSecureModelRegistry(authStorage, discovered);
     const selected = resolveModelOverride(options.modelOverride ?? (options.role === "A" ? SMART_MODEL : EXECUTION_MODEL), modelRegistry);
-    if (!selected || !isRoleModel(options.role, selected)) {
+    if (!selected || !isRoleModel(options.role, selected, discovered)) {
       throw new Error(`Agent ${options.role} requires ${options.role === "A" ? "an approved OpenAI Responses model" : "an approved local LM Studio model"}. Endpoint and provider overrides are rejected.`);
     }
-    if (options.role === "B" && !options.providerTestBackend) await assertLmStudioModelReady(selected);
-    broker = await createProviderBroker({ ...options.providerTestBackend, provider: options.role === "A" ? "openai" : "lm-studio", cwd, modelIds: [selected.id],
+    const resolveLocalInstanceId = options.role === "B" && !options.providerTestBackend ? () => assertLmStudioModelReady(selected) : undefined;
+    await resolveLocalInstanceId?.();
+    broker = await createProviderBroker({ ...options.providerTestBackend, resolveLocalInstanceId,
+      provider: options.role === "A" ? "openai" : "lm-studio", cwd, modelIds: [selected.id],
       ...(options.noTools ? { maxRequests: 1, maxOutputTokens: SMOKE_MAX_TOKENS, timeoutMs: 40_000 } : {}) });
     authStorage.setRuntimeApiKey(selected.provider, broker.token);
     const model = { ...selected, baseUrl: broker.baseUrl };
     const ownedToken = broker.token;
     modelRegistry.registerProvider(selected.provider, { baseUrl: broker.baseUrl, apiKey: broker.token, api: selected.api, models: [model] });
     let sessionManager: SessionManager;
-    if (options.initialSessionPath) {
-      const directory = realpathSync(getRoleSessionDirectory(cwd, options.role, options.sessionRoot));
-      const canonical = realpathSync(options.initialSessionPath);
-      const candidate = relative(directory, canonical);
-      if (candidate.startsWith("..") || isAbsolute(candidate) || !candidate.endsWith(".jsonl")) throw new Error("Session must stay inside this role's private session directory.");
-      const history = readSessionHistory(canonical);
-      if (realpathSync(history.cwd) !== isolation.cwd) throw new Error("Session cwd changes require a new isolated runtime.");
-      sessionManager = SessionManager.open(canonical);
+    if (options.initialSessionManager) {
+      sessionManager = options.initialSessionManager;
+      if (realpathSync(sessionManager.getCwd()) !== isolation.cwd) throw new Error("Session cwd changes require a new isolated runtime.");
+      if (sessionManager.isPersisted() !== (options.sessionMode === "persistent")) throw new Error("Session persistence mode must match the runtime.");
+      if (sessionManager.isPersisted()) {
+        const directory = realpathSync(getRoleSessionDirectory(cwd, options.role, options.sessionRoot));
+        if (realpathSync(sessionManager.getSessionDir()) !== directory) throw new Error("Session must stay inside this role's private session directory.");
+        const candidate = relative(resolve(sessionManager.getSessionDir()), resolve(sessionManager.getSessionFile() ?? ""));
+        if (candidate.startsWith("..") || isAbsolute(candidate) || !candidate.endsWith(".jsonl")) throw new Error("Session must stay inside this role's private session directory.");
+      }
     } else sessionManager = createSessionManager({ cwd, role: options.role, agentDir,
       sessionRoot: options.sessionRoot, sessionMode: options.sessionMode });
     mcpRuntime = !options.noTools && options.mcp ? createMcpExtension({ role: options.role, config: options.mcp }) : undefined;
@@ -235,7 +243,8 @@ export async function createRoleRuntime(
       const services = { cwd: runtimeCwd, agentDir: resourceRoot, authStorage,
         modelRegistry, settingsManager, resourceLoader, diagnostics: [] };
       if (!selected.reasoning && options.thinkingOverride && options.thinkingOverride !== "off") throw new Error("This model supports thinking off only.");
-      const thinkingLevel = !selected.reasoning ? "off" : options.thinkingOverride ?? (options.noTools ? "off" : resolveThinkingLevel(options.role));
+      const thinkingLevel = !selected.reasoning ? "off" : options.thinkingOverride ?? (options.noTools && selected.id !== "gpt-6.1-sol" ? "off" : resolveThinkingLevel(options.role));
+      if (selected.id === "gpt-6.1-sol" && (thinkingLevel === "off" || thinkingLevel === "minimal")) throw new Error("GPT-6.1 Sol requires Low, Medium or High reasoning.");
       let assertPromptActive: () => void = () => { throw new Error("Session is not ready."); };
       const agent = new Agent({
         initialState: { model, thinkingLevel, tools: [] }, convertToLlm: (messages) => convertToLlm(redactValue(messages)),
@@ -246,13 +255,12 @@ export async function createRoleRuntime(
             throw new Error("Untrusted provider model or endpoint rejected.");
           }
           return streamSimple(model, redactValue(context), { ...streamOptions, apiKey: ownedToken,
-            ...(model.id === "gpt-6-luna" ? { cacheRetention: "none" } : {}),
+            ...(["gpt-6-luna", "gpt-6.1-sol", "gpt-5.6-terra"].includes(model.id) ? { cacheRetention: "none" } : {}),
             ...(options.noTools ? { maxTokens: SMOKE_MAX_TOKENS } : {}) });
         }
       });
       const restored = sessionManager.buildSessionContext();
-      agent.state.messages = initialMessages ?? restored.messages;
-      initialMessages = undefined;
+      agent.state.messages = restored.messages;
       if (restored.messages.length === 0) {
         sessionManager.appendModelChange(model.provider, model.id);
         sessionManager.appendThinkingLevelChange(thinkingLevel);

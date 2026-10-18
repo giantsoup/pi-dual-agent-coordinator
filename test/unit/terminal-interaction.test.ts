@@ -123,7 +123,7 @@ describe("real Pi editor and terminal components", () => {
     const terminal = new MemoryTerminal();
     const tui = new TUI(terminal);
     const app = new CoordinatorTuiApp(tui, terminal, { start:async()=>{},dispose:async()=>{},dispatch:async()=>{},getState:()=>state,subscribeState:()=>()=>{},subscribeUiEvents:()=>()=>{} },{onExit(){}});
-    app.render(80); app.handleInput("\u001b[17~"); app.handleInput("\u001b[5~");
+    app.render(80); app.handleInput("\u001b[17~"); app.handleInput("\u001b[A");
     const before = app.render(80).find((line) => line.includes("> + A - Senior"));
     state = { ...state, history: { ...state.history, revision: 2, currentTurnId: "new", records: [...state.history.records, { kind: "turn", id: "new", title: "New output", requestIds: [], timestamp: at, outcome: { kind: "running", startedAt: at } }] } };
     expect(before).toBeDefined();
