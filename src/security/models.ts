@@ -3,7 +3,11 @@ import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Role } from "../types/role.js";
 
 export const SMART_MODEL = "openai/gpt-6-luna";
-export const EXECUTION_MODEL = "lm-studio/qwen/qwen3.8-27b";
+export const QWEN38_MODEL_ID = "qwen/qwen3.8-27b";
+export const EXECUTION_MODEL = `lm-studio/${QWEN38_MODEL_ID}`;
+export function defaultLocalThinking(modelId: string): "xhigh" | "off" {
+  return modelId === QWEN38_MODEL_ID || modelId === EXECUTION_MODEL ? "xhigh" : "off";
+}
 export const LM_STUDIO_BASE_URL = "http://127.0.0.1:1234/v1";
 export const SMOKE_MAX_TOKENS = 1024;
 
@@ -30,10 +34,11 @@ for (const choice of gptModelChoices) {
   if (!openaiModels.some((model) => model.id === choice.id && model.reasoning)) throw new Error(`Missing trusted model metadata: ${choice.id}`);
 }
 export function createLocalModel(input: { id: string; name: string; contextWindow?: number; vision?: boolean }): Model<"openai-completions"> {
+  const reasoning = input.id === QWEN38_MODEL_ID;
   return { id: input.id, name: input.name, provider: "lm-studio", api: "openai-completions", baseUrl: LM_STUDIO_BASE_URL,
-    reasoning: false, input: input.vision ? ["text", "image"] : ["text"], contextWindow: input.contextWindow ?? 65_536, maxTokens: 16_384,
+    reasoning, ...(reasoning ? { thinkingLevelMap: { off: "none", minimal: null, low: "low", medium: "medium", high: null, xhigh: "xhigh", max: null } } : {}), input: input.vision ? ["text", "image"] : ["text"], contextWindow: input.contextWindow ?? 65_536, maxTokens: 16_384,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, maxTokensField: "max_tokens" } };
+    compat: { supportsDeveloperRole: false, supportsReasoningEffort: reasoning, maxTokensField: "max_tokens" } };
 }
 const localModels: Model<"openai-completions">[] = [
   { id: "qwen/qwen3.8-27b", name: "Qwen3.8 27B (LM Studio)" },

@@ -169,3 +169,19 @@ describe("model picker coordinator transactions", () => {
     } finally { await service.dispose(); }
   });
 });
+
+it("saves Qwen3.8 xhigh and changes reasoning without reloading the model", async () => {
+  const { coordinator, service, bindings, local, bodies } = await setup();
+  try {
+    const originalId = bindings.get("B")?.sessionId;
+    await bindings.get("B")?.session.prompt("Keep this local context");
+    await coordinator.configureRole("B", { thinking: "xhigh", save: true });
+    expect(bindings.get("B")?.sessionId).toBe(originalId);
+    expect(bindings.get("B")?.session.thinkingLevel).toBe("xhigh");
+    expect(JSON.stringify(bindings.get("B")?.session.messages)).toContain("Keep this local context");
+    expect((await loadCoordinatorConfig()).config?.defaults).toMatchObject({ thinkingB: "xhigh", modelB: "lm-studio/qwen/qwen3.8-27b" });
+    await bindings.get("B")?.session.prompt("Continue with the saved reasoning");
+    expect(bodies.at(-1)).toMatchObject({ reasoning_effort: "xhigh" });
+    expect(local.calls.filter(call => call.body)).toHaveLength(0);
+  } finally { await service.dispose(); }
+});

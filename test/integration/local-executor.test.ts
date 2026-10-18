@@ -29,7 +29,7 @@ it("runs Agent B tool calls through the local broker without loading an OpenAI c
     const body = JSON.parse(String(init?.body));
     expect(body.model).toBe("qwen/qwen3.8-27b");
     expect(body.max_tokens).toBe(16384);
-    expect(body.reasoning_effort).toBe("none");
+    expect(body.reasoning_effort).toBe("xhigh");
     return body.messages.some((message: { role: string }) => message.role === "tool")
       ? fixtureChatResponse("LOCAL_TOOL_OK")
       : fixtureChatToolResponse("write", { path: "local-result.txt", content: "LOCAL_TOOL_OK" });
@@ -37,7 +37,7 @@ it("runs Agent B tool calls through the local broker without loading an OpenAI c
   const binding = await createRoleRuntime({ ...options, role: "B", providerTestBackend: { ...options, modelIds: [], load, request } });
   try {
     expect(binding.session.model?.provider).toBe("lm-studio");
-    expect(binding.session.thinkingLevel).toBe("off");
+    expect(binding.session.thinkingLevel).toBe("xhigh");
     await binding.session.prompt("Write local-result.txt, then confirm.");
     expect(await readFile(join(options.cwd, "local-result.txt"), "utf8")).toBe("LOCAL_TOOL_OK");
     expect(JSON.stringify(binding.session.messages?.at(-1))).toContain("LOCAL_TOOL_OK");
@@ -128,5 +128,35 @@ it("pins local inference to the verified instance even when restoration changes 
     const response = await fetch(`${broker.baseUrl}/models/load`, { method: "POST", headers, body: JSON.stringify({ model: "logical-model" }) });
     expect(response.status).toBe(400); await response.text();
     expect(request).toHaveBeenCalledTimes(2);
+  } finally { await broker.close(); }
+});
+
+it.each(["off", "low", "medium", "xhigh"] as const)("forwards Qwen3.8 %s reasoning through the real Pi adapter", async thinking => {
+  const options = await workspace();
+  const bodies: unknown[] = [];
+  const binding = await createRoleRuntime({ ...options, role: "B", thinkingOverride: thinking, providerTestBackend: { ...options, modelIds: [],
+    request: async (_url, init) => { bodies.push(JSON.parse(String(init?.body))); return fixtureChatResponse("Reasoning setting accepted"); }
+  } });
+  try {
+    expect(binding.session.thinkingLevel).toBe(thinking);
+    await binding.session.prompt("Check reasoning settings");
+    expect(bodies).toEqual([expect.objectContaining({ reasoning_effort: thinking === "off" ? "none" : thinking })]);
+  } finally { await binding.dispose(); }
+});
+it("rejects unsupported Qwen3.8 high reasoning instead of silently clamping it", async () => {
+  const options = await workspace();
+  await expect(createRoleRuntime({ ...options, role: "B", thinkingOverride: "high", providerTestBackend: { ...options, modelIds: [], request: async () => fixtureChatResponse("unused") } })).rejects.toThrow("Unsupported reasoning level");
+});
+
+it("rejects forged Qwen3.8 reasoning effort at the broker boundary", async () => {
+  const request = vi.fn<typeof fetch>(async () => fixtureChatResponse("unused"));
+  const broker = await createProviderBroker({ cwd: "/unused", provider: "lm-studio", modelIds: ["qwen/qwen3.8-27b"], request });
+  try {
+    for (const effort of ["high", "minimal", "max", { unsafe: true }]) {
+      const response = await fetch(`${broker.baseUrl}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${broker.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "qwen/qwen3.8-27b", reasoning_effort: effort }) });
+      expect(response.status).toBe(502);
+      await response.text();
+    }
+    expect(request).not.toHaveBeenCalled();
   } finally { await broker.close(); }
 });

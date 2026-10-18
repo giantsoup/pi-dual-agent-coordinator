@@ -94,7 +94,8 @@ The trusted metadata catalog filters Pi 1.3.0's bundled OpenAI descriptors by th
 original approved IDs, including GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna.
 Picker enumeration constructs no auth runtime and makes no catalog requests. B's downloaded LLM keys
 and capabilities are validated from the fixed loopback LM Studio inventory.
-Local descriptors use a 65,536-token context and API thinking off. The broker
+Local descriptors use a 65,536-token context. Qwen3.8 supports off, low, medium
+and xhigh reasoning, defaulting to xhigh; other local descriptors remain off. The broker
 validates the selected logical model and resolves its ready instance before each
 request. This does not accept endpoint or model data from files.
 High reasoning is checked in the actual installed provider's serialized request;

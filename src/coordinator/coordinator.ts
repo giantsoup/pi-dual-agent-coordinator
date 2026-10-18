@@ -12,7 +12,7 @@ import { realpath } from "node:fs/promises";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 import { loadCoordinatorConfig, writeCoordinatorConfig } from "../app/coordinator-config.js";
-import { createSecureModelCatalog, isRoleModel, gptModelChoices, EXECUTION_MODEL } from "../security/models.js";
+import { defaultLocalThinking, createSecureModelCatalog, isRoleModel, gptModelChoices, EXECUTION_MODEL } from "../security/models.js";
 import { LmStudioModels, LocalModelSwitchError, type LocalModelHost, type PreparedLocalModel } from "../security/lm-studio.js";
 import type { ModelPickerCatalog, ModelSwitchProgress } from "../types/model-selection.js";
 import { SessionManager, getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -530,16 +530,16 @@ export class Coordinator {
     const discovered = [...this.discoveredModels.values()];
     return createSecureModelCatalog(discovered).getAll()
       .filter((model) => role ? isRoleModel(role, model, discovered) : isRoleModel("A", model) || isRoleModel("B", model, discovered))
-      .map((model) => ({ canonical: `${model.provider}/${model.id}`, name: model.name, reasoning: model.reasoning, thinkingLevels: !model.reasoning ? ["off"] : gptModelChoices.some((current) => current.id === model.id) ? ["low", "medium", "high"] : getSupportedThinkingLevels(model).includes("xhigh") ? ["off", "minimal", "low", "medium", "high", "xhigh"] : ["off", "minimal", "low", "medium", "high"] }));
+      .map((model) => ({ canonical: `${model.provider}/${model.id}`, name: model.name, reasoning: model.reasoning, thinkingLevels: !model.reasoning ? ["off"] : gptModelChoices.some((current) => current.id === model.id) ? ["low", "medium", "high"] : getSupportedThinkingLevels(model).filter(level => level !== "max") }));
   }
 
   public async getModelPickerCatalog(role: Role, signal?: AbortSignal): Promise<ModelPickerCatalog> {
     const current = this.registry.get(role);
-    const models = role === "A" ? gptModelChoices.map((model) => ({ canonical: `openai/${model.id}`, name: model.name, description: model.description }))
+    const models = role === "A" ? gptModelChoices.map((model) => ({ canonical: `openai/${model.id}`, name: model.name, description: model.description, thinkingLevels: ["low", "medium", "high"] satisfies SupportedThinkingLevel[], defaultThinking: "high" as const }))
       : this.localModels ? (await this.localModels.listModels(signal)).map((item) => {
         this.discoveredModels.set(item.model.id, item.model);
-        return { canonical: `lm-studio/${item.model.id}`, name: item.model.name, description: item.description, loaded: item.loaded, disabledReason: item.disabledReason };
-      }) : this.getAvailableModels("B").map((model) => ({ canonical: model.canonical, name: model.name, description: "Local LM Studio model", loaded: true }));
+        return { canonical: `lm-studio/${item.model.id}`, name: item.model.name, description: item.description, loaded: item.loaded, disabledReason: item.disabledReason, thinkingLevels: getSupportedThinkingLevels(item.model), defaultThinking: defaultLocalThinking(item.model.id) };
+      }) : this.getAvailableModels("B").map((model) => ({ canonical: model.canonical, name: model.name, description: "Local LM Studio model", loaded: true, thinkingLevels: model.thinkingLevels, defaultThinking: defaultLocalThinking(model.canonical) }));
     return { role, models, currentModel: current?.session.model ? `${current.session.model.provider}/${current.session.model.id}` : undefined, currentThinking: current?.session.thinkingLevel };
   }
 
@@ -572,7 +572,7 @@ export class Coordinator {
       const selected = this.getAvailableModels(role).find((candidate) => candidate.canonical === model);
       if (!selected) throw new Error(`Choose ${role === "A" ? "an approved OpenAI Responses" : "a local LM Studio"} model from /model ${role}.`);
       const previousThinking = previous.session.thinkingLevel;
-      const thinking = input.thinking ?? selected.thinkingLevels.find((level) => level === previousThinking) ?? (selected.reasoning ? "high" : "off");
+      const thinking = input.thinking ?? selected.thinkingLevels.find((level) => level === previousThinking) ?? (role === "B" ? defaultLocalThinking(model) : selected.reasoning ? "high" : "off");
       if (!selected.thinkingLevels.includes(thinking)) throw new Error(`Supported thinking levels for this model: ${selected.thinkingLevels.join(", ")}`);
       if (role === "B" && this.localModels) {
         prepared = await this.localModels.prepare(model.replace(/^lm-studio\//, ""), previous.session.model?.id, signal, (progress) => onProgress?.(progress));

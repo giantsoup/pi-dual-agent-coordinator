@@ -425,7 +425,7 @@ export class HeadlessInteractiveCoordinatorService
             if (controller.signal.aborted || this.modelQuery !== controller) return;
             const content = [`Agent ${action.role} models (current: ${catalog.currentModel ?? "none"})`,
               ...catalog.models.map((model) => `${model.name} / ${model.canonical}${model.disabledReason ? ` / ${model.disabledReason}` : model.loaded === undefined ? "" : model.loaded ? " / ready" : " / not loaded"}`),
-              `/model ${action.role} PROVIDER/MODEL [save]`, ...(action.role === "A" ? ["/thinking A low|medium|high [save]"] : [])].join("\n");
+              `/model ${action.role} PROVIDER/MODEL [save]`, `/thinking ${action.role} ${action.role === "A" ? "low|medium|high" : (catalog.models.find(model => model.canonical === catalog.currentModel)?.thinkingLevels ?? ["off"]).join("|")} [save]`].join("\n");
             this.updateState({ type: "set_modal", modal: { kind: "model_picker", title: "Models", content, format: "text", createdAt: new Date().toISOString(), catalog } });
           } catch (error) {
             if (!controller.signal.aborted) this.showModelError(action.role, error, action);

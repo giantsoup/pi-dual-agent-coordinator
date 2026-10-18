@@ -98,3 +98,20 @@ describe("model selection controls", () => {
     } finally { release(); tui.stop(); await service.dispose(); }
   });
 });
+
+it("offers Qwen3.8 reasoning in the B picker and constrains other local models", () => {
+  const qwen = { canonical: "lm-studio/qwen/qwen3.8-27b", name: "Qwen3.8", description: "ready", loaded: true,
+    thinkingLevels: ["off", "low", "medium", "xhigh"] satisfies SupportedThinkingLevel[], defaultThinking: "xhigh" as const };
+  const picker = new ModelPicker({ role: "B", models: [qwen, ...bModels], currentModel: qwen.canonical, currentThinking: "xhigh" });
+  const lines = picker.render(80, 24, false, false);
+  expect(lines.join("\n")).toContain("[Xhigh]");
+  expect(lines.length).toBeLessThanOrEqual(24);
+  expect(lines.every(line => visibleWidth(line) <= 80)).toBe(true);
+  expect(picker.handleInput("\r", false)).toMatchObject({ role: "B", thinking: "xhigh", save: true });
+  picker.handleInput("\x1b[D", false);
+  expect(picker.handleInput("\r", false)).toMatchObject({ thinking: "medium" });
+  picker.handleInput("\x1b[B", false);
+  expect(picker.handleInput("\r", false)).toMatchObject({ thinking: "off" });
+  picker.handleInput("\x1b[A", false);
+  expect(picker.handleInput("\r", false)).toMatchObject({ thinking: "xhigh" });
+});

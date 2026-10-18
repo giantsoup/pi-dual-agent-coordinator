@@ -2,7 +2,7 @@ import type { AuthCliOptions, SetupCliOptions } from "./cli.js";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createSecureModelCatalog, isRoleModel, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
+import { createSecureModelCatalog, isRoleModel, SMART_MODEL, EXECUTION_MODEL, defaultLocalThinking } from "../security/models.js";
 import { enterCredential } from "../security/credentials.js";
 import { ToolIsolation } from "../security/isolation.js";
 import { assertSafeProviderEnvironment } from "../security/provider-broker.js";
@@ -47,7 +47,7 @@ async function runWizard(options: SetupCliOptions | AuthCliOptions, dependencies
       version: 1,
       defaults: { ...loaded.config?.defaults, thinkingA: loaded.config?.defaults.thinkingA ?? "high",
         modelA: configuredOpenAiModel(loaded.config?.defaults.modelA, SMART_MODEL),
-        modelB: configuredLocalModel(loaded.config?.defaults.modelB), thinkingB: "off" },
+        modelB: configuredLocalModel(loaded.config?.defaults.modelB), thinkingB: loaded.config?.defaults.thinkingB ?? defaultLocalThinking(configuredLocalModel(loaded.config?.defaults.modelB)) },
       onboarding: { lastSelectedAgentAAuthFlow: "openai-api-key", lastCompletedAt: new Date().toISOString() }
     });
     output.write(`Stored in macOS Keychain. No literal key was saved in Pi configuration.\n${renderNextSteps()}\n`);

@@ -5,7 +5,7 @@ import { tmpdir, homedir } from "node:os";
 import { join, resolve, relative, isAbsolute } from "node:path";
 
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type Api, type Model } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
 import {
   DefaultResourceLoader,
   AgentSession,
@@ -25,7 +25,7 @@ import { ManagedSession } from "./managed-session.js";
 import { readSessionHistory } from "./session-history.js";
 import { cleanupAll } from "./cleanup.js";
 
-import { createSecureModelCatalog, isRoleModel, SMART_MODEL, EXECUTION_MODEL, SMOKE_MAX_TOKENS } from "../security/models.js";
+import { defaultLocalThinking, createSecureModelCatalog, isRoleModel, SMART_MODEL, EXECUTION_MODEL, SMOKE_MAX_TOKENS } from "../security/models.js";
 import { ToolIsolation, assertStateOutsideWorkspace } from "../security/isolation.js";
 import { createProviderBroker } from "../security/provider-broker.js";
 import { assertLmStudioModelReady } from "../security/lm-studio.js";
@@ -237,7 +237,8 @@ export async function createRoleRuntime(
       if (extensionErrors.length) throw new Error(extensionErrors.map((error) => error.error).join("; "));
       const services = { cwd: runtimeCwd, agentDir: resourceRoot, modelRuntime, settingsManager, resourceLoader, diagnostics: [] };
       if (!selected.reasoning && options.thinkingOverride && options.thinkingOverride !== "off") throw new Error("This model supports thinking off only.");
-      const thinkingLevel = !selected.reasoning ? "off" : options.thinkingOverride ?? (options.noTools && selected.id !== "gpt-6.1-sol" ? "off" : resolveThinkingLevel(options.role));
+      const thinkingLevel = !selected.reasoning ? "off" : options.thinkingOverride ?? (options.noTools && selected.id !== "gpt-6.1-sol" ? "off" : options.role === "B" ? defaultLocalThinking(selected.id) : resolveThinkingLevel(options.role));
+      if (!getSupportedThinkingLevels(selected).includes(thinkingLevel)) throw new Error("Unsupported reasoning level for this model.");
       if (selected.id === "gpt-6.1-sol" && (thinkingLevel === "off" || thinkingLevel === "minimal")) throw new Error("GPT-6.1 Sol requires Low, Medium or High reasoning.");
       let assertPromptActive: () => void = () => { throw new Error("Session is not ready."); };
       const agent = new Agent({

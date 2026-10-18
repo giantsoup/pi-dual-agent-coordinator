@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createRoleRuntime } from "../dist/src/runtime/create-role-runtime.js";
 import { EXECUTION_MODEL } from "../dist/src/security/models.js";
 import { LmStudioModels } from "../dist/src/security/lm-studio.js";
-import { loadCoordinatorConfig, resolveEffectiveModelB } from "../dist/src/app/coordinator-config.js";
+import { loadCoordinatorConfig, resolveEffectiveModelB, resolveEffectiveThinkingB } from "../dist/src/app/coordinator-config.js";
 import { renderHandoffMessage } from "../dist/src/handoff/render-handoff-message.js";
 
 const root = await mkdtemp(join(tmpdir(), "pi-live-local-"));
@@ -21,7 +21,7 @@ try {
   const selected = (await new LmStudioModels().listModels()).find(({ model }) => selectedModel === model.id || selectedModel === `lm-studio/${model.id}`);
   if (!selected || selected.disabledReason || !selected.loaded) throw new Error("The selected executor must already be loaded with supported tools and sufficient context. Verification does not load or download models.");
   binding = await createRoleRuntime({ role: "B", cwd, modelOverride: selectedModel, localModel: selected.model,
-    sessionRoot: join(root, "state"), sessionMode: "memory" });
+    thinkingOverride: resolveEffectiveThinkingB({}, loaded.config).value, sessionRoot: join(root, "state"), sessionMode: "memory" });
   timer = setTimeout(() => { void binding.session.abort(); }, 120_000);
   const tools = [];
   binding.session.subscribe((event) => { if (event.type === "tool_execution_start") tools.push(event.toolName); });
@@ -36,7 +36,7 @@ try {
   const contents = await readFile(join(cwd, "verification.txt"), "utf8").catch(() => "");
   const last = binding.session.messages?.at(-1);
   const ok = contents.trim() === "LOCAL_EXECUTOR_OK" && tools.includes("write") && last?.role === "assistant" && last.stopReason === "stop";
-  process.stdout.write(`${JSON.stringify({ outcome: ok ? "passed" : "failed", model: selectedModel, tools, fileVerified: contents.trim() === "LOCAL_EXECUTOR_OK" })}\n`);
+  process.stdout.write(`${JSON.stringify({ outcome: ok ? "passed" : "failed", model: selectedModel, thinking: binding.session.thinkingLevel, reasoningObserved: binding.session.messages.some(message => message.role === "assistant" && message.content.some(part => part.type === "thinking" && part.thinking.length > 0)), tools, fileVerified: contents.trim() === "LOCAL_EXECUTOR_OK" })}\n`);
   if (!ok) process.stderr.write(`${JSON.stringify(last)}\n`);
   if (!ok) process.exitCode = 1;
 } catch (error) {

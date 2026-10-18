@@ -1,12 +1,15 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Role } from "./role.js";
 
-export const pickerReasoningLevels = ["low", "medium", "high"] satisfies string[];
-export type PickerReasoning = "low" | "medium" | "high";
+export const pickerReasoningLevels = ["low", "medium", "high"] satisfies ThinkingLevel[];
+export type PickerReasoning = ThinkingLevel;
 
 export interface ModelChoice {
   canonical: string;
   name: string;
   description: string;
+  thinkingLevels?: ThinkingLevel[];
+  defaultThinking?: ThinkingLevel;
   loaded?: boolean | undefined;
   disabledReason?: string | undefined;
 }

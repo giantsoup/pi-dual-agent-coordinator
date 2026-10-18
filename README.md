@@ -53,7 +53,7 @@ From your own private local terminal, run:
 
 Setup verifies isolation with dummy secrets before opening the secure entry
 dialog. Agent A defaults to `openai/gpt-6-luna` at high reasoning. Agent B defaults to
-`lm-studio/qwen/qwen3.8-27b` with API thinking off. Step 0 stays incomplete until the
+`lm-studio/qwen/qwen3.8-27b` with xhigh reasoning. Step 0 stays incomplete until the
 isolation suite and the live smoke check both pass.
 
 ## Everyday commands
@@ -71,7 +71,7 @@ F3 opens a model picker with GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna for A,
 plus Low/Medium/High reasoning. B lists downloaded LM Studio LLMs with tool calling
 and at least 65,536 context tokens. Use A/B to change agents, arrows to choose,
 Enter to apply, and S to toggle saving for restart. Controls appear in the picker.
-For example, `--model-a openai/gpt-6-luna --thinking-a high --model-b lm-studio/qwen/qwen3.8-27b --thinking-b off`.
+For example, `--model-a openai/gpt-6-luna --thinking-a high --model-b lm-studio/qwen/qwen3.8-27b --thinking-b xhigh`.
 Pi 1.3.0 supplies these GPT descriptors. The app uses its bundled metadata and keeps
 the approved model IDs explicit in `src/security/models.ts`, using the official OpenAI endpoint. Coordinator defaults are
 non-secret and separate from Pi auth. Legacy unrelated credentials remain intact.
@@ -88,7 +88,9 @@ lms load qwen/qwen3.8-27b --identifier qwen/qwen3.8-27b --context-length 65536 -
 Agent B never retrieves an OpenAI credential or falls back to a cloud model.
 Its server must accept local requests without authentication. If you have saved
 older OpenAI defaults for B, replace them in `~/.pi/dual-agent-coordinator/config.json`
-with `"modelB": "lm-studio/qwen/qwen3.8-27b"` and `"thinkingB": "off"`, or rerun setup.
+with `"modelB": "lm-studio/qwen/qwen3.8-27b"` and `"thinkingB": "xhigh"`, or choose Xhigh in F3 → B with Remember enabled.
+Qwen3.8 exposes Off, Low, Medium and Xhigh; other local models remain Off.
+The same setting is available as `/thinking B xhigh save`.
 After verifying a trusted installation, run its `bin/node scripts/verify-local-executor.mjs`
 from that installation to exercise Agent B's live LM Studio inference and sandboxed
 write/read tools in a temporary workspace. It uses the saved, already-loaded model
