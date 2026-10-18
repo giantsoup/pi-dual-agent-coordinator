@@ -1,7 +1,8 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { TSchema } from "typebox";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 export interface SafeMutationRecord {
   toolName: string;
@@ -13,19 +14,10 @@ export interface SafeMutationOptions {
   onMutation?: ((record: SafeMutationRecord) => void) | undefined;
 }
 
-type ToolWithPath = AgentTool<any> & {
-  execute: (
-    toolCallId: string,
-    params: any,
-    signal?: AbortSignal,
-    onUpdate?: (partialResult: unknown) => void
-  ) => Promise<unknown>;
-};
-
-export function withSafeMutation(
-  tool: ToolWithPath,
+export function withSafeMutation<TParameters extends TSchema, TDetails>(
+  tool: AgentTool<TParameters, TDetails>,
   options: SafeMutationOptions
-): ToolWithPath {
+): AgentTool<TParameters, TDetails> {
   return {
     ...tool,
     execute: async (toolCallId, params, signal, onUpdate) => {
@@ -43,10 +35,10 @@ export function withSafeMutation(
 }
 
 function getPathLikeValue(params: unknown): string | undefined {
-  if (!params || typeof params !== "object") {
+  if (!params || typeof params !== "object" || !("path" in params)) {
     return undefined;
   }
-  const maybePath = (params as Record<string, unknown>).path;
+  const maybePath = params.path;
   return typeof maybePath === "string" ? maybePath : undefined;
 }
 

@@ -233,6 +233,19 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
                 terminal.send('\r')
                 terminal.wait(lambda:any(entry.get('text')=='picker draft survives' for entry in terminal.state().get('conversation',[])),'model selection and cancellation preserve draft')
                 terminal.wait(lambda:terminal.state().get('operation',{}).get('kind')=='completed','post picker draft completion')
+                terminal.send('\x1bOR')
+                terminal.wait(lambda:terminal.state().get('modal',{}).get('kind')=='model_picker','reasoning picker open')
+                terminal.send('b')
+                terminal.wait(lambda:terminal.state().get('modal',{}).get('catalog',{}).get('role')=='B','reasoning B tab')
+                terminal.send('\x1b[H');time.sleep(.1)
+                screen = terminal.snapshot('qwen38-reasoning-120x40')
+                if CAPTURE:
+                    for text in ['Off','Low','Medium','[Xhigh]','reasoning']:
+                        check(text in screen,'Qwen3.8 reasoning choice visible: '+text)
+                terminal.send('\x1b[D');terminal.send('\x1b[C');terminal.send('\r')
+                terminal.wait(lambda:any(runtime['role']=='B' and runtime.get('modelCanonical')=='lm-studio/qwen/qwen3.8-27b' and runtime.get('thinking')=='xhigh' for runtime in terminal.state()['status']['runtimes']),'Qwen3.8 xhigh applied from TUI')
+                terminal.wait(lambda:terminal.state().get('modal',{}).get('kind')=='none','reasoning picker completed')
+
             else:
                 terminal.command('/cancel')
                 terminal.wait(lambda:terminal.state().get('operation',{}).get('kind') == 'cancelled','plain cancellation')

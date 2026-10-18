@@ -52,11 +52,19 @@ subscriptions and trusted extensions. Saving non-secret defaults is explicit.
 The runtime adapter owns Pi preflight, agent events, and post-turn compaction as
 one prompt lifetime. Cancellation disables queued compaction, aborts active
 compaction and agent work, and drains the prompt before coordinator ownership is
-released. Runtime settings use seeded in-memory storage so Pi resource reloads
-retain retry and discovery policy. Broker error responses also disable the
+released. Runtime settings use Pi 1.3.0's corrected `SettingsManager.inMemory(initial)` so
+resource reloads retain retry and discovery policy. Reload regression tests
+verify cache warming, analytics, and install telemetry remain disabled. Broker error responses also disable the
 OpenAI SDK's independent HTTP retry path.
 
 Session resets create mode-appropriate managers explicitly; Pi's generic runtime
 `newSession()` would turn a memory session into a persistent file. Replacements
 are constructed before the current conversation is released. History previews
 parse and migrate only in memory, validate ancestry, and leave source bytes intact.
+
+The metadata catalog is synchronous and credential-free. Each role separately
+creates an asynchronous ModelRuntime containing only its selected broker model.
+Other provider authentication is disabled. Refresh remains offline after creation.
+SessionManager supplies the canonical system, tool, and conversation projection.
+The event bridge awaits the whole managed prompt before accepting the terminal
+turn result, preserving typed supervision and formatting failures.

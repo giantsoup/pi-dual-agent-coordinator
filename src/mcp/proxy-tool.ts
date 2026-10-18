@@ -1,13 +1,13 @@
-import { Type } from "@sinclair/typebox";
-import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { assertMcpArguments } from "./schema.js";
+import { Type } from "typebox";
+import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import type { Role } from "../types/role.js";
 import type { McpClientPool } from "./client-pool.js";
-import { renderMcpContent, toPiToolResult } from "./direct-tools.js";
+import { toPiToolResult } from "./direct-tools.js";
 import { isMcpToolCallAllowed } from "./policy.js";
 import type {
-  McpProxyAction,
   McpSearchToolResult,
   RoleMcpPolicy
 } from "./types.js";
@@ -53,7 +53,7 @@ export function createMcpProxyTool(
       cursor: Type.Optional(Type.String())
     }),
     async execute(_toolCallId, params, signal) {
-      switch (params.action as McpProxyAction) {
+      switch (params.action) {
         case "status":
           return {
             content: [
@@ -77,16 +77,17 @@ export function createMcpProxyTool(
           let candidates = options.clientPool.getKnownTools(params.server);
           if (candidates.length === 0) {
             if (params.server) {
-              await options.clientPool.ensureMetadata(params.server);
+              await options.clientPool.ensureMetadata(params.server, signal);
             } else {
               await Promise.all(
                 Object.keys(options.policy.servers).map((serverName) =>
-                  options.clientPool.ensureMetadata(serverName).catch(() => undefined)
+                  options.clientPool.ensureMetadata(serverName, signal).catch(() => undefined)
                 )
               );
             }
             candidates = options.clientPool.getKnownTools(params.server);
           }
+          signal?.throwIfAborted();
           const results = searchTools(query, candidates, options.policy, options.getDirectToolName);
           return {
             content: [
@@ -105,7 +106,7 @@ export function createMcpProxyTool(
           const target = resolveToolTarget(params.tool, params.server);
           let tool = findKnownTool(options.clientPool.getKnownTools(target.serverName), target.toolName);
           if (!tool) {
-            const metadata = await options.clientPool.ensureMetadata(target.serverName);
+            const metadata = await options.clientPool.ensureMetadata(target.serverName, signal);
             tool = metadata.tools.find((candidate) => candidate.name === target.toolName);
           }
           if (!tool) {
@@ -145,7 +146,7 @@ export function createMcpProxyTool(
           const target = resolveToolTarget(params.tool, params.server);
           let tool = findKnownTool(options.clientPool.getKnownTools(target.serverName), target.toolName);
           if (!tool) {
-            const metadata = await options.clientPool.ensureMetadata(target.serverName);
+            const metadata = await options.clientPool.ensureMetadata(target.serverName, signal);
             tool = metadata.tools.find((candidate) => candidate.name === target.toolName);
           }
           if (!tool) {
@@ -155,6 +156,7 @@ export function createMcpProxyTool(
           if (!gate.allowed) {
             throw new Error(gate.reason ?? `Tool ${target.serverName}/${target.toolName} is blocked.`);
           }
+          assertMcpArguments(tool, params.arguments);
           const result = await options.clientPool.callTool(
             target.serverName,
             target.toolName,
@@ -169,7 +171,7 @@ export function createMcpProxyTool(
         }
         case "list_resources": {
           const serverName = requireServer(params.server);
-          const result = await options.clientPool.listResources(serverName, params.cursor);
+          const result = await options.clientPool.listResources(serverName, params.cursor, signal);
           return {
             content: [
               {
@@ -189,7 +191,7 @@ export function createMcpProxyTool(
           if (!params.uri) {
             throw new Error("`uri` is required for mcp read_resource.");
           }
-          const result = await options.clientPool.readResource(serverName, params.uri);
+          const result = await options.clientPool.readResource(serverName, params.uri, signal);
           return {
             content: [
               {
@@ -207,7 +209,7 @@ export function createMcpProxyTool(
         }
         case "list_prompts": {
           const serverName = requireServer(params.server);
-          const result = await options.clientPool.listPrompts(serverName, params.cursor);
+          const result = await options.clientPool.listPrompts(serverName, params.cursor, signal);
           return {
             content: [
               {
@@ -225,7 +227,7 @@ export function createMcpProxyTool(
         case "get_prompt": {
           const target = resolvePromptTarget(params.prompt, params.server);
           const args = convertPromptArguments(params.arguments);
-          const result = await options.clientPool.getPrompt(target.serverName, target.promptName, args);
+          const result = await options.clientPool.getPrompt(target.serverName, target.promptName, args, signal);
           return {
             content: [
               {
@@ -242,7 +244,7 @@ export function createMcpProxyTool(
         }
         case "connect": {
           const serverName = requireServer(params.server);
-          const metadata = await options.clientPool.syncMetadata(serverName);
+          const metadata = await options.clientPool.syncMetadata(serverName, signal);
           return {
             content: [
               {

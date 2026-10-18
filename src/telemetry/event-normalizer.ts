@@ -1,5 +1,5 @@
 import { redactText, redactValue } from "../security/redact.js";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { sanitizeToolArgs, summarizeToolActivity } from "../app/activity-summary.js";
 import type { NormalizedTelemetryEvent } from "../types/telemetry.js";

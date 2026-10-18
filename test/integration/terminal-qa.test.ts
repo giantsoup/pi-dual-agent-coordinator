@@ -1,11 +1,13 @@
+import { ManagedSession } from "../../src/runtime/managed-session.js";
+import { responsesInput } from "../helpers/provider.js";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentSession } from "@mariozechner/pi-coding-agent";
+import { AgentSession } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Coordinator } from "../../src/coordinator/coordinator.js";
-import { createRoleRuntime } from "../../src/runtime/create-role-runtime.js";
+import { createRoleRuntime, type RoleRuntimeBinding } from "../../src/runtime/create-role-runtime.js";
 import { fixtureResponse } from "../../src/security/fixture-provider.js";
 import { RuntimeRegistry } from "../../src/runtime/runtime-registry.js";
 import { assistantTurnEnd, createFakeBinding, FakeRuntime, FakeSession } from "../helpers/fakes.js";
@@ -17,10 +19,14 @@ async function setup(sessionMode: "memory" | "persistent" = "persistent", reques
   const root = await mkdtemp(join(tmpdir(), "pi-terminal-qa-")); roots.push(root);
   const cwd = join(root, "workspace"); await mkdir(cwd);
   const request = vi.fn(requestBackend ?? (async () => fixtureResponse("QA answer")));
+  const bindings = new Map<string, RoleRuntimeBinding>();
   const coordinator = new Coordinator({cwd, sessionRoot:join(root,"state"),sessionMode,jsonLogs:false,verbose:false,
-    createRoleRuntime: (input) => createRoleRuntime({...input,providerTestBackend:{cwd,modelIds:[],load:async()=>`dummy-${randomUUID()}`,request}})});
+    createRoleRuntime: async (input) => {
+      const binding = await createRoleRuntime({...input,providerTestBackend:{cwd,modelIds:[],load:async()=>`dummy-${randomUUID()}`,request}});
+      bindings.set(input.role, binding); return binding;
+    }});
   await coordinator.start();
-  return {coordinator, root, cwd, request};
+  return {coordinator, root, cwd, request, bindings};
 }
 
 describe("terminal QA regressions", () => {
@@ -57,7 +63,7 @@ describe("terminal QA regressions", () => {
     const cwd = join(root,"workspace"); await mkdir(cwd);
     const request = vi.fn<typeof fetch>(async (_url,init) => {
       const body: unknown = JSON.parse(String(init?.body));
-      expect(body).toMatchObject({reasoning:{effort:"high"}});
+      expect(responsesInput(body).thinking).toBe("high");
       return fixtureResponse("LOCAL_API_OK");
     });
     const binding = await createRoleRuntime({role:"A",cwd,sessionRoot:join(root,"state"),sessionMode:"memory",thinkingOverride:"high",noTools:true,
@@ -90,7 +96,7 @@ describe("terminal QA regressions", () => {
     const ready = new Promise<void>((resolve) => { entered = resolve; });
     let compactionAborted = false;
     let count = 0;
-    const {coordinator} = await setup("persistent", async (_url, init) => {
+    const {coordinator, bindings} = await setup("persistent", async (_url, init) => {
       count += 1;
       if (count === 1) {
         const response = fixtureResponse("QA answer");
@@ -105,6 +111,10 @@ describe("terminal QA regressions", () => {
     });
     try {
       let settled = false;
+      const session = bindings.get("A")?.session;
+      if (!(session instanceof ManagedSession)) throw new Error("Expected managed Pi session");
+      session.piSession.sessionManager.appendMessage({ role: "user", content: "Earlier task to preserve", timestamp: 1 });
+      session.piSession.sessionManager.appendMessage({ role: "user", content: "Historical context ".repeat(6000), timestamp: 1 });
       const work = coordinator.submitUserInput("trigger compaction").then((result) => {settled = true; return result;});
       await ready;
       expect(settled).toBe(false);

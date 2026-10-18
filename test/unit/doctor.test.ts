@@ -9,6 +9,7 @@ it("reports isolation and missing secure credentials without accepting an enviro
   try {
     const report = await inspectRuntimeSetup({ cwd, agentDir: cwd, modelA: "openai/gpt-5.4", modelB: "openai/gpt-5.4", mcpEnabled: false });
     expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.name === "Node.js")).toMatchObject({ status: "pass", detail: process.version });
     expect(report.checks.find((check) => check.name === "Agent A OS isolation")?.status).toBe("pass");
     expect(report.checks.find((check) => check.name === "OpenAI Keychain credential")?.status).toBe("fail");
     expect(renderSetupReport(report)).toContain("missing, locked, or unavailable");

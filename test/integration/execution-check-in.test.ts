@@ -1,3 +1,4 @@
+import { responsesInput } from "../helpers/provider.js";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,7 +72,7 @@ async function scenario(options: {
           plannerRequests += 1;
           // The last input item is the current coordinator prompt; earlier check-ins remain in history.
           if (!body || typeof body !== "object" || !("input" in body) || !Array.isArray(body.input)) throw new Error("Missing Responses input");
-          const prompt = allText(body.input.at(-1));
+          const prompt = allText(responsesInput(body).prompt);
           if (prompt.includes("Coordinator process check-in") || prompt.includes("Agent A check-in response attempt")) {
             const turnCount = Number(/after (\d+) (?:completed|successful) model turns/.exec(prompt)?.[1]);
             checkIns.push(turnCount);

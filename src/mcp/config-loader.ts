@@ -92,14 +92,14 @@ async function discoverConfigPaths(
 
 async function loadConfigSource(path: string): Promise<LoadedConfigSource> {
   const raw = await readFile(path, "utf8");
-  const parsed = JSON.parse(raw) as unknown;
+  const parsed: unknown = JSON.parse(raw);
   const result = mcpConfigFileSchema.safeParse(parsed);
   if (!result.success) {
     throw new Error(`Invalid MCP config in ${path}: ${result.error.issues[0]?.message ?? "unknown error"}`);
   }
   return {
     path,
-    config: result.data as McpConfigFile
+    config: result.data
   };
 }
 
@@ -138,8 +138,8 @@ function mergeRoleConfig(
 }
 
 function mergeRoleOverrides(
-  base?: Partial<Record<"A" | "B", McpRoleConfig>> | undefined,
-  override?: Partial<Record<"A" | "B", McpRoleConfig>> | undefined
+  base?: ResolvedMcpServerConfig["roleOverrides"] | undefined,
+  override?: ResolvedMcpServerConfig["roleOverrides"] | undefined
 ): Partial<Record<"A" | "B", McpRoleConfig>> | undefined {
   const merged: Partial<Record<"A" | "B", McpRoleConfig>> = {};
   const roleA = mergeRoleConfig(base?.A, override?.A);

@@ -1,4 +1,4 @@
-import { createCodingTools, createReadOnlyTools } from "@mariozechner/pi-coding-agent";
+import { createCodingTools, createReadOnlyTools } from "@earendil-works/pi-coding-agent";
 
 async function main(): Promise<void> {
   let input = "";

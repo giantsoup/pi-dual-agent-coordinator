@@ -1,4 +1,4 @@
-import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { ResponseFormatError, PROTOCOL_TOOL_NAMES } from "../coordinator/response-repair.js";
 import type { SessionLike } from "./create-role-runtime.js";
 
@@ -45,15 +45,6 @@ export class ManagedSession implements SessionLike {
     const previousTools = this.piSession.getActiveToolNames();
     if (formatOnly) this.piSession.setActiveToolsByName([]);
     this.piSession.setAutoCompactionEnabled(this.autoCompactionEnabled);
-    let finishAgent = () => {};
-    let started = false;
-    const agentDone = new Promise<void>((resolve) => { finishAgent = resolve; });
-    const unsubscribeAgent = this.piSession.agent.subscribe((event) => {
-      if (event.type === "agent_start") started = true;
-    });
-    const unsubscribe = this.piSession.subscribe((event) => {
-      if (event.type === "agent_end") finishAgent();
-    });
     let turnError: Error | undefined;
     // AgentSession notifications are queued and cannot pause the model loop.
     const unsubscribeTurns = this.piSession.agent.subscribe(async (event, signal) => {
@@ -82,18 +73,18 @@ export class ManagedSession implements SessionLike {
     });
     const pending = (async () => {
       try {
-        await this.piSession.prompt(text, { ...piOptions, preflightResult: (success) => {
-          if (success) this.assertActive();
-          options?.preflightResult?.(success);
+        await this.piSession.prompt(text, { ...piOptions, preflightResult: (disposition) => {
+          if (disposition === "started" && this.stopped) void this.piSession.abort();
+          options?.preflightResult?.(disposition === "started");
         } });
-        if (started) await agentDone;
+        await this.piSession.waitForIdle();
         await this.compactionDone;
         if (turnError) throw turnError;
+      } catch (error) {
+        throw turnError ?? error;
       } finally {
         this.stopped = true;
         this.piSession.setAutoCompactionEnabled(false);
-        unsubscribe();
-        unsubscribeAgent();
         unsubscribeTurns();
         this.pending = undefined;
         if (formatOnly) this.piSession.setActiveToolsByName(previousTools);
@@ -108,6 +99,7 @@ export class ManagedSession implements SessionLike {
     this.piSession.setAutoCompactionEnabled(false);
     this.piSession.abortCompaction();
     this.piSession.abortBranchSummary();
+    this.piSession.clearQueue();
     await this.piSession.abort();
     await this.pending?.catch(() => undefined);
     await this.compactionDone;

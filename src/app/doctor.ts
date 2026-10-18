@@ -1,10 +1,10 @@
 import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { getAgentDir } from "@mariozechner/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { DoctorCliOptions, ReplCliOptions } from "./cli.js";
 import { loadCoordinatorConfig, resolveEffectiveModelA, resolveEffectiveModelB } from "./coordinator-config.js";
 import { loadResolvedMcpConfig } from "../mcp/config-loader.js";
-import { createSecureModelRegistry, isRoleModel, LM_STUDIO_BASE_URL, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
+import { createSecureModelCatalog, isRoleModel, LM_STUDIO_BASE_URL, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
 import { ToolIsolation } from "../security/isolation.js";
 import { credentialAccount, credentialHelper, credentialStatus } from "../security/credentials.js";
 import { assertSafeProviderEnvironment } from "../security/provider-broker.js";
@@ -24,7 +24,8 @@ export async function inspectRuntimeSetup(options: RuntimeSetupOptions): Promise
     catch (error) { checks.push({ name, status: "fail", detail: error instanceof Error ? error.message : "Unavailable." }); }
   };
   await test("Node.js", () => {
-    if (Number(process.versions.node.split(".")[0]) < 20) throw new Error("Node.js >=20.6 is required.");
+    const [major, minor] = process.versions.node.split(".").map(Number);
+    if (major !== 24 || minor === undefined || minor < 22) throw new Error("Node.js >=24.22.0 <25 is required.");
     return process.version;
   });
   await test("Provider environment", () => { assertSafeProviderEnvironment(); return "No plaintext OpenAI key, endpoint, proxy, or Node injection overrides."; });
@@ -44,7 +45,7 @@ export async function inspectRuntimeSetup(options: RuntimeSetupOptions): Promise
   });
   const loaded = await loadCoordinatorConfig();
   checks.push({ name: "Coordinator defaults", status: loaded.warnings.length ? "fail" : "pass", detail: loaded.warnings.length ? "Invalid coordinator defaults; repair non-secret configuration." : "Loaded non-secret coordinator defaults." });
-  const registry = createSecureModelRegistry();
+  const registry = createSecureModelCatalog();
   for (const [role, reference] of [["A", resolveEffectiveModelA(options, loaded.config).value ?? SMART_MODEL], ["B", resolveEffectiveModelB(options, loaded.config).value ?? EXECUTION_MODEL]] as const) {
     await test(`Agent ${role} model`, async () => {
       if (role === "B") {

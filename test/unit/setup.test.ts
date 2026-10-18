@@ -23,7 +23,7 @@ describe("secure setup", () => {
         writeConfig: async (value) => { config = value; }
       })).toBe(0);
       expect(calls).toEqual(["verify", "private-entry"]);
-      expect(config?.defaults).toEqual({ modelA: "openai/gpt-6-luna", modelB: "lm-studio/qwen3.6-35b-a3b", thinkingA: "high", thinkingB: "off" });
+      expect(config?.defaults).toEqual({ modelA: "openai/gpt-6-luna", modelB: "lm-studio/qwen/qwen3.8-27b", thinkingA: "high", thinkingB: "xhigh" });
       expect(await readFile(join(agentDir, "auth.json"), "utf8")).toBe(auth);
     } finally { await rm(root, { recursive: true, force: true }); }
   });

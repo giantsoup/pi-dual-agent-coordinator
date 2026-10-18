@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { ManagedSession } from "../runtime/managed-session.js";
-import { AgentSession } from "@mariozechner/pi-coding-agent";
+import { AgentSession } from "@earendil-works/pi-coding-agent";
 import { SMART_MODEL } from "./models.js";
 import { loadCoordinatorConfig, resolveEffectiveModelA } from "../app/coordinator-config.js";
 import { createRoleRuntime } from "../runtime/create-role-runtime.js";

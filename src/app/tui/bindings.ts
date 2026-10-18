@@ -1,4 +1,4 @@
-import { Key, matchesKey, type KeyId } from "@mariozechner/pi-tui";
+import { Key, matchesKey, type KeyId } from "@earendil-works/pi-tui";
 export const bindings = {
   help: { key: Key.f1, hint: "F1 help", description: "Open contextual help; F1 or Esc restores the previous view" },
   models: { key: Key.f3, hint: "F3 models", description: "Choose Agent A or B's model; choose A's Low/Medium/High reasoning" },

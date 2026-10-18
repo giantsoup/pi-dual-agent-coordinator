@@ -1,5 +1,7 @@
 # Subagents for agents A and B
 
+Historical SDK assessment: version-specific conclusions below describe Pi 0.67.68. The coordinator now targets Pi 1.3.0. See [upgrade verification](../pi-upgrade-verification.md). Subagent implementation remains outside this migration.
+
 Research date: 18 October 2026. Inspected `main` at `8532d2d54d56c9f3b37bafa2f568989c39098c3e`, including the existing uncommitted runtime, coordinator, and terminal changes. This is a design recommendation, not an implementation or a throughput benchmark. Existing work was preserved.
 
 ## Recommendation

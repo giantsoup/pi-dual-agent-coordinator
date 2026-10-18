@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
 import { protectSecret, redactText } from "./redact.js";
 import { loadCredential } from "./credentials.js";
-import { LM_STUDIO_BASE_URL } from "./models.js";
+import { LM_STUDIO_BASE_URL, QWEN38_MODEL_ID } from "./models.js";
 
 export const trustedProviderEndpoint = "https://api.openai.com/v1/responses";
 export function assertProviderEndpoint(value: string): void {
@@ -77,7 +77,10 @@ export async function createProviderBroker(options: {
       requests++;
       if (local) {
         const instanceId = await options.resolveLocalInstanceId?.();
-        body = JSON.stringify({ ...parsed, ...(instanceId ? { model: instanceId } : {}), reasoning_effort: "none" });
+        const effort = parsed.model === QWEN38_MODEL_ID
+          ? ("reasoning_effort" in parsed ? parsed.reasoning_effort : "xhigh") : "none";
+        if (typeof effort !== "string" || !["none", "low", "medium", "xhigh"].includes(effort)) throw new Error("Unsupported local reasoning effort");
+        body = JSON.stringify({ ...parsed, ...(instanceId ? { model: instanceId } : {}), reasoning_effort: effort });
       }
       if (!local) assertProviderEndpoint(endpoint);
       const upstream = await request(endpoint, {

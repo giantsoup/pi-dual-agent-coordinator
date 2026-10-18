@@ -1,5 +1,5 @@
 import { bindingMatches, browsingInput, inspectorTabs } from "./bindings.js";
-import { Key, matchesKey, visibleWidth, truncateToWidth, wrapTextWithAnsi, Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
+import { Key, matchesKey, visibleWidth, truncateToWidth, wrapTextWithAnsi, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { InteractiveCoordinatorService } from "../interactive/service.js";
 import type { InteractiveUiState } from "../../types/ui.js";
 import type { HistoryDetail, HistoryRecord } from "../../types/history.js";

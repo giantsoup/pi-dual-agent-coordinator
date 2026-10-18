@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { TUI, visibleWidth } from "@mariozechner/pi-tui";
+import { TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
 import { ModelPicker } from "../../src/app/tui/model-picker.js";
 import { CoordinatorTuiApp } from "../../src/app/tui/app.js";
 import { HeadlessInteractiveCoordinatorService } from "../../src/app/interactive/service.js";
@@ -35,12 +35,23 @@ async function setup() {
     getModelPickerCatalog: async (role: "A" | "B"): Promise<ModelPickerCatalog> => ({ role, models: role === "A" ? aModels : bModels, currentModel: status.runtimes.find((runtime) => runtime.role === role)?.modelCanonical, currentThinking: status.runtimes.find((runtime) => runtime.role === role)?.thinking }),
     cancelActive: vi.fn(async () => { cancelled = true; release(); }) };
   const service = new HeadlessInteractiveCoordinatorService(coordinator); await service.start();
-  const terminal = new MemoryTerminal(); const tui = new TUI(terminal);
+  const terminal = new MemoryTerminal(); const tui = new TuiMainScreen(terminal);
   const app = new CoordinatorTuiApp(tui, terminal, service, { onExit() {} }); app.focused = true;
   tui.addChild(app); tui.setFocus(app); tui.start();
   return { app, service, tui, terminal, configure, coordinator, release };
 }
 describe("model selection controls", () => {
+  it("accepts a role key before the opened picker receives its first render", async () => {
+    const { app, service, tui } = await setup();
+    try {
+      app.render(80);
+      await service.dispatch({ type: "open_models", role: "A" });
+      expect(service.getState().modal).toMatchObject({ kind: "model_picker", catalog: { role: "A" } });
+      app.handleInput("b");
+      await settle();
+      expect(service.getState().modal).toMatchObject({ kind: "model_picker", catalog: { role: "B" } });
+    } finally { tui.stop(); await service.dispose(); }
+  });
   it.each([[76, 17], [96, 19]])("shows all GPT and reasoning options within %sx%s cells", (width, height) => {
     const picker = new ModelPicker({ role: "A", models: aModels, currentModel: "openai/gpt-6-luna", currentThinking: "high" });
     const lines = picker.render(width, height, false, false);
@@ -103,4 +114,21 @@ describe("model selection controls", () => {
       expect(coordinator.submitUserInput).not.toHaveBeenCalled();
     } finally { release(); tui.stop(); await service.dispose(); }
   });
+});
+
+it("offers Qwen3.8 reasoning in the B picker and constrains other local models", () => {
+  const qwen = { canonical: "lm-studio/qwen/qwen3.8-27b", name: "Qwen3.8", description: "ready", loaded: true,
+    thinkingLevels: ["off", "low", "medium", "xhigh"] satisfies SupportedThinkingLevel[], defaultThinking: "xhigh" as const };
+  const picker = new ModelPicker({ role: "B", models: [qwen, ...bModels], currentModel: qwen.canonical, currentThinking: "xhigh" });
+  const lines = picker.render(80, 24, false, false);
+  expect(lines.join("\n")).toContain("[Xhigh]");
+  expect(lines.length).toBeLessThanOrEqual(24);
+  expect(lines.every(line => visibleWidth(line) <= 80)).toBe(true);
+  expect(picker.handleInput("\r", false)).toMatchObject({ role: "B", thinking: "xhigh", save: true });
+  picker.handleInput("\x1b[D", false);
+  expect(picker.handleInput("\r", false)).toMatchObject({ thinking: "medium" });
+  picker.handleInput("\x1b[B", false);
+  expect(picker.handleInput("\r", false)).toMatchObject({ thinking: "off" });
+  picker.handleInput("\x1b[A", false);
+  expect(picker.handleInput("\r", false)).toMatchObject({ thinking: "xhigh" });
 });

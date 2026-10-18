@@ -1,4 +1,4 @@
-import type { Model } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 
 export interface ModelDisplayInfo {
   name?: string | undefined;
@@ -8,7 +8,7 @@ export interface ModelDisplayInfo {
   display: string;
 }
 
-export function getModelDisplayInfo(model?: Model<any> | undefined): ModelDisplayInfo {
+export function getModelDisplayInfo(model?: Model<Api> | undefined): ModelDisplayInfo {
   if (!model) {
     return { display: "(pi-default)" };
   }
@@ -23,6 +23,6 @@ export function getModelDisplayInfo(model?: Model<any> | undefined): ModelDispla
   };
 }
 
-export function formatModelDisplay(model?: Model<any> | undefined): string {
+export function formatModelDisplay(model?: Model<Api> | undefined): string {
   return getModelDisplayInfo(model).display;
 }

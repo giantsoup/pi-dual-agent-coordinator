@@ -95,7 +95,8 @@ describe("terminal operation cancellation", () => {
     const {coordinator,sessions,ready} = await setup("planning");
     const session = sessions.get("A");
     if (!session) throw new Error("missing session");
-    const abort = session.abort.bind(session);
+    const abort = vi.mocked(session.abort).getMockImplementation();
+    if (!abort) throw new Error("Missing abort fixture implementation");
     vi.spyOn(session,"abort").mockImplementation(async () => {await abort(); throw new Error("abort failed");});
     try {
       const work = coordinator.submitUserInput("plan");

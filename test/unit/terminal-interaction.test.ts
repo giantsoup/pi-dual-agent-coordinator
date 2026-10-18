@@ -1,4 +1,4 @@
-import { TUI, visibleWidth } from "@mariozechner/pi-tui";
+import { stripTerminalSequences, TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { HeadlessInteractiveCoordinatorService } from "../../src/app/interactive/service.js";
 import { CoordinatorTuiApp } from "../../src/app/tui/app.js";
@@ -19,11 +19,11 @@ async function setup(fail = false) {
   const service = new HeadlessInteractiveCoordinatorService(coordinator);
   await service.start();
   const terminal = new MemoryTerminal();
-  const tui = new TUI(terminal);
+  const tui = new TuiMainScreen(terminal);
   const app = new CoordinatorTuiApp(tui, terminal, service, { onExit() {} }); app.focused = true;
   return { app, terminal, service, coordinator, release };
 }
-function text(app: CoordinatorTuiApp, width = 80): string { return app.render(width).join("\n"); }
+function text(app: CoordinatorTuiApp, width = 80): string { return stripTerminalSequences(app.render(width).join("\n")); }
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
 
 describe("real Pi editor and terminal components", () => {
@@ -221,7 +221,7 @@ describe("real Pi editor and terminal components", () => {
       ...Array.from({length: 30}, (_, index) => ({ kind: "run" as const, id: `run-${index}`, parentId: "turn", role: "A" as const, sessionId: "session", phase: "Planning", title: `record ${index}`, timestamp: at, outcome: { kind: "completed" as const, endedAt: at } }))
     ] };
     const terminal = new MemoryTerminal();
-    const tui = new TUI(terminal);
+    const tui = new TuiMainScreen(terminal);
     const app = new CoordinatorTuiApp(tui, terminal, { start:async()=>{},dispose:async()=>{},dispatch:async()=>{},getState:()=>state,subscribeState:()=>()=>{},subscribeUiEvents:()=>()=>{} },{onExit(){}});
     app.render(80); app.handleInput("\u001b[17~"); app.handleInput("\u001b[A");
     const before = app.render(80).find((line) => line.includes("> + A - Senior"));

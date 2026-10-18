@@ -16,8 +16,8 @@ from the source checkout; keep that checkout separate from the installation:
 pi_dual_runtime="$HOME/.local/share/pi-dual/runtime-terminal-$(date +%Y%m%d-%H%M%S)"
 npm run build
 npm run secure:install -- "$pi_dual_runtime"
-node "$pi_dual_runtime/dist/src/index.js" doctor "$PWD" --no-mcp
-node "$pi_dual_runtime/dist/src/index.js" repl "$PWD" --no-mcp
+"$pi_dual_runtime/bin/node" "$pi_dual_runtime/dist/src/index.js" doctor "$PWD" --no-mcp
+"$pi_dual_runtime/bin/node" "$pi_dual_runtime/dist/src/index.js" repl "$PWD" --no-mcp
 ```
 
 An existing Keychain credential for this checkout's canonical path is reused.
@@ -240,12 +240,13 @@ timed-out, and failed operations remain terminal after replay. Session and model
 changes clear a pending plan, so ask for a new plan before approving work.
 
 Esc then m from the editor opens the model picker. a/b chooses the agent;
-Up/Down chooses a model; Left/Right selects Low, Medium, or High reasoning for A;
-Enter applies the choice. s toggles Remember after restart (on by default),
-r refreshes, h opens help, and Esc returns to the draft. These controls are shown inside the picker.
+Up/Down chooses a model; Left/Right selects Low, Medium, or High reasoning for A
+and Off, Low, Medium, or Xhigh for Qwen3.8. Enter applies the choice. s toggles Remember after restart (on by default),
+r refreshes, h opens help, and Esc returns to the draft. These controls are shown
+inside the picker.
 
-A offers GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna. This manual list is maintained
-in `src/security/models.ts`. B lists downloaded LM Studio LLMs, marks readiness,
+A offers GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna. The approved IDs are maintained
+in `src/security/models.ts`; Pi supplies the model metadata. B lists downloaded LM Studio LLMs, marks readiness,
 and explains when a model lacks tool calling or the required context support.
 When B changes, the app unloads the previous model, loads the selection, and waits
 for readiness. A compact progress panel shows the stage and elapsed time; a
@@ -255,7 +256,9 @@ y confirms exit after cleanup, while n or Esc returns to loading. Failed
 restoration marks B unavailable until a model is selected again.
 
 `/model A` and `/model B` open the same picker. In plain mode they print the choices
-and commands. `/thinking A` lists Low, Medium, and High; `/thinking B` lists Off.
+and commands. `/thinking A` lists Low, Medium, and High; `/thinking B` lists the
+levels supported by the selected local model.
+Qwen3.8 supports Off, Low, Medium, and Xhigh; other local models remain Off.
 Selections apply to that role's current conversation and next operation.
 Model changes retain conversation context and rebuild the isolated runtime.
 They also work before a role has written its first response to disk.

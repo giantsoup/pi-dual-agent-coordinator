@@ -16,7 +16,7 @@ import { SessionLedger } from "../persistence/session-ledger.js";
 import { getModelDisplayInfo } from "../runtime/model-display.js";
 import { OperationStoppedError } from "./bind-runtime-events.js";
 import type { RuntimeEventBridge } from "./bind-runtime-events.js";
-import type { RoleRuntimeBinding, SessionPromptOptions } from "../runtime/create-role-runtime.js";
+import type { RoleRuntimeBinding } from "../runtime/create-role-runtime.js";
 import type { CoordinatorUiPhase } from "../types/status.js";
 import type {
   CompletionRecord,

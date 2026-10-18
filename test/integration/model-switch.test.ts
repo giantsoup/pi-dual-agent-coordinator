@@ -1,3 +1,4 @@
+import { responsesInput } from "../helpers/provider.js";
 import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -47,7 +48,7 @@ describe("model picker coordinator transactions", () => {
       expect(bindings.get("B")?.sessionFile).toBe(original?.sessionFile);
       await bindings.get("B")?.session.prompt("First response after changing the unused model");
       expect(JSON.stringify(bindings.get("B")?.session.messages)).toContain("Local answer");
-      expect(local.models.find((model) => model.key === "qwen3.6-35b-a3b")?.loaded_instances).toHaveLength(0);
+      expect(local.models.find((model) => model.key === "qwen/qwen3.8-27b")?.loaded_instances).toHaveLength(0);
       expect((await loadCoordinatorConfig()).config?.defaults?.modelB).toBe("lm-studio/google/gemma-4-e4b");
       expect(service.getState().notification?.message).toContain("ready");
     } finally { await service.dispose(); }
@@ -63,7 +64,8 @@ describe("model picker coordinator transactions", () => {
         await coordinator.submitUserInput(`Continue with ${thinking} reasoning`);
         expect(bindings.get("A")?.sessionId).toBe(id);
         expect(JSON.stringify(bindings.get("A")?.session.messages)).toContain("Remember this model selection conversation");
-        expect(bodies.at(-1)).toMatchObject({ model: "gpt-6.1-sol", reasoning: { effort: thinking } });
+        expect(bodies.at(-1)).toMatchObject({ model: "gpt-6.1-sol" });
+        expect(responsesInput(bodies.at(-1)).thinking).toBe(thinking);
       }
       expect((await loadCoordinatorConfig()).exists).toBe(false);
     } finally { await service.dispose(); }
@@ -74,8 +76,8 @@ describe("model picker coordinator transactions", () => {
     try {
       reject("lm-studio/qwen3-coder-next");
       await expect(coordinator.configureRole("B", { model: "lm-studio/qwen3-coder-next", save: true })).rejects.toThrow("Replacement runtime failed");
-      expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === "B")).toMatchObject({ modelCanonical: "lm-studio/qwen3.6-35b-a3b", healthy: true });
-      expect(local.models.find((model) => model.key === "qwen3.6-35b-a3b")?.loaded_instances).toHaveLength(1);
+      expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === "B")).toMatchObject({ modelCanonical: "lm-studio/qwen/qwen3.8-27b", healthy: true });
+      expect(local.models.find((model) => model.key === "qwen/qwen3.8-27b")?.loaded_instances).toHaveLength(1);
       expect(local.models.find((model) => model.key === "qwen3-coder-next")?.loaded_instances).toHaveLength(0);
       expect((await loadCoordinatorConfig()).exists).toBe(false);
       await coordinator.submitUserInput("The restored conversation remains usable");
@@ -93,8 +95,8 @@ describe("model picker coordinator transactions", () => {
       expect(service.getState().modal).toMatchObject({ kind: "model_loading", cancelling: true });
       release.resolve(); await Promise.all([switching, cancelling]);
       expect(service.getState().shouldExit).toBe(action === "quit");
-      expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === "B")?.modelCanonical).toBe("lm-studio/qwen3.6-35b-a3b");
-      expect(local.models.find((model) => model.key === "qwen3.6-35b-a3b")?.loaded_instances).toHaveLength(1);
+      expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === "B")?.modelCanonical).toBe("lm-studio/qwen/qwen3.8-27b");
+      expect(local.models.find((model) => model.key === "qwen/qwen3.8-27b")?.loaded_instances).toHaveLength(1);
       expect(local.models.find((model) => model.key === "qwen3-coder-next")?.loaded_instances).toHaveLength(0);
       expect((await loadCoordinatorConfig()).exists).toBe(false);
     } finally { release.resolve(); await service.dispose(); }
@@ -107,8 +109,8 @@ describe("model picker coordinator transactions", () => {
       if (failure === "save") { await mkdir(dirname(configPath), { recursive: true }); await writeFile(configPath, "invalid original config"); }
       else rejectBinding();
       await expect(coordinator.configureRole("B", { model: "lm-studio/qwen3-coder-next", save: true })).rejects.toThrow(failure === "save" ? "config warnings" : "Replacement binding failed");
-      expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === "B")).toMatchObject({ modelCanonical: "lm-studio/qwen3.6-35b-a3b", healthy: true });
-      expect(local.models.find((model) => model.key === "qwen3.6-35b-a3b")?.loaded_instances).toHaveLength(1);
+      expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === "B")).toMatchObject({ modelCanonical: "lm-studio/qwen/qwen3.8-27b", healthy: true });
+      expect(local.models.find((model) => model.key === "qwen/qwen3.8-27b")?.loaded_instances).toHaveLength(1);
       expect(local.models.find((model) => model.key === "qwen3-coder-next")?.loaded_instances).toHaveLength(0);
       if (failure === "save") expect(await readFile(configPath, "utf8")).toBe("invalid original config");
       await coordinator.submitUserInput("Previous runtime still receives events");
@@ -139,19 +141,19 @@ describe("model picker coordinator transactions", () => {
       await service.start();
       expect(phases).toContain("loading"); expect(phases).toContain("verifying");
       expect(coordinator.getStatus().runtimes).toHaveLength(2);
-      expect(local.models.find((model) => model.key === "qwen3.6-35b-a3b")?.loaded_instances).toHaveLength(1);
+      expect(local.models.find((model) => model.key === "qwen/qwen3.8-27b")?.loaded_instances).toHaveLength(1);
     } finally { unsubscribe(); await service.dispose(); }
   });
 
   it("blocks execution after failed restoration and lets a successful selection recover B", async () => {
     const { local, coordinator, service } = await setup();
     try {
-      local.failures.add("qwen3-coder-next"); local.failures.add("qwen3.6-35b-a3b");
+      local.failures.add("qwen3-coder-next"); local.failures.add("qwen/qwen3.8-27b");
       await expect(coordinator.configureRole("B", { model: "lm-studio/qwen3-coder-next", save: false })).rejects.toThrow("could not be restored");
       expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === "B")?.healthy).toBe(false);
       await expect(coordinator.submitUserInput("Must wait for recovery")).rejects.toThrow(/model.*unavailable/i);
       local.failures.clear();
-      await coordinator.configureRole("B", { model: "lm-studio/qwen3.6-35b-a3b", save: false });
+      await coordinator.configureRole("B", { model: "lm-studio/qwen/qwen3.8-27b", save: false });
       expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === "B")?.healthy).toBe(true);
       await coordinator.submitUserInput("Recovered");
     } finally { await service.dispose(); }
@@ -160,10 +162,26 @@ describe("model picker coordinator transactions", () => {
   it("reports failed compensation after the new model was ready but runtime creation failed", async () => {
     const { local, coordinator, service, reject } = await setup();
     try {
-      reject("lm-studio/qwen3-coder-next"); local.failures.add("qwen3.6-35b-a3b");
+      reject("lm-studio/qwen3-coder-next"); local.failures.add("qwen/qwen3.8-27b");
       await expect(coordinator.configureRole("B", { model: "lm-studio/qwen3-coder-next", save: false })).rejects.toMatchObject({ recovery: "unavailable", cancelled: false });
       expect(coordinator.getStatus().runtimes.find((runtime) => runtime.role === "B")?.healthy).toBe(false);
       await expect(coordinator.submitUserInput("Wait for a ready model")).rejects.toThrow(/model.*unavailable/i);
     } finally { await service.dispose(); }
   });
+});
+
+it("saves Qwen3.8 xhigh and changes reasoning without reloading the model", async () => {
+  const { coordinator, service, bindings, local, bodies } = await setup();
+  try {
+    const originalId = bindings.get("B")?.sessionId;
+    await bindings.get("B")?.session.prompt("Keep this local context");
+    await coordinator.configureRole("B", { thinking: "xhigh", save: true });
+    expect(bindings.get("B")?.sessionId).toBe(originalId);
+    expect(bindings.get("B")?.session.thinkingLevel).toBe("xhigh");
+    expect(JSON.stringify(bindings.get("B")?.session.messages)).toContain("Keep this local context");
+    expect((await loadCoordinatorConfig()).config?.defaults).toMatchObject({ thinkingB: "xhigh", modelB: "lm-studio/qwen/qwen3.8-27b" });
+    await bindings.get("B")?.session.prompt("Continue with the saved reasoning");
+    expect(bodies.at(-1)).toMatchObject({ reasoning_effort: "xhigh" });
+    expect(local.calls.filter(call => call.body)).toHaveLength(0);
+  } finally { await service.dispose(); }
 });

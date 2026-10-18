@@ -1,7 +1,8 @@
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { mcpParameters, assertMcpArguments } from "./schema.js";
+import { z } from "zod";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { getAllowedToolNames } from "../tools/role-capability-policy.js";
 import type { Role } from "../types/role.js";
@@ -19,7 +20,7 @@ export function createDirectToolNamePlan(options: {
   toolSets: DirectToolMetadataSet[];
 }): Map<string, Map<string, string>> {
   const plan = new Map<string, Map<string, string>>();
-  const reserved = new Set([...getAllowedToolNames(options.role), "mcp"]);
+  const reserved = new Set([...getAllowedToolNames(options.role), "mcp", "codemode", "tool_search"]);
   const occurrences = new Map<string, number>();
 
   for (const set of options.toolSets) {
@@ -31,12 +32,17 @@ export function createDirectToolNamePlan(options: {
   for (const set of options.toolSets) {
     const toolPlan = new Map<string, string>();
     for (const tool of set.tools) {
-      const collides = reserved.has(tool.name) || (occurrences.get(tool.name) ?? 0) > 1;
+      const collides = tool.name.startsWith("mcp__") || reserved.has(tool.name) || (occurrences.get(tool.name) ?? 0) > 1;
       toolPlan.set(tool.name, collides ? `${set.serverName}__${tool.name}` : tool.name);
     }
     plan.set(set.serverName, toolPlan);
   }
 
+  const names = new Set(reserved);
+  for (const tools of plan.values()) for (const name of tools.values()) {
+    if (names.has(name) || name.startsWith("mcp__") || name.includes("*")) throw new Error(`Unsafe or colliding MCP tool name: ${name}`);
+    names.add(name);
+  }
   return plan;
 }
 
@@ -59,15 +65,15 @@ export function buildDirectToolDefinitions(options: {
           tool.description ??
           `Call the ${options.serverName}/${tool.name} MCP tool.`,
         promptSnippet: `Call MCP tool ${options.serverName}/${tool.name}`,
-        parameters: Type.Unsafe<Record<string, unknown>>(
-          normalizeObjectSchema(tool.inputSchema)
-        ),
+        parameters: mcpParameters(tool.inputSchema),
+        ...(tool.outputSchema ? { outputSchema: mcpParameters(tool.outputSchema) } : {}),
         async execute(_toolCallId, params, signal) {
           const gate = isMcpToolCallAllowed(options.policy, options.serverName, tool);
           if (!gate.allowed) {
             throw new Error(gate.reason ?? `Tool ${options.serverName}/${tool.name} is blocked.`);
           }
 
+          assertMcpArguments(tool, params);
           const result = await options.clientPool.callTool(
             options.serverName,
             tool.name,
@@ -85,97 +91,22 @@ export function buildDirectToolDefinitions(options: {
 }
 
 export function toPiToolResult(
-  result: Record<string, unknown>,
+  result: CallToolResult,
   details: Record<string, unknown>
 ): AgentToolResult<Record<string, unknown>> {
-  const normalized = normalizeToolResult(result);
   return {
-    content: [
-      {
-        type: "text",
-        text: renderMcpContent(normalized)
-      }
-    ],
-    details: {
-      ...details,
-      structuredContent: normalized.structuredContent,
-      isError: normalized.isError ?? false
-    }
+    content: [{ type: "text", text: renderMcpContent(result) }],
+    isError: result.isError ?? false,
+    ...(result.structuredContent === undefined ? {} : { structuredContent: z.json().parse(result.structuredContent) }),
+    details: { ...details, structuredContent: result.structuredContent, isError: result.isError ?? false }
   };
 }
 
-function normalizeObjectSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  if (schema.type === "object") {
-    return schema;
-  }
-  return {
-    type: "object",
-    properties: {
-      input: schema
-    },
-    required: ["input"]
-  };
-}
-
-export function renderMcpContent(result: {
-  content?: Array<Record<string, unknown>>;
-  structuredContent?: Record<string, unknown> | undefined;
-  isError?: boolean | undefined;
-}): string {
-  const textSegments = (result.content ?? [])
-    .map((item) => {
-      if (item.type === "text" && typeof item.text === "string") {
-        return item.text;
-      }
-      return JSON.stringify(item, null, 2);
-    })
-    .filter((segment) => segment.length > 0);
-
-  const sections = [...textSegments];
+function renderMcpContent(result: CallToolResult): string {
+  const sections = result.content.map(item => item.type === "text" ? item.text : JSON.stringify(item, null, 2))
+    .filter(segment => segment.length > 0);
   if (result.structuredContent && Object.keys(result.structuredContent).length > 0) {
     sections.push(JSON.stringify(result.structuredContent, null, 2));
   }
-  if (sections.length === 0) {
-    sections.push("(no content)");
-  }
-  return sections.join("\n\n");
-}
-
-function normalizeToolResult(result: Record<string, unknown>): {
-  content?: Array<Record<string, unknown>>;
-  structuredContent?: Record<string, unknown> | undefined;
-  isError?: boolean | undefined;
-} {
-  if ("toolResult" in result) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result.toolResult, null, 2)
-        }
-      ]
-    };
-  }
-
-  const normalized: {
-    content?: Array<Record<string, unknown>>;
-    structuredContent?: Record<string, unknown> | undefined;
-    isError?: boolean | undefined;
-  } = {};
-
-  if (Array.isArray(result.content)) {
-    normalized.content = result.content as Array<Record<string, unknown>>;
-  }
-  if (
-    result.structuredContent &&
-    typeof result.structuredContent === "object" &&
-    !Array.isArray(result.structuredContent)
-  ) {
-    normalized.structuredContent = result.structuredContent as Record<string, unknown>;
-  }
-  if (typeof result.isError === "boolean") {
-    normalized.isError = result.isError;
-  }
-
-  return normalized;
+  return sections.length ? sections.join("\n\n") : "(no content)";
 }

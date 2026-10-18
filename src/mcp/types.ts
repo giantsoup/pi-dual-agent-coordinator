@@ -1,3 +1,5 @@
+import type { z } from "zod";
+import type { mcpConfigFileSchema, mcpServerConfigSchema } from "./config-schema.js";
 import type {
   Prompt,
   Resource,
@@ -20,33 +22,10 @@ export type McpProxyAction =
   | "get_prompt"
   | "connect";
 
-export interface McpRoleConfig {
-  allowTools?: string[] | undefined;
-  excludeTools?: string[] | undefined;
-}
-
-export interface McpServerPiDualConfig {
-  directTools?: boolean | undefined;
-  lifecycle?: McpLifecycleMode | undefined;
-  idleTimeoutMinutes?: number | undefined;
-  required?: boolean | undefined;
-  roles?: Partial<Record<Role, McpRoleConfig>> | undefined;
-}
-
-export interface McpServerConfig {
-  command?: string | undefined;
-  args?: string[] | undefined;
-  env?: Record<string, string> | undefined;
-  cwd?: string | undefined;
-  url?: string | undefined;
-  headers?: Record<string, string> | undefined;
-  transport?: McpTransportType | "http" | undefined;
-  "x-pi-dual"?: McpServerPiDualConfig | undefined;
-}
-
-export interface McpConfigFile {
-  mcpServers: Record<string, McpServerConfig>;
-}
+export type McpConfigFile = z.output<typeof mcpConfigFileSchema>;
+export type McpServerConfig = z.output<typeof mcpServerConfigSchema>;
+export type McpServerPiDualConfig = NonNullable<McpServerConfig["x-pi-dual"]>;
+export type McpRoleConfig = NonNullable<NonNullable<McpServerPiDualConfig["roles"]>["A"]>;
 
 export interface ResolvedMcpServerConfig {
   name: string;
@@ -61,7 +40,7 @@ export interface ResolvedMcpServerConfig {
   lifecycle: McpLifecycleMode;
   idleTimeoutMinutes: number;
   required: boolean;
-  roleOverrides: Partial<Record<Role, McpRoleConfig>>;
+  roleOverrides: NonNullable<McpServerPiDualConfig["roles"]>;
   sourcePaths: string[];
   fingerprint: string;
 }

@@ -43,7 +43,7 @@ describe("mcp extension", () => {
     });
 
     const registeredHandlers = new Map<string, (...args: unknown[]) => unknown>();
-    extension?.extensionFactory({
+    const binding = extension?.extensionFactory({
       registerTool() {},
       on(event: string, handler: (...args: unknown[]) => unknown) {
         registeredHandlers.set(event, handler as (...args: unknown[]) => unknown);
@@ -51,7 +51,7 @@ describe("mcp extension", () => {
     } as never);
 
     await expect(
-      registeredHandlers.get("session_start")?.()
+      binding
     ).rejects.toThrow("Failed to initialize required MCP server laravel-boost");
   });
 
@@ -86,7 +86,7 @@ describe("mcp extension", () => {
     const registeredHandlers = new Map<string, (...args: unknown[]) => unknown>();
     const registeredTools: string[] = [];
 
-    extension?.extensionFactory({
+    const binding = extension?.extensionFactory({
       registerTool(tool: { name: string }) {
         registeredTools.push(tool.name);
       },
@@ -95,7 +95,7 @@ describe("mcp extension", () => {
       }
     } as never);
 
-    await registeredHandlers.get("session_start")?.();
+    await binding;
 
     expect(registeredTools).toContain("mcp");
     expect(registeredTools).toContain("echo");

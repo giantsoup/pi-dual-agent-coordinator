@@ -13,7 +13,7 @@ import type { CoordinatorStatusSnapshot } from "../../src/types/status.js";
 import type { NormalizedTelemetryEvent } from "../../src/types/telemetry.js";
 import type { InteractiveCoordinatorService } from "../../src/app/interactive/service.js";
 import type { InteractiveUiState, UiAction, UiEvent } from "../../src/types/ui.js";
-import type { Terminal } from "@mariozechner/pi-tui";
+import type { Terminal } from "@earendil-works/pi-tui";
 
 class FakeReadline implements ReplReadlineLike {
   public closeCalls = 0;
@@ -243,7 +243,9 @@ function createTerminal(): Terminal & { started: boolean } {
     clearLine() {},
     clearFromCursor() {},
     clearScreen() {},
-    setTitle(_title: string) {}
+    setTitle(_title: string) {},
+    setProgress() {},
+    setProgramStatus() {}
   };
 }
 

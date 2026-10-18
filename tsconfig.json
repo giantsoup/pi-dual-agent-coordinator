@@ -3,13 +3,14 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "strict": true,
     "noImplicitOverride": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "useUnknownInCatchVariables": true,
-    "esModuleInterop": false,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
@@ -17,7 +18,15 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": "."
+    "rootDir": ".",
+    "types": [
+      "node"
+    ],
+    "verbatimModuleSyntax": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts"
+  ]
 }

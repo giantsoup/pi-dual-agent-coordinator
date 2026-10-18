@@ -12,7 +12,7 @@ const workflowIdSchema = z.string().trim().min(1);
 const handoffIdSchema = z.string().trim().min(1);
 const iterationSchema = z.number().int().positive();
 
-export const checkInSchema = z.object({
+export const checkInSchema = z.strictObject({
   schemaVersion: z.literal(1),
   workflowId: z.string(),
   handoffId: z.string(),
@@ -21,8 +21,8 @@ export const checkInSchema = z.object({
   decision: z.enum(["continue", "redirect", "blocked"]),
   reason: z.string().trim().min(1).max(800),
   nextSteps: z.array(z.string().trim().min(1).max(800)).max(5)
-}).strict().refine((value) => value.decision !== "redirect" || value.nextSteps.length > 0, {
-  message: "A redirect requires concrete next steps."
+}).refine((value) => value.decision !== "redirect" || value.nextSteps.length > 0, {
+  error: "A redirect requires concrete next steps."
 });
 
 export const handoffEnvelopeSchema = z.object({
@@ -80,5 +80,5 @@ export const finalDecisionSchema = z.object({
 
 /** Schemas stay with the workflow owner, including their format-repair representation. */
 export function responseShape(...schemas: z.ZodType[]): string {
-  return schemas.map((schema) => JSON.stringify(z.toJSONSchema(schema, { io: "output", unrepresentable: "any" }))).join("\nOR\n");
+  return schemas.map((schema) => JSON.stringify(z.toJSONSchema(schema, { io: "output" }))).join("\nOR\n");
 }

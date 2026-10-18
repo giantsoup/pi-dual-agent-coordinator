@@ -9,14 +9,14 @@ import {
   CombinedAutocompleteProvider,
   matchesKey,
   Key,
-  TUI,
+  type TUI,
   truncateToWidth,
   wrapTextWithAnsi,
   type Component,
   type EditorTheme,
   type Focusable,
   type Terminal
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 
 import { REPL_COMPLETION_COMMANDS } from "../cli.js";
 import { renderRuntimeActivitySummary } from "../activity-history.js";
@@ -106,6 +106,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
 
   public handleInput(data: string): void {
     const state = this.service.getState();
+    this.syncModalState(state);
     // Legacy terminals can deliver a quick Esc + letter as one Meta sequence.
     if (!this.controls && state.modal.kind === "none" && this.paneFocus === "editor"
       && data.length === 2 && data.startsWith("\x1b") && controlActions.some((item) => item.key === data[1])) {
@@ -448,7 +449,6 @@ export class CoordinatorTuiApp implements Component, Focusable {
       return false;
     }
 
-    this.syncModalState(state);
     if (state.modal.kind === "model_picker") {
       const action = this.modelPicker?.handleInput(data, ["running", "cancelling"].includes(state.operation.kind));
       if (action) void this.service.dispatch(action);

@@ -1,4 +1,4 @@
-import { ProcessTerminal, TUI, type Terminal } from "@mariozechner/pi-tui";
+import { ProcessTerminal, TuiMainScreen, type Terminal } from "@earendil-works/pi-tui";
 
 import type { ReplCliOptions } from "../cli.js";
 import {
@@ -27,7 +27,7 @@ export async function bootstrapTuiRepl(
 
 async function runTerminal(service: InteractiveCoordinatorService, dependencies: BootstrapTuiDependencies): Promise<void> {
   const terminal = dependencies.createTerminal?.() ?? new ProcessTerminal();
-  const tui = new TUI(terminal, true);
+  const tui = new TuiMainScreen(terminal, true);
   let resolveExit: (() => void) | undefined;
   const exitPromise = new Promise<void>((resolve) => {
     resolveExit = resolve;
@@ -65,8 +65,7 @@ async function runTerminal(service: InteractiveCoordinatorService, dependencies:
     for (const signal of signals) process.off(signal, shutdown);
     unsubscribe();
     try {
-      // Pi 0.67.68 enables its keyboard fallback after 150 ms, even if startup throws.
-      await terminal.drainInput(1000, 200).catch(() => undefined);
+      await terminal.drainInput().catch(() => undefined);
       tui.stop();
     } finally { terminal.write("\u001B[?1006l\u001B[?1000l\u001B[?25h\u001B[?1049l"); }
   }

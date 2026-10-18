@@ -8,7 +8,7 @@ import { createRoleRuntime } from "../../src/runtime/create-role-runtime.js";
 import { fixtureResponse } from "../../src/security/fixture-provider.js";
 import { HeadlessInteractiveCoordinatorService } from "../../src/app/interactive/service.js";
 import { CoordinatorTuiApp } from "../../src/app/tui/app.js";
-import { TUI, visibleWidth } from "@mariozechner/pi-tui";
+import { TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
 import { MemoryTerminal } from "../helpers/terminal.js";
 
 it("retains individually scoped role runs across sessions and restart, with read-only safe archive detail", async () => {
@@ -30,7 +30,7 @@ it("retains individually scoped role runs across sessions and restart, with read
     expect(detail.lines.join("\n")).not.toMatch(/internal block|52;c|unsafe/);
     expect(await readFile(run.sessionFile, "utf8")).toBe(bytes);
     expect(coordinator.getSessions()).toEqual(before);
-    const terminal = new MemoryTerminal(); const tui = new TUI(terminal);
+    const terminal = new MemoryTerminal(); const tui = new TuiMainScreen(terminal);
     const app = new CoordinatorTuiApp(tui, terminal, service, { onExit() {} });
     expect(app.render(80).every((line) => visibleWidth(line) <= 80)).toBe(true);
     await service.dispatch({ type: "replace_runtime", role: "A", mode: "new" });

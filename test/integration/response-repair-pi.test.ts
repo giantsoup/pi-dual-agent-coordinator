@@ -1,3 +1,4 @@
+import { responsesInput } from "../helpers/provider.js";
 import { ManagedSession } from "../../src/runtime/managed-session.js";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -42,7 +43,7 @@ async function scenario(options: { completionAt?: number; misuse?: boolean; revi
       onMutation: () => { writes++; },
       providerTestBackend: { cwd, modelIds: [], load: async () => "fixture-key", request: async (_url, init) => {
         const body = JSON.parse(String(init?.body));
-        const prompt = textOf(runtimeOptions.role === "A" ? body.input.at(-1) : body.messages.at(-1));
+        const prompt = textOf(runtimeOptions.role === "A" ? responsesInput(body).prompt : body.messages.at(-1));
         const context = textOf(body);
         requests.push({ role: runtimeOptions.role, tools: body.tools?.length ?? 0, prompt });
         if (runtimeOptions.role === "A") {

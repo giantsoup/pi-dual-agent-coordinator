@@ -230,3 +230,20 @@ The PTY run uses installed Pi runtimes, dummy provider fixtures, and disposable
 workspaces. It does not certify live-provider behavior or physical keyboard
 handling in every terminal. Screen evidence is generated under
 `test-results/terminal-evidence/` and is not committed.
+
+### Integration with upgraded main
+
+Before delivery, integrated `main` at `3524d25` into the feature branch. Resolved
+conflicts by preserving Pi 1.3.0 imports, eager modal initialization, and the
+Qwen3.8 Off/Low/Medium/Xhigh reasoning controls alongside the portable shortcuts.
+
+The combined candidate passed a normal `npm ci` and native build using Node
+24.22.0/npm 12.2.0, the dependency guard, strict TypeScript checks, all 404 tests
+across 58 files, 341 dummy isolation assertions, and 500 rendered PTY assertions
+across TUI and plain modes. The supported toolchain and lockfile are unchanged
+from upgraded main. This supersedes the older dependency-specific verification
+counts above for the delivered integration.
+
+Delivery rebuilds `dist` from scratch and creates a new immutable trusted runtime
+for the launcher. Keyboard controls have no persisted asset cache to invalidate;
+coordinator history, saved settings, and MCP metadata caches are preserved.
