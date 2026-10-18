@@ -1,6 +1,6 @@
 # Set up isolated OpenAI API authentication
 
-Use macOS, Node.js >=20.6, npm, and Apple Command Line Tools. Keep the trusted
+Use macOS, Node.js 24.22.0 LTS, npm 12.2.0, and Apple Command Line Tools. Keep the trusted
 installation outside every workspace that agents can edit. Secure mode supports
 approved `openai` Responses models for Agent A, with API-key authentication, and
 downloaded tool-capable LM Studio models for Agent B without cloud credentials.
@@ -14,7 +14,7 @@ An unavailable local model blocks startup; there is no cloud fallback.
 
 ## Prepare without a real key
 
-1. Run `npm install` in the source checkout.
+1. Select the frozen project toolchain, verify its versions, and run `npm ci` and `npm run verify:dependencies` in the source checkout.
 2. Run `npm run check`, `npm test`, and `npm run verify:isolation`.
 3. Confirm that verification reports `outcome: passed` and assertion counts. It
    creates unique dummy credentials, checks the native secure entry dialog, and
@@ -28,11 +28,11 @@ An unavailable local model blocks startup; there is no cloud fallback.
 
    Existing installation directories are never overwritten. Use a new directory
    when updating. Do not let an agent run against this installation or its parent
-   as its workspace. The copy includes the compiled app, native helper, and dependencies.
+   as its workspace. The copy includes source, compiled app, native helper, lockfile, dependencies, Node 24.22.0, npm 12.2.0, and `installation-manifest.json`. It verifies copied bytes and executable modes. Run `bin/node scripts/verify-installation.mjs` inside the snapshot before using credentials.
 5. Run doctor from that installation against the target workspace:
 
    ```sh
-   node "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" doctor /absolute/project --no-mcp
+   "$HOME/.local/share/pi-dual/runtime-1/bin/node" "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" doctor /absolute/project --no-mcp
    ```
 
    Missing credentials are expected before entry. Other failed checks need repair.
@@ -43,7 +43,7 @@ An unavailable local model blocks startup; there is no cloud fallback.
 1. Create or select a dedicated project in [OpenAI Platform settings](https://platform.openai.com/settings/).
 2. Create a project API key, with restricted permissions. Allow the permission
    needed to create responses at `POST /v1/responses`, and deny unrelated endpoints.
-   The app uses Pi's built-in model catalog plus three maintained GPT entries and does not need to list OpenAI models,
+   The app filters Pi's bundled model catalog to approved IDs and does not need to list OpenAI models,
    upload files, manage assistants, or administer the organization. Ensure that
    the owning identity's project role permits model requests and Responses access.
 3. Set an expiration date. Record the key's dashboard identifier and expiry, never
@@ -66,7 +66,7 @@ chat, a shell argument, shell history, an environment variable, or a file.
 Run this non-secret command from your own terminal:
 
 ```sh
-node "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" setup /absolute/project
+"$HOME/.local/share/pi-dual/runtime-1/bin/node" "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" setup /absolute/project
 ```
 
 Setup reruns dummy isolation verification before opening a native macOS dialog.
@@ -86,10 +86,10 @@ path. `auth.json` is never written. Non-secret coordinator defaults are saved in
 Run doctor again. Then run the bounded smoke check from the trusted installation:
 
 ```sh
-node "$HOME/.local/share/pi-dual/runtime-1/dist/src/security/smoke.js" /absolute/project
+"$HOME/.local/share/pi-dual/runtime-1/bin/node" "$HOME/.local/share/pi-dual/runtime-1/dist/src/security/smoke.js" /absolute/project
 ```
 
-The smoke check uses the saved Agent A model and reasoning level, Pi 0.67.68's OpenAI Responses
+The smoke check uses the saved Agent A model and reasoning level, Pi 1.3.0's OpenAI Responses
 provider, and the same private credential broker as normal runtimes. It disables
 all tools, MCP, project resources, compaction, and coordinator workflow execution.
 It permits one upstream request, at most 1,024 output tokens including reasoning, a 40-second broker
@@ -137,10 +137,22 @@ See [the security model](security-model.md) for supported tools and trust limits
 Agent A, the planner and reviewer, uses `openai/gpt-6-luna` with `thinkingA: "high"`.
 The [official Luna model page](https://developers.openai.com/api/docs/models/gpt-6-luna)
 identifies `gpt-6-luna` as the current snapshot and supports high reasoning through
-Responses. Pi 0.67.68's provider serializes that reasoning level, but its bundled
-catalog lacks the ID. `src/security/models.ts` supplies the fixed official model
-metadata without loading arbitrary `models.json` entries or endpoint overrides.
-The descriptor's cost fields are Standard short-context estimates from the
-[official pricing page](https://developers.openai.com/api/docs/pricing), not an
-exact long-context bill. Smoke output reports tokens rather than estimated cost.
-Luna requests disable the old SDK's optional legacy cache-retention settings.
+Responses. Pi 1.3.0 supplies the descriptor and serializes effective reasoning
+through request reasoning or transcript configuration updates. `src/security/models.ts`
+filters the bundled catalog by approved IDs without loading arbitrary `models.json`
+entries or endpoint overrides.
+The bundled descriptor supplies context limits, compatibility flags, and pricing
+tiers. Smoke output reports tokens rather than an exact bill. Cache warming,
+install telemetry, and analytics are disabled. No cache warmer is constructed.
+
+## Upgrade and rollback
+
+Install every upgrade into a new snapshot. Keep the previous snapshot and its
+Node runtime. Before allowing the new runtime to write real sessions, back up the
+workspace-specific coordinator state and non-secret defaults privately. Do not
+copy or export Keychain entries. Test old sessions on disposable copies first.
+
+Rollback restores the previous snapshot, its matching Node environment, and the
+matching pre-upgrade state backup. A launcher rollback alone does not downgrade
+sessions written by Pi 1.3.0. Session version 3 does not establish downgrade
+compatibility. See [the upgrade record](pi-upgrade-verification.md).

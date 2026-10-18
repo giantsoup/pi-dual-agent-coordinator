@@ -1,8 +1,8 @@
 import type { AuthCliOptions, SetupCliOptions } from "./cli.js";
-import { getAgentDir } from "@mariozechner/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createSecureModelRegistry, isRoleModel, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
+import { createSecureModelCatalog, isRoleModel, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
 import { enterCredential } from "../security/credentials.js";
 import { ToolIsolation } from "../security/isolation.js";
 import { assertSafeProviderEnvironment } from "../security/provider-broker.js";
@@ -69,11 +69,11 @@ export async function hasLegacyOpenAiAuth(agentDir: string): Promise<boolean> {
 
 function configuredOpenAiModel(reference: string | undefined, fallback: string): string {
   const model = reference?.startsWith("openai/")
-    ? createSecureModelRegistry().find("openai", reference.slice("openai/".length)) : undefined;
+    ? createSecureModelCatalog().find("openai", reference.slice("openai/".length)) : undefined;
   return model?.api === "openai-responses" ? `openai/${model.id}` : fallback;
 }
 
 function configuredLocalModel(reference: string | undefined): string {
-  const model = createSecureModelRegistry().getAll().find((candidate) => `${candidate.provider}/${candidate.id}` === reference && isRoleModel("B", candidate));
+  const model = createSecureModelCatalog().getAll().find((candidate) => `${candidate.provider}/${candidate.id}` === reference && isRoleModel("B", candidate));
   return model ? `${model.provider}/${model.id}` : EXECUTION_MODEL;
 }

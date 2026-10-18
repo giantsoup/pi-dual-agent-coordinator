@@ -1,4 +1,4 @@
-import { Key, matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
+import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ModelPickerCatalog, PickerReasoning } from "../../types/model-selection.js";
 import { pickerReasoningLevels } from "../../types/model-selection.js";
 import type { UiAction } from "../../types/ui.js";

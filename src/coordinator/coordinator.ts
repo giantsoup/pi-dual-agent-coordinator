@@ -5,17 +5,17 @@ import { safeDisplayText } from "../security/display-text.js";
 import { loadHistoryEvents } from "../app/interactive/history.js";
 import type { HistoryRecord } from "../types/history.js";
 import { readSessionArchive, archiveRunEntries } from "../runtime/session-history.js";
-import { supportsXhigh, type Model } from "@mariozechner/pi-ai";
+import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { join, relative, isAbsolute } from "node:path";
 import { realpath } from "node:fs/promises";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 import { loadCoordinatorConfig, writeCoordinatorConfig } from "../app/coordinator-config.js";
-import { createSecureModelRegistry, isRoleModel, gptModelChoices, EXECUTION_MODEL } from "../security/models.js";
+import { createSecureModelCatalog, isRoleModel, gptModelChoices, EXECUTION_MODEL } from "../security/models.js";
 import { LmStudioModels, LocalModelSwitchError, type LocalModelHost, type PreparedLocalModel } from "../security/lm-studio.js";
 import type { ModelPickerCatalog, ModelSwitchProgress } from "../types/model-selection.js";
-import { SessionManager, getAgentDir } from "@mariozechner/pi-coding-agent";
+import { SessionManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
   deriveActivityUpdate,
   renderActivityText,
@@ -528,9 +528,9 @@ export class Coordinator {
 
   public getAvailableModels(role?: Role): Array<{ canonical: string; name: string; reasoning: boolean; thinkingLevels: SupportedThinkingLevel[] }> {
     const discovered = [...this.discoveredModels.values()];
-    return createSecureModelRegistry(undefined, discovered).getAll()
+    return createSecureModelCatalog(discovered).getAll()
       .filter((model) => role ? isRoleModel(role, model, discovered) : isRoleModel("A", model) || isRoleModel("B", model, discovered))
-      .map((model) => ({ canonical: `${model.provider}/${model.id}`, name: model.name, reasoning: model.reasoning, thinkingLevels: !model.reasoning ? ["off"] : gptModelChoices.some((current) => current.id === model.id) ? ["low", "medium", "high"] : supportsXhigh(model) ? ["off", "minimal", "low", "medium", "high", "xhigh"] : ["off", "minimal", "low", "medium", "high"] }));
+      .map((model) => ({ canonical: `${model.provider}/${model.id}`, name: model.name, reasoning: model.reasoning, thinkingLevels: !model.reasoning ? ["off"] : gptModelChoices.some((current) => current.id === model.id) ? ["low", "medium", "high"] : getSupportedThinkingLevels(model).includes("xhigh") ? ["off", "minimal", "low", "medium", "high", "xhigh"] : ["off", "minimal", "low", "medium", "high"] }));
   }
 
   public async getModelPickerCatalog(role: Role, signal?: AbortSignal): Promise<ModelPickerCatalog> {

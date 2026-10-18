@@ -40,6 +40,8 @@ describe("real formatting submission lifecycle", () => {
     });
     if (!(binding.session instanceof ManagedSession)) throw new Error("Missing managed session");
     const session = binding.session;
+    session.piSession.sessionManager.appendMessage({ role: "user", content: "Earlier task to preserve", timestamp: 1 });
+    session.piSession.sessionManager.appendMessage({ role: "user", content: "Historical context ".repeat(6000), timestamp: 1 });
     const previous = session.piSession.getActiveToolNames();
     const logger = new TelemetryLogger({ filePath: join(root, "events"), jsonLogs: false, verbose: false });
     const bridge = new RuntimeEventBridge(logger, new Metrics()); await bridge.bind(binding);

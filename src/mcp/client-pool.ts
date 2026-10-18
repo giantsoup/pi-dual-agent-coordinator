@@ -16,10 +16,12 @@ import {
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import {
   ListRootsRequestSchema,
+  ListToolsResultSchema,
   McpError,
   type Tool
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { mcpParameters, assertMcpArguments } from "./schema.js";
 import { McpCacheStore } from "./cache-store.js";
 import type {
   McpMetadataCacheEntry,
@@ -142,6 +144,7 @@ export class McpClientPool {
           capabilities?.prompts ? client.listPrompts() : Promise.resolve({ prompts: [] })
         ]);
 
+      for (const tool of toolsResult.tools) mcpParameters(tool.inputSchema);
       const snapshot: McpMetadataSnapshot = {
         tools: toolsResult.tools,
         resources: resourcesResult.resources,
@@ -175,6 +178,11 @@ export class McpClientPool {
     args: Record<string, unknown> | undefined,
     signal?: AbortSignal
   ) {
+    const metadata = await this.ensureMetadata(serverName);
+    const tool = metadata.tools.find((candidate) => candidate.name === toolName);
+    if (!tool) throw new Error(`Unknown MCP tool ${serverName}/${toolName}`);
+    assertMcpArguments(tool, args);
+    signal?.throwIfAborted();
     const client = await this.ensureConnected(this.requireEntry(serverName));
     signal?.throwIfAborted();
     const result = await client.callTool({
@@ -379,8 +387,10 @@ export class McpClientPool {
       return;
     }
 
+    const tools = ListToolsResultSchema.parse({ tools: cached.tools }).tools;
+    for (const tool of tools) mcpParameters(tool.inputSchema);
     entry.metadata = {
-      tools: cached.tools,
+      tools,
       resources: cached.resources,
       resourceTemplates: cached.resourceTemplates,
       prompts: cached.prompts,

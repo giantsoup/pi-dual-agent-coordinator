@@ -1,0 +1,896 @@
+{
+  "@earendil-works/pi-coding-agent": {
+    "tags": {
+      "legacy-node20": "0.74.2",
+      "latest": "1.3.0"
+    },
+    "selected": "1.3.0",
+    "engines": {
+      "node": ">=22.19.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/earendil-works/pi.git",
+      "type": "git",
+      "directory": "packages/coding-agent"
+    },
+    "dist": {
+      "shasum": "a52ed0ef8ba4fd03de221ec52b0996855bf5bf4d",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.3.0.tgz",
+      "fileCount": 1276,
+      "integrity": "sha512-V/WoCjA2hQSe3QLWIUB24cTRdtEdeLiIzkDqU5RMXV6VWuD+KGZnzVBMhglwdnQTySkehZsjt8a3g6Jd2g4nnw==",
+      "signatures": [
+        {
+          "sig": "MEUCIQDGp16t+TCX15G40qW+WG+6+zwbgg7QCgXgLHzKfUbU/gIgGXOa2hKw9wZXRjFFEC/IDyrr6lbMSHsiA9NqwUtvONY=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEYCIQCf6sc3rvqDFpdz1s7LTGjTwsq6g/nZaubJ1Eb+a68/RQIhAMCAfA+mdsuFJde6E+R31JdnbKW2yCpimkbV6L23Nygy"
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-coding-agent@1.3.0",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 23249910
+    },
+    "dependencies": {
+      "diff": "8.0.4",
+      "jiti": "2.7.0",
+      "yaml": "2.9.0",
+      "chalk": "6.0.0",
+      "ignore": "7.0.8",
+      "semver": "7.8.5",
+      "undici": "8.10.2",
+      "typebox": "1.3.27",
+      "minimatch": "10.2.6",
+      "cross-spawn": "7.0.6",
+      "grok-mermaid": "0.2.3",
+      "highlight.js": "10.7.3",
+      "quickjs-wasi": "3.6.2",
+      "brace-expansion": "5.0.12",
+      "hosted-git-info": "9.0.3",
+      "proper-lockfile": "4.1.2",
+      "@earendil-works/pi-ai": "1.3.0",
+      "@earendil-works/pi-mcp": "1.3.0",
+      "@earendil-works/pi-tui": "1.3.0",
+      "@silvia-odwyer/photon-node": "0.3.4",
+      "@earendil-works/pi-codemode": "1.3.0",
+      "@earendil-works/pi-agent-core": "1.3.0"
+    },
+    "scripts": {
+      "test": "vitest --run",
+      "build": "npm run build:unbundled && node ../../scripts/build-coding-agent-bundle.mjs",
+      "clean": "shx rm -rf dist",
+      "copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/",
+      "build:binary": "npm --prefix ../tui run build && npm --prefix ../telemetry run build && npm --prefix ../ai run build && npm --prefix ../agent run build && npm run build && bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv ./dist/bun/cli.js ./src/utils/image-resize-worker.ts ./src/extensions/codemode/worker.ts --outfile dist/pi && npm run copy-binary-assets",
+      "prepublishOnly": "npm run clean && npm run build",
+      "build:unbundled": "tsc -p tsconfig.build.json && shx chmod +x dist/cli.js dist/rpc-entry.js && npm run copy-assets",
+      "generate:schemas": "node --import ./src/experimental/source-resolver.ts scripts/generate-schemas.ts",
+      "copy-binary-assets": "shx cp package.json dist/ && shx cp README.md dist/ && shx cp CHANGELOG.md dist/ && shx mkdir -p dist/theme && shx cp src/modes/interactive/theme/*.json dist/theme/ && shx mkdir -p dist/assets && shx cp src/modes/interactive/assets/*.png dist/assets/ && shx mkdir -p dist/export-html/vendor && shx cp src/core/export-html/template.html dist/export-html/ && shx cp src/core/export-html/vendor/*.js dist/export-html/vendor/ && shx cp -r docs dist/ && shx cp -r examples dist/ && shx cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm dist/"
+    }
+  },
+  "@earendil-works/pi-agent-core": {
+    "tags": {
+      "legacy-node20": "0.74.2",
+      "latest": "1.3.0"
+    },
+    "selected": "1.3.0",
+    "engines": {
+      "node": ">=22.19.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/earendil-works/pi.git",
+      "type": "git",
+      "directory": "packages/agent"
+    },
+    "dist": {
+      "shasum": "aec4d26bf7cdab5bca2a129f6a6dffc606c892db",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-1.3.0.tgz",
+      "fileCount": 26,
+      "integrity": "sha512-2jvpxZs47PFD5mSQb/yK0pGHJ5yO7Nu22u9mFjHbSLRgu62vZ9rupimDSIp4arnqOadyv0AWvYHtCSpFoJV7ag==",
+      "signatures": [
+        {
+          "sig": "MEUCIQCxt1a6Ncb+cE+vsG/4qkpedM/gvO646nQ0SbbdiMfTJQIgEcSMX5jkf6sWg5aOhqdQXcbB7DJwIIAtvxMNrfwSLGM=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIFoOQNWN0Bc+hSJXbljin6X326MX6dz5fpAme54XS0eaAiEAxSBYSbjdrmjJ1N6lWjbCsTNmFiVp0RJCJoxrJZ1uUnk="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-agent-core@1.3.0",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 268662
+    },
+    "dependencies": {
+      "typebox": "1.3.27",
+      "@earendil-works/pi-ai": "1.3.0"
+    },
+    "scripts": {
+      "test": "vitest --run",
+      "build": "tsc -p tsconfig.build.json",
+      "clean": "shx rm -rf dist",
+      "prepublishOnly": "npm run build"
+    }
+  },
+  "@earendil-works/pi-ai": {
+    "tags": {
+      "legacy-node20": "0.74.2",
+      "latest": "1.3.0"
+    },
+    "selected": "1.3.0",
+    "engines": {
+      "node": ">=22.19.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/earendil-works/pi.git",
+      "type": "git",
+      "directory": "packages/ai"
+    },
+    "dist": {
+      "shasum": "fe720249f828642bcb66b5b6a0e49c1e5f2f8954",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.3.0.tgz",
+      "fileCount": 837,
+      "integrity": "sha512-KaBI8x7q7sPoFUXICNGD9efHzDG+oRNwVvkA9jdIsSQWH1RjFssOlEGsbLtewUPPgCrvmz0l2KTgSLXTyj3acw==",
+      "signatures": [
+        {
+          "sig": "MEYCIQDh1SPF/5f1kOdrjdisUbKO8HAaKcUP+pWwgMM/xh4q/wIhAIeRRo+2r/n8vGKpV18lbzevmsdVZkSIKOc6wXPtB4+L",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEYCIQDlKdKcfuqXOuytWwiIDtCOkllwiqy/Uj+I3t709vLSowIhAIo6qUgD5qnrDn9BmimTC5ld18aiSagTwb596l2PD4dT"
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-ai@1.3.0",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 4170589
+    },
+    "dependencies": {
+      "openai": "7.19.0",
+      "typebox": "1.3.27",
+      "partial-json": "0.1.7",
+      "@google/genai": "2.21.0",
+      "http-proxy-agent": "9.1.0",
+      "@anthropic-ai/sdk": "0.129.0",
+      "https-proxy-agent": "9.1.0",
+      "@smithy/node-http-handler": "4.12.1",
+      "@earendil-works/pi-telemetry": "1.3.0",
+      "@aws-sdk/client-bedrock-runtime": "3.1127.0"
+    },
+    "scripts": {
+      "test": "vitest --run",
+      "build": "npm run generate-models && npm run build:offline",
+      "clean": "shx rm -rf dist",
+      "build:offline": "npm run check:model-data && tsc -p tsconfig.build.json && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
+      "prepublishOnly": "npm run clean && npm run build",
+      "generate-models": "node scripts/generate-models.ts --strict",
+      "check:model-data": "node scripts/check-model-data.ts",
+      "hydrate-model-data": "node scripts/generate-models.ts --strict --data-only",
+      "generate-model-catalog": "node scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog"
+    }
+  },
+  "@earendil-works/pi-tui": {
+    "tags": {
+      "legacy-node20": "0.74.2",
+      "latest": "1.3.0"
+    },
+    "selected": "1.3.0",
+    "engines": {
+      "node": ">=22.19.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/earendil-works/pi.git",
+      "type": "git",
+      "directory": "packages/tui"
+    },
+    "dist": {
+      "shasum": "13ef584bb071b0c4ca5b2c20bfac0f2642a613a0",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.3.0.tgz",
+      "fileCount": 204,
+      "integrity": "sha512-AlKvEwEWyVtnuw7SVb4N/mUhlfIohyFslUNWarZVdLHHSdt3ca5EhMLwTzblBpDpaofSz+f+tAHie6CfxVrWKA==",
+      "signatures": [
+        {
+          "sig": "MEYCIQCmOP9lSnKtmWtCALjVZwKhNI5hkvCGJUZYLdOpBuellAIhAI3h9zLOvp8OmmF2r6a+7srTVFVlUdpdFvwegjyJfv6i",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEQCIAq/PaB8rupA0P8IIzoXcSFxQE5ouZ5OskdxklQVngEJAiAvOPOhI+jI05CcSKeGB+0AXssrUJlI0+6mJ1pyIlQNLg=="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-tui@1.3.0",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 2400804
+    },
+    "dependencies": {
+      "marked": "18.0.11",
+      "get-east-asian-width": "1.6.0"
+    },
+    "scripts": {
+      "test": "node --test --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts",
+      "build": "tsc -p tsconfig.build.json",
+      "clean": "shx rm -rf dist",
+      "prepublishOnly": "npm run clean && npm run build",
+      "build:native:linux": "native/linux/build.sh",
+      "build:native:win32": "node native/win32/build.mjs",
+      "build:native:darwin": "native/darwin/build.sh"
+    }
+  },
+  "typebox": {
+    "tags": {
+      "latest": "1.4.2"
+    },
+    "selected": "1.4.2",
+    "repository": {
+      "url": "git+https://github.com/sinclairzx81/typebox.git",
+      "type": "git"
+    },
+    "dist": {
+      "shasum": "9c4ac1372ef8d21d345c6bd42d4ca22ba8d91940",
+      "tarball": "https://registry.npmjs.org/typebox/-/typebox-1.4.2.tgz",
+      "fileCount": 1421,
+      "integrity": "sha512-eSoZzgSIyOKDtTH9MI7XMAxMaiXq7UiSFWarysN1ka66baTLDxAVdQ6WkWn6qDqsJFVrcjzvuP+CqHo9yrlQpg==",
+      "signatures": [
+        {
+          "sig": "MEYCIQDyZZoZBxUi1JQ30f9n12VZUpnu4RwGXgxRuL4vAyBi8gIhAMaHk2GmXg9qIsnmf9XhBJZYvDcItbx9DwIZppDFQVZ7",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIFZ05nv+GeqMwe5MDXOtOVIxAzqoZCsMRnUh6ilxE/WEAiEA+atQqnZ7dVkadCJ8MbffJuwjVxRcignTW8qEARBcTHE="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/typebox@1.4.2",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 1569434
+    }
+  },
+  "@modelcontextprotocol/sdk": {
+    "tags": {
+      "latest": "1.32.1"
+    },
+    "selected": "1.32.1",
+    "engines": {
+      "node": ">=18"
+    },
+    "repository": {
+      "url": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
+      "type": "git"
+    },
+    "dist": {
+      "shasum": "853286b3240b6d8143f5f8e6d58af85c77d475ab",
+      "tarball": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.1.tgz",
+      "fileCount": 701,
+      "integrity": "sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw==",
+      "signatures": [
+        {
+          "sig": "MEQCIHxpg9cJmQUfJ7d4otna7zaj16Ts4i4lH8lFPhv5tRQWAiBF5BVgr38CQjkNKyi27B4aT1rNcEdizvE1goXqc7NVIQ==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIGApZ3A0O+WZUq+AWYq01H1hVQ/dtXta7mrcR1nGHaSnAiEAr53nCw43obN9MQNNt/W9IXnChjDTuFVoNDRdxP+L4kg="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@modelcontextprotocol%2fsdk@1.32.1",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 4490363
+    },
+    "dependencies": {
+      "ajv": "^8.17.1",
+      "zod": "^3.25 || ^4.0",
+      "cors": "^2.8.5",
+      "hono": "^4.11.4",
+      "jose": "^6.1.3",
+      "express": "^5.2.1",
+      "raw-body": "^3.0.0",
+      "ajv-formats": "^3.0.1",
+      "cross-spawn": "^7.0.5",
+      "eventsource": "^3.0.2",
+      "content-type": "^1.0.5",
+      "pkce-challenge": "^5.0.0",
+      "@hono/node-server": "^1.19.9 || ^2.0.5",
+      "json-schema-typed": "^8.0.2",
+      "eventsource-parser": "^3.0.0",
+      "express-rate-limit": "^8.2.1",
+      "zod-to-json-schema": "^3.25.1"
+    },
+    "peerDependencies": {
+      "zod": "^3.25 || ^4.0",
+      "@cfworker/json-schema": "^4.1.1"
+    },
+    "scripts": {
+      "lint": "eslint src/ && prettier --check .",
+      "test": "vitest run --exclude \"test/e2e/**\"",
+      "build": "npm run build:esm && npm run build:cjs",
+      "check": "npm run typecheck && npm run lint",
+      "start": "npm run server",
+      "client": "tsx scripts/cli.ts client",
+      "server": "tsx watch --clear-screen=false scripts/cli.ts server",
+      "prepack": "npm run build:esm && npm run build:cjs",
+      "lint:fix": "eslint src/ --fix && prettier --write .",
+      "test:e2e": "vitest run test/e2e",
+      "build:cjs": "mkdir -p dist/cjs && echo '{\"type\": \"commonjs\"}' > dist/cjs/package.json && tsc -p tsconfig.cjs.json",
+      "build:esm": "mkdir -p dist/esm && echo '{\"type\": \"module\"}' > dist/esm/package.json && tsc -p tsconfig.prod.json",
+      "typecheck": "tsgo --noEmit",
+      "test:watch": "vitest",
+      "build:cjs:w": "npm run build:cjs -- -w",
+      "build:esm:w": "npm run build:esm -- -w",
+      "fetch:spec-types": "tsx scripts/fetch-spec-types.ts",
+      "test:conformance:client": "npx @modelcontextprotocol/conformance client --command 'npx tsx test/conformance/src/everythingClient.ts' --expected-failures test/conformance/conformance-baseline.yml",
+      "test:conformance:server": "test/conformance/scripts/run-server-conformance.sh --expected-failures test/conformance/conformance-baseline.yml",
+      "examples:simple-server:w": "tsx --watch src/examples/server/simpleStreamableHttp.ts --oauth",
+      "test:conformance:client:all": "npx @modelcontextprotocol/conformance client --command 'npx tsx test/conformance/src/everythingClient.ts' --suite all --expected-failures test/conformance/conformance-baseline.yml",
+      "test:conformance:server:all": "test/conformance/scripts/run-server-conformance.sh --suite all --expected-failures test/conformance/conformance-baseline.yml",
+      "test:conformance:server:run": "npx tsx test/conformance/src/everythingServer.ts"
+    }
+  },
+  "zod": {
+    "tags": {
+      "next": "3.25.0-beta.20250519T094321",
+      "alpha": "3.25.68-alpha.11",
+      "beta": "4.1.13-beta.0",
+      "canary": "4.5.0-canary.20260828T171753",
+      "latest": "4.6.7"
+    },
+    "selected": "4.6.7",
+    "repository": {
+      "url": "git+https://github.com/colinhacks/zod.git",
+      "type": "git"
+    },
+    "dist": {
+      "shasum": "e806cf64a7f4e37635ce9f2f52c04c3766f75e5b",
+      "tarball": "https://registry.npmjs.org/zod/-/zod-4.6.7.tgz",
+      "integrity": "sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==",
+      "fileCount": 840,
+      "unpackedSize": 6148944,
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/zod@4.6.7",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "signatures": [
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIQCwQ7Os025hoW1C24cDvgD4t5gynQpYlWHx1ok/Bke33AIgPP2J7w4z9B/fqA62pHpEBvjlB5ScCMm3c0adt03XQlY="
+        }
+      ]
+    },
+    "scripts": {
+      "test": "nub exec --node vitest run",
+      "build": "nub exec --node zshy --project tsconfig.build.json",
+      "clean": "git clean -xdf . -e node_modules",
+      "postbuild": "nub ../../scripts/write-stub-package-jsons.ts && nub exec --node biome check --write .",
+      "test:watch": "nub exec --node vitest",
+      "prepublishOnly": "nub ../../scripts/check-versions.ts"
+    }
+  },
+  "typescript": {
+    "tags": {
+      "dev": "3.9.4",
+      "tag-for-publishing-older-releases": "4.1.6",
+      "insiders": "4.6.2-insiders.20220225",
+      "beta": "6.0.0-beta",
+      "rc": "7.0.1-rc",
+      "latest": "7.0.2",
+      "next": "7.1.0-dev.20261018.1"
+    },
+    "selected": "7.0.2",
+    "engines": {
+      "node": ">=16.20.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/microsoft/TypeScript.git",
+      "type": "git"
+    },
+    "dist": {
+      "shasum": "9ec773d7954a8c182c17cc5bbd575aa28bc51582",
+      "tarball": "https://registry.npmjs.org/typescript/-/typescript-7.0.2.tgz",
+      "fileCount": 416,
+      "integrity": "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==",
+      "signatures": [
+        {
+          "sig": "MEUCIHn8lVrLBbTJToaOcV3IJ0oVPREmFT5BhqmO2niVNCaSAiEAjbubGExGAYMSJN39iEgX/eDYhwBGnh/iyyGTRigXGjY=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 2497498
+    },
+    "dependencies": {
+      "@typescript/typescript-aix-ppc64": "7.0.2",
+      "@typescript/typescript-linux-arm": "7.0.2",
+      "@typescript/typescript-linux-x64": "7.0.2",
+      "@typescript/typescript-sunos-x64": "7.0.2",
+      "@typescript/typescript-win32-x64": "7.0.2",
+      "@typescript/typescript-darwin-x64": "7.0.2",
+      "@typescript/typescript-netbsd-x64": "7.0.2",
+      "@typescript/typescript-freebsd-x64": "7.0.2",
+      "@typescript/typescript-linux-arm64": "7.0.2",
+      "@typescript/typescript-linux-ppc64": "7.0.2",
+      "@typescript/typescript-linux-s390x": "7.0.2",
+      "@typescript/typescript-openbsd-x64": "7.0.2",
+      "@typescript/typescript-win32-arm64": "7.0.2",
+      "@typescript/typescript-darwin-arm64": "7.0.2",
+      "@typescript/typescript-netbsd-arm64": "7.0.2",
+      "@typescript/typescript-freebsd-arm64": "7.0.2",
+      "@typescript/typescript-linux-loong64": "7.0.2",
+      "@typescript/typescript-linux-riscv64": "7.0.2",
+      "@typescript/typescript-openbsd-arm64": "7.0.2",
+      "@typescript/typescript-linux-mips64el": "7.0.2"
+    },
+    "optionalDependencies": {
+      "@typescript/typescript-aix-ppc64": "7.0.2",
+      "@typescript/typescript-linux-arm": "7.0.2",
+      "@typescript/typescript-linux-x64": "7.0.2",
+      "@typescript/typescript-sunos-x64": "7.0.2",
+      "@typescript/typescript-win32-x64": "7.0.2",
+      "@typescript/typescript-darwin-x64": "7.0.2",
+      "@typescript/typescript-netbsd-x64": "7.0.2",
+      "@typescript/typescript-freebsd-x64": "7.0.2",
+      "@typescript/typescript-linux-arm64": "7.0.2",
+      "@typescript/typescript-linux-ppc64": "7.0.2",
+      "@typescript/typescript-linux-s390x": "7.0.2",
+      "@typescript/typescript-openbsd-x64": "7.0.2",
+      "@typescript/typescript-win32-arm64": "7.0.2",
+      "@typescript/typescript-darwin-arm64": "7.0.2",
+      "@typescript/typescript-netbsd-arm64": "7.0.2",
+      "@typescript/typescript-freebsd-arm64": "7.0.2",
+      "@typescript/typescript-linux-loong64": "7.0.2",
+      "@typescript/typescript-linux-riscv64": "7.0.2",
+      "@typescript/typescript-openbsd-arm64": "7.0.2",
+      "@typescript/typescript-linux-mips64el": "7.0.2"
+    }
+  },
+  "vitest": {
+    "tags": {
+      "V3": "3.2.7",
+      "beta": "5.0.0-beta.7",
+      "V4": "4.1.12",
+      "rc": "5.0.0-rc.4",
+      "latest": "5.0.5"
+    },
+    "selected": "5.0.5",
+    "engines": {
+      "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/vitest-dev/vitest.git",
+      "type": "git",
+      "directory": "packages/vitest"
+    },
+    "dist": {
+      "shasum": "266e335f4177541e3e60f876e0694f966a9601f2",
+      "tarball": "https://registry.npmjs.org/vitest/-/vitest-5.0.5.tgz",
+      "fileCount": 104,
+      "integrity": "sha512-cPODOMF8YnkiiYtDdHo6n4wWmBrOBBbOIYH2d33M4l3CdNn72h+qMmO6uXffUN6A5AZFXNND/d+krS9mgkXRfg==",
+      "signatures": [
+        {
+          "sig": "MEQCIGTlU8iwofF0ILpfIKdatZtwNzwaLwDun2fF6eGApNkhAiBBhTCdmDJmLME7Vd2ehANaxpHM0aZD5OMmp+3aPGoJmg==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/vitest@5.0.5",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 2817789
+    },
+    "dependencies": {
+      "chai": "^6.3.0",
+      "obug": "^3.0.0",
+      "std-env": "^4.3.0",
+      "tinyexec": "^1.3.1",
+      "picomatch": "^4.0.7",
+      "tinybench": "^6.2.2",
+      "tinyglobby": "^0.2.17",
+      "@types/chai": "^5.2.2",
+      "expect-type": "^1.4.0",
+      "magic-string": "^1.4.3",
+      "@vitest/mocker": "5.0.5",
+      "es-module-lexer": "^2.3.2",
+      "why-is-node-running": "3.2.1"
+    },
+    "peerDependencies": {
+      "vite": "^6.4.0 || ^7.0.0 || ^8.0.0",
+      "jsdom": "*",
+      "happy-dom": "*",
+      "@vitest/ui": "5.0.5",
+      "@types/node": "^22.0.0 || >=24.0.0",
+      "@edge-runtime/vm": "*",
+      "@opentelemetry/api": "^1.9.0",
+      "@vitest/coverage-v8": "5.0.5",
+      "@vitest/browser-preview": "5.0.5",
+      "@vitest/coverage-istanbul": "5.0.5",
+      "@vitest/browser-playwright": "5.0.5",
+      "@vitest/browser-webdriverio": "^5.0.0-beta.5 || >=5.0.0"
+    },
+    "scripts": {
+      "dev": "NODE_OPTIONS=\"--max-old-space-size=8192\" rollup -c --watch -m inline",
+      "build": "premove dist && rollup -c"
+    }
+  },
+  "vite": {
+    "tags": {
+      "alpha": "6.0.0-alpha.24",
+      "beta": "8.3.0-beta.1",
+      "latest": "8.3.4",
+      "previous": "6.4.4"
+    },
+    "selected": "8.3.4",
+    "engines": {
+      "node": "^20.19.0 || >=22.12.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/vitejs/vite.git",
+      "type": "git",
+      "directory": "packages/vite"
+    },
+    "dist": {
+      "shasum": "ba08678ba41ba53f41c251b1772946c27b1c874e",
+      "tarball": "https://registry.npmjs.org/vite/-/vite-8.3.4.tgz",
+      "fileCount": 37,
+      "integrity": "sha512-IftLE8phJhdNRIGNEV4JCCvfNScoZQVfcXaN8TQropWGJtOHcu+iAB9pHcuGvmEb/kddw0LBe/jS8ztdC6xdiQ==",
+      "signatures": [
+        {
+          "sig": "MEUCIQCeAXB/HwdxpjsWJtL4xB1XW4EQghm8FuRmtk5k3Ok9+AIgIFJBcqIWVFWx5JeaTOpO/Noixu1/SIVjcexDfJ4S5PU=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIQDtkEePcVc6vZxhoADsFqkp0VBbSgevSPxwgXXoG/UidQIgLb5bHn+iddppIY99rGaeeiM+n0AMTnlfU1QwNL/lwig="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/vite@8.3.4",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 2376813
+    },
+    "dependencies": {
+      "postcss": "^8.5.29",
+      "rolldown": "~1.2.12",
+      "picomatch": "^4.0.7",
+      "tinyglobby": "^0.2.17",
+      "lightningcss": "^1.33.0"
+    },
+    "optionalDependencies": {
+      "fsevents": "~2.3.3"
+    },
+    "peerDependencies": {
+      "tsx": "^4.8.1",
+      "jiti": ">=1.21.0",
+      "less": "^4.0.0",
+      "sass": "^1.70.0",
+      "yaml": "^2.4.2",
+      "stylus": ">=0.54.8",
+      "terser": "^5.16.0",
+      "esbuild": "^0.27.0 || ^0.28.0",
+      "sugarss": "^5.0.0",
+      "@types/node": "^20.19.0 || >=22.12.0",
+      "sass-embedded": "^1.70.0",
+      "@vitejs/devtools": "^0.7.1"
+    },
+    "scripts": {
+      "dev": "premove dist && pnpm build-bundle -w",
+      "lint": "eslint --cache --ext .ts src/**",
+      "build": "premove dist && pnpm build-bundle && pnpm build-types",
+      "format": "oxfmt",
+      "typecheck": "tsc && tsc -p src/node && tsc -p src/client && tsc -p src/module-runner && tsc -p src/shared && tsc -p src/node/__tests_dts__ && tsc -p src/module-runner/__tests_dts__",
+      "build-types": "pnpm build-types-roll && pnpm build-types-check",
+      "build-bundle": "rolldown --config rolldown.config.ts",
+      "generate-target": "tsx scripts/generateTarget.ts",
+      "build-types-roll": "rolldown --config rolldown.dts.config.ts",
+      "build-types-check": "tsc --project tsconfig.check.json"
+    }
+  },
+  "@types/node": {
+    "tags": {
+      "ts2.6": "12.12.6",
+      "ts2.0": "12.12.6",
+      "ts2.7": "12.12.6",
+      "ts2.1": "12.12.6",
+      "ts2.5": "12.12.6",
+      "ts2.2": "12.12.6",
+      "ts2.4": "12.12.6",
+      "ts2.3": "12.12.6",
+      "ts2.8": "13.13.4",
+      "ts2.9": "14.0.1",
+      "ts3.0": "14.6.0",
+      "ts3.1": "14.10.1",
+      "ts3.2": "14.14.9",
+      "ts3.3": "14.14.20",
+      "ts3.4": "14.14.31",
+      "ts3.5": "15.6.1",
+      "ts3.6": "16.6.2",
+      "ts3.7": "16.11.7",
+      "ts3.8": "17.0.21",
+      "ts3.9": "17.0.41",
+      "ts4.0": "18.7.14",
+      "ts4.1": "18.11.9",
+      "ts4.2": "18.15.3",
+      "ts4.4": "20.6.0",
+      "ts4.3": "20.6.0",
+      "ts4.5": "20.10.0",
+      "ts4.6": "20.11.25",
+      "ts4.7": "20.14.8",
+      "ts4.8": "22.9.0",
+      "ts4.9": "22.9.3",
+      "ts5.0": "22.13.14",
+      "ts5.1": "24.1.0",
+      "ts5.2": "25.5.0",
+      "ts5.3": "25.9.3",
+      "ts5.5": "25.9.3",
+      "ts5.4": "25.9.3",
+      "ts5.8": "26.6.5",
+      "ts6.0": "26.6.5",
+      "ts5.6": "26.6.5",
+      "ts7.0": "26.6.5",
+      "ts7.1": "26.6.5",
+      "latest": "26.6.5",
+      "ts5.9": "26.6.5",
+      "ts5.7": "26.6.5",
+      "old-version": "24.19.2"
+    },
+    "selected": "24.19.2",
+    "repository": {
+      "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "type": "git",
+      "directory": "types/node"
+    },
+    "dist": {
+      "shasum": "8718eedbc0f89648de6525be9f4a9c61cdbaa502",
+      "tarball": "https://registry.npmjs.org/@types/node/-/node-24.19.2.tgz",
+      "fileCount": 88,
+      "integrity": "sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==",
+      "signatures": [
+        {
+          "sig": "MEQCIANcVRgt/opOpIiouz2oQFvOIyDM4lBAgR5KWFpeM0S7AiAlIKKketPR7tVtdmeqoW9ERmEN+hUSbmSsgvw4PZE5xg==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "sig": "MEQCIEyyRKiIaH5zy091E3cDbeZApk+zitfD9OmZP0qKnrKRAiB6X7j1j2Vakh+MTSX0FSCk/vXjx9TKwcy6mTWJb+rXXg==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 2613701
+    },
+    "dependencies": {
+      "undici-types": ">=7.24.0 <7.24.7"
+    },
+    "peerDependencies": {},
+    "scripts": {}
+  },
+  "npm": {
+    "tags": {
+      "latest-1": "1.4.29",
+      "next-3": "3.10.10",
+      "latest-3": "3.10.10",
+      "latest-2": "2.15.12",
+      "next-2": "2.15.12",
+      "next-4": "4.6.1",
+      "latest-4": "4.6.1",
+      "latest-5": "5.10.0",
+      "next-5": "5.10.0",
+      "latest-7": "7.24.2",
+      "next-7": "7.24.2",
+      "next-6": "6.14.18",
+      "v6.14-next": "6.14.18",
+      "latest-6": "6.14.18",
+      "next-8": "8.19.4",
+      "next-9": "9.9.4",
+      "next-10": "10.9.9",
+      "next-12": "12.2.1",
+      "latest": "12.2.0",
+      "next-11": "11.21.1"
+    },
+    "selected": "12.2.0",
+    "engines": {
+      "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/npm/cli.git",
+      "type": "git"
+    },
+    "dist": {
+      "shasum": "9b58e3add8a0ad8c87c927f1a988f41435f4ffad",
+      "tarball": "https://registry.npmjs.org/npm/-/npm-12.2.0.tgz",
+      "fileCount": 1942,
+      "integrity": "sha512-ZsJjKpTnlmSXOLLXiU1xDCzC4Wlok4IwZmh/aw2KUuXytU7q6qMv/cUT7MoeSf95Slwuw/lRXYefGzGCspHPNQ==",
+      "signatures": [
+        {
+          "sig": "MEYCIQCXvXZm01EiQIfCOjMbCna9ATH8xNjCbTX7B6rGjB8USgIhAPKM2KBQSm3OwLzM4Ayj4PxP5emDpys9665mIf2vokPO",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "sig": "MEYCIQDE/ZBPO+IrWRblLzFc4tZqXE3CvPyOJc4t1t6GiN9raAIhAKPeEeEUqZfTFxCFVEYgSAvFiFwEjtSkImzKqv9bw1GF",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 12397700
+    },
+    "dependencies": {
+      "ms": "^2.1.2",
+      "ini": "^7.0.0",
+      "tar": "^7.5.22",
+      "diff": "^8.0.2",
+      "glob": "^13.0.6",
+      "nopt": "^10.0.1",
+      "read": "^6.0.0",
+      "ssri": "^14.0.0",
+      "archy": "~1.0.0",
+      "chalk": "^5.6.2",
+      "p-map": "^7.0.4",
+      "which": "^7.0.0",
+      "abbrev": "^5.0.0",
+      "pacote": "^22.0.0",
+      "semver": "^7.8.5",
+      "cacache": "^21.0.1",
+      "ci-info": "^4.4.0",
+      "is-cidr": "^7.0.0",
+      "minipass": "^7.1.3",
+      "node-gyp": "^13.0.0",
+      "proc-log": "^7.0.0",
+      "bin-links": "^7.0.0",
+      "libnpmorg": "^9.0.0",
+      "minimatch": "^10.2.5",
+      "treeverse": "^3.0.0",
+      "@npmcli/fs": "^6.0.0",
+      "libnpmdiff": "^9.0.3",
+      "libnpmexec": "^11.0.3",
+      "libnpmfund": "^8.0.3",
+      "libnpmpack": "^10.0.3",
+      "libnpmteam": "^9.0.0",
+      "text-table": "~0.2.0",
+      "@npmcli/git": "^8.0.0",
+      "fs-minipass": "^3.0.3",
+      "graceful-fs": "^4.2.11",
+      "npm-profile": "^13.0.1",
+      "libnpmaccess": "^11.0.0",
+      "libnpmsearch": "^10.0.0",
+      "@sigstore/tuf": "^5.0.0",
+      "libnpmpublish": "^12.0.1",
+      "libnpmversion": "^9.0.0",
+      "@npmcli/config": "^11.2.0",
+      "@npmcli/redact": "^5.0.0",
+      "supports-color": "^10.2.2",
+      "hosted-git-info": "^10.1.1",
+      "npm-package-arg": "^14.0.0",
+      "qrcode-terminal": "^0.12.0",
+      "@npmcli/arborist": "^10.0.3",
+      "npm-audit-report": "^8.0.0",
+      "init-package-json": "^9.0.0",
+      "make-fetch-happen": "^16.0.1",
+      "minipass-pipeline": "^1.2.4",
+      "npm-pick-manifest": "^12.0.0",
+      "npm-user-validate": "^5.0.0",
+      "@npmcli/run-script": "^11.0.0",
+      "npm-install-checks": "^9.0.0",
+      "npm-registry-fetch": "^20.0.1",
+      "tiny-relative-date": "^2.0.2",
+      "fastest-levenshtein": "^1.0.16",
+      "parse-conflict-json": "^6.0.0",
+      "@npmcli/package-json": "^8.0.0",
+      "@npmcli/promise-spawn": "^10.0.0",
+      "spdx-expression-parse": "^4.0.0",
+      "@npmcli/map-workspaces": "^6.0.0",
+      "validate-npm-package-name": "^8.0.0",
+      "@npmcli/metavuln-calculator": "^10.0.0",
+      "@isaacs/string-locale-compare": "^1.1.0",
+      "json-parse-even-better-errors": "^6.0.0"
+    },
+    "scripts": {
+      "lint": "node . run eslint",
+      "snap": "tap",
+      "test": "tap",
+      "eslint": "eslint \"**/*.{js,cjs,ts,mjs,jsx,tsx}\"",
+      "lintfix": "node . run eslint -- --fix",
+      "prepack": "node . run build -w docs",
+      "dumpconf": "env | grep npm | sort | uniq",
+      "licenses": "npx licensee --production --errors-only",
+      "lint-all": "node . run lint --workspaces --include-workspace-root --if-present",
+      "postlint": "template-oss-check",
+      "posttest": "node . run lint",
+      "test-all": "node . run test --workspaces --include-workspace-root --if-present",
+      "resetdeps": "node scripts/resetdeps.js",
+      "dependencies": "node scripts/bundle-and-gitignore-deps.js && node scripts/dependency-graph.js",
+      "test:nocolor": "CI=true tap -Rclassic",
+      "rp-pull-request": "node scripts/update-authors.js",
+      "template-oss-apply": "template-oss-apply --force"
+    }
+  },
+  "ajv": {
+    "tags": {
+      "4.x": "4.11.8",
+      "beta": "8.11.1",
+      "latest": "8.20.0",
+      "legacy": "6.15.0"
+    },
+    "selected": "8.20.0",
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/ajv-validator/ajv.git"
+    },
+    "dist": {
+      "integrity": "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==",
+      "shasum": "304b3636add88ba7d936760dd50ece006dea95f9",
+      "tarball": "https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz",
+      "fileCount": 466,
+      "unpackedSize": 1033496,
+      "signatures": [
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIBfrVdhp5WGXcUASldcdcwqMi+toiB4jnfvInba3JZgCAiEA+gqJmfPQOJlXKjVEQlsjXbBKFxga9bRsHx5m9lSgRyM="
+        }
+      ]
+    },
+    "dependencies": {
+      "fast-deep-equal": "^3.1.3",
+      "fast-uri": "^3.0.1",
+      "json-schema-traverse": "^1.0.0",
+      "require-from-string": "^2.0.2"
+    },
+    "scripts": {
+      "eslint": "eslint \"lib/**/*.ts\" \"spec/**/*.*s\" --ignore-pattern spec/JSON-Schema-Test-Suite",
+      "prettier:write": "prettier --write \"./**/*.{json,yaml,js,ts}\"",
+      "prettier:check": "prettier --list-different \"./**/*.{json,yaml,js,ts}\"",
+      "test-spec": "cross-env TS_NODE_PROJECT=spec/tsconfig.json mocha -r ts-node/register \"spec/**/*.spec.{ts,js}\" -R dot",
+      "test-codegen": "nyc cross-env TS_NODE_PROJECT=spec/tsconfig.json mocha -r ts-node/register 'spec/codegen.spec.ts' -R spec",
+      "test-debug": "npm run test-spec -- --inspect-brk",
+      "test-cov": "nyc npm run test-spec",
+      "rollup": "rm -rf bundle && rollup -c",
+      "bundle": "rm -rf bundle && node ./scripts/bundle.js ajv ajv7 ajv7 && node ./scripts/bundle.js 2019 ajv2019 ajv2019 && node ./scripts/bundle.js 2020 ajv2020 ajv2020 && node ./scripts/bundle.js jtd ajvJTD ajvJTD",
+      "build": "rm -rf dist && tsc && cp -r lib/refs dist && rm dist/refs/json-schema-2019-09/index.ts && rm dist/refs/json-schema-2020-12/index.ts && rm dist/refs/jtd-schema.ts",
+      "json-tests": "rm -rf spec/_json/*.js && node scripts/jsontests",
+      "test-karma": "karma start",
+      "test-browser": "rm -rf .browser && npm run bundle && scripts/prepare-tests && karma start",
+      "test-all": "npm run test-cov",
+      "test": "npm run json-tests && npm run prettier:check && npm run eslint && npm link && npm link --legacy-peer-deps ajv && npm run test-cov",
+      "test-ci": "AJV_FULL_TEST=true npm test",
+      "prepublish": "npm run build",
+      "benchmark": "npm i && npm run build && npm link && cd ./benchmark && npm link --legacy-peer-deps ajv && npm i && node ./jtd",
+      "docs:dev": "./scripts/prepare-site && vuepress dev docs",
+      "docs:build": "./scripts/prepare-site && vuepress build docs"
+    }
+  },
+  "release": {
+    "tag": {
+      "ref": "refs/tags/v1.3.0",
+      "node_id": "REF_kwDOPbFNk7ByZWZzL3RhZ3MvdjEuMy4w",
+      "url": "https://api.github.com/repos/earendil-works/pi/git/refs/tags/v1.3.0",
+      "object": {
+        "sha": "71023aec1546d6d677a65669c5665c0927ce0dd0",
+        "type": "commit",
+        "url": "https://api.github.com/repos/earendil-works/pi/git/commits/71023aec1546d6d677a65669c5665c0927ce0dd0"
+      }
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import { responsesInput } from "../helpers/provider.js";
 import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -63,7 +64,8 @@ describe("model picker coordinator transactions", () => {
         await coordinator.submitUserInput(`Continue with ${thinking} reasoning`);
         expect(bindings.get("A")?.sessionId).toBe(id);
         expect(JSON.stringify(bindings.get("A")?.session.messages)).toContain("Remember this model selection conversation");
-        expect(bodies.at(-1)).toMatchObject({ model: "gpt-6.1-sol", reasoning: { effort: thinking } });
+        expect(bodies.at(-1)).toMatchObject({ model: "gpt-6.1-sol" });
+        expect(responsesInput(bodies.at(-1)).thinking).toBe(thinking);
       }
       expect((await loadCoordinatorConfig()).exists).toBe(false);
     } finally { await service.dispose(); }

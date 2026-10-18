@@ -1,6 +1,6 @@
 # Upgrade Pi and the development stack
 
-Status: proposed implementation plan. Researched on 18 October 2026 against `main` at `8532d2d54d56c9f3b37bafa2f568989c39098c3e`, including existing uncommitted application and model-picker work. No dependencies or application code were changed while preparing this plan.
+Status: implementation in progress on the frozen 1.3.0 target. See [execution evidence](pi-upgrade-verification.md). The following research baseline is historical. Researched on 18 October 2026 against `main` at `8532d2d54d56c9f3b37bafa2f568989c39098c3e`, including existing uncommitted application and model-picker work. No dependencies or application code were changed while preparing this plan.
 
 ## Outcome and scope
 

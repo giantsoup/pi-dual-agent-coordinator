@@ -15,19 +15,27 @@ an OS sandbox. Read [the security model](docs/security-model.md) before use.
 
 ## Secure setup
 
-Requirements: macOS, Node.js >=20.6, npm, Apple Command Line Tools, an unlocked
+Requirements: macOS, Node.js 24.22.0 LTS, npm 12.2.0, Apple Command Line Tools, an unlocked
 Keychain, a logged-in desktop for private entry, and LM Studio serving on
 `127.0.0.1:1234`. Subscription auth and arbitrary provider endpoints are not supported.
 
+Select the project-scoped Node and npm versions first. Confirm `node --version` is
+`v24.22.0` and `npm --version` is `12.2.0`. The supported runtime range is
+`>=24.22.0 <25`; `.nvmrc` and `packageManager` record the frozen versions.
 Run these commands in the source checkout, before creating or entering a real key:
 
 ```sh
-npm install
+npm ci
+npm run verify:dependencies
 npm run check
 npm test
 npm run verify:isolation
 npm run secure:install -- "$HOME/.local/share/pi-dual/runtime-1"
 ```
+
+The snapshot includes `bin/node`, npm 12.2.0, the lockfile, and a hash manifest.
+Verify it with its `bin/node scripts/verify-installation.mjs`. See the exact
+upgrade evidence and rollback limits in [Pi upgrade verification](docs/pi-upgrade-verification.md).
 
 Use a separate trusted installation outside the agent workspace. Running the app
 against its own installation or a parent directory fails closed. Follow
@@ -38,9 +46,9 @@ check. Never paste a key into chat, a command, `auth.json`, `.env`, or shell fil
 From your own private local terminal, run:
 
 ```sh
-node "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" setup /absolute/project
-node "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" doctor /absolute/project --no-mcp
-node "$HOME/.local/share/pi-dual/runtime-1/dist/src/security/smoke.js" /absolute/project
+"$HOME/.local/share/pi-dual/runtime-1/bin/node" "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" setup /absolute/project
+"$HOME/.local/share/pi-dual/runtime-1/bin/node" "$HOME/.local/share/pi-dual/runtime-1/dist/src/index.js" doctor /absolute/project --no-mcp
+"$HOME/.local/share/pi-dual/runtime-1/bin/node" "$HOME/.local/share/pi-dual/runtime-1/dist/src/security/smoke.js" /absolute/project
 ```
 
 Setup verifies isolation with dummy secrets before opening the secure entry
@@ -64,8 +72,8 @@ plus Low/Medium/High reasoning. B lists downloaded LM Studio LLMs with tool call
 and at least 65,536 context tokens. Use A/B to change agents, arrows to choose,
 Enter to apply, and S to toggle saving for restart. Controls appear in the picker.
 For example, `--model-a openai/gpt-6-luna --thinking-a high --model-b lm-studio/qwen3.6-35b-a3b --thinking-b off`.
-Pi 0.67.68 lacks these latest GPT descriptors; the app maintains the three picker
-choices in `src/security/models.ts`, using the official OpenAI endpoint. Coordinator defaults are
+Pi 1.3.0 supplies these GPT descriptors. The app uses its bundled metadata and keeps
+the approved model IDs explicit in `src/security/models.ts`, using the official OpenAI endpoint. Coordinator defaults are
 non-secret and separate from Pi auth. Legacy unrelated credentials remain intact.
 
 Start LM Studio's server and download the executor. The app loads the selected

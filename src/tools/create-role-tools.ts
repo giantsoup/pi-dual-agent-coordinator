@@ -1,5 +1,5 @@
-import { createCodingTools, createReadOnlyTools } from "@mariozechner/pi-coding-agent";
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import { createCodingTools, createReadOnlyTools } from "@earendil-works/pi-coding-agent";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Role } from "../types/role.js";
 import { ToolIsolation, runIsolatedTool } from "../security/isolation.js";
 import { redactValue } from "../security/redact.js";

@@ -16,7 +16,7 @@ import {
   type EditorTheme,
   type Focusable,
   type Terminal
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 
 import { REPL_COMPLETION_COMMANDS } from "../cli.js";
 import { renderRuntimeActivitySummary } from "../activity-history.js";
@@ -104,6 +104,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
 
   public handleInput(data: string): void {
     const state = this.service.getState();
+    this.syncModalState(state);
     const mouse = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
     if (mouse) {
       const button = Number(mouse[1]);

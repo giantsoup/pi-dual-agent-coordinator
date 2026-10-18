@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Coordinator } from "../../src/coordinator/coordinator.js";
 import { createRoleRuntime, type RoleRuntimeBinding } from "../../src/runtime/create-role-runtime.js";
 import { fixtureResponse, fixtureChatResponse } from "../../src/security/fixture-provider.js";

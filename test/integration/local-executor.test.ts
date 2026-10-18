@@ -1,3 +1,4 @@
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,7 +67,10 @@ it("keeps automatic compaction on the local provider", async () => {
   const options = await workspace();
   let calls = 0;
   const load = vi.fn(async () => { throw new Error("No cloud auth"); });
-  const binding = await createRoleRuntime({ ...options, role: "B", providerTestBackend: { ...options, modelIds: [], load,
+  const manager = SessionManager.inMemory(options.cwd);
+  manager.appendMessage({ role: "user", content: "Earlier task to preserve", timestamp: 1 });
+  manager.appendMessage({ role: "user", content: "Historical context ".repeat(6000), timestamp: 1 });
+  const binding = await createRoleRuntime({ ...options, initialSessionManager: manager, role: "B", providerTestBackend: { ...options, modelIds: [], load,
     request: async (url, init) => {
       expect(url).toBe(`${LM_STUDIO_BASE_URL}/chat/completions`);
       expect(JSON.parse(String(init?.body)).model).toBe("qwen3.6-35b-a3b");

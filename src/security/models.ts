@@ -1,5 +1,5 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
-import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Role } from "../types/role.js";
 
 export const SMART_MODEL = "openai/gpt-6-luna";
@@ -9,15 +9,26 @@ export const SMOKE_MAX_TOKENS = 1024;
 
 // Manually maintained picker catalog. Sources: docs/research/model-picker/design.md.
 export const gptModelChoices = [
-  { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", description: "Complex coding and planning", cost: { input: 2, output: 10, cacheRead: .1, cacheWrite: 2.5 } },
-  { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", description: "Balanced reasoning", cost: { input: 2, output: 12, cacheRead: .2, cacheWrite: 2.5 } },
-  { id: "gpt-6-luna", name: "GPT-6 Luna", description: "Fast, efficient planning", cost: { input: .1, output: .5, cacheRead: .01, cacheWrite: .125 } }
+  { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", description: "Complex coding and planning" },
+  { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", description: "Balanced reasoning" },
+  { id: "gpt-6-luna", name: "GPT-6 Luna", description: "Fast, efficient planning" }
 ];
-const gptModels: Model<"openai-responses">[] = gptModelChoices.map((model) => ({
-  ...model, provider: "openai", api: "openai-responses",
-  baseUrl: "https://api.openai.com/v1", reasoning: true, input: ["text", "image"],
-  contextWindow: 1_050_000, maxTokens: 128_000,
-}));
+// Keep the original approved IDs explicit. A catalog update cannot grant a new model.
+const approvedOpenaiIds = new Set([
+  "gpt-4", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o",
+  "gpt-4o-2024-05-13", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "gpt-4o-mini",
+  "gpt-5", "gpt-5-chat-latest", "gpt-5-codex", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro",
+  "gpt-5.1", "gpt-5.1-chat-latest", "gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini",
+  "gpt-5.2", "gpt-5.2-chat-latest", "gpt-5.2-codex", "gpt-5.2-pro", "gpt-5.3-chat-latest",
+  "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro",
+  "o1", "o1-pro", "o3", "o3-deep-research", "o3-mini", "o3-pro", "o4-mini", "o4-mini-deep-research",
+  ...gptModelChoices.map((model) => model.id)
+]);
+const openaiModels = getBuiltinModels("openai").filter((model) =>
+  approvedOpenaiIds.has(model.id) && model.api === "openai-responses" && model.baseUrl === "https://api.openai.com/v1");
+for (const choice of gptModelChoices) {
+  if (!openaiModels.some((model) => model.id === choice.id && model.reasoning)) throw new Error(`Missing trusted model metadata: ${choice.id}`);
+}
 export function createLocalModel(input: { id: string; name: string; contextWindow?: number; vision?: boolean }): Model<"openai-completions"> {
   return { id: input.id, name: input.name, provider: "lm-studio", api: "openai-completions", baseUrl: LM_STUDIO_BASE_URL,
     reasoning: false, input: input.vision ? ["text", "image"] : ["text"], contextWindow: input.contextWindow ?? 65_536, maxTokens: 16_384,
@@ -31,17 +42,16 @@ const localModels: Model<"openai-completions">[] = [
 
 export function isRoleModel(role: Role, model: Model<Api>, discovered: Model<"openai-completions">[] = []): boolean {
   return role === "A"
-    ? model.provider === "openai" && model.api === "openai-responses" && model.baseUrl === "https://api.openai.com/v1"
+    ? approvedOpenaiIds.has(model.id) && model.provider === "openai" && model.api === "openai-responses" && model.baseUrl === "https://api.openai.com/v1"
     : model.provider === "lm-studio" && model.api === "openai-completions" && model.baseUrl === LM_STUDIO_BASE_URL
       && [...localModels, ...discovered].some((candidate) => candidate.id === model.id);
 }
 
-export function createSecureModelRegistry(authStorage = AuthStorage.inMemory(), discovered: Model<"openai-completions">[] = []): ModelRegistry {
-  const registry = ModelRegistry.inMemory(authStorage);
-  const builtins = registry.getAll().filter((model) => model.provider === "openai" && !gptModels.some((current) => current.id === model.id));
-  // Pi requires an auth field when registering metadata. This inert value is never used
-  // for inference; runtime startup must retrieve Keychain auth and replace it with a broker capability.
-  registry.registerProvider("openai", { apiKey: "broker-not-configured", baseUrl: "https://api.openai.com/v1", models: [...builtins, ...gptModels] });
-  registry.registerProvider("lm-studio", { apiKey: "broker-not-configured", baseUrl: LM_STUDIO_BASE_URL, api: "openai-completions", models: [...new Map([...localModels, ...discovered].map((model) => [model.id, model])).values()] });
-  return registry;
+/** Metadata only: no credentials, runtime construction, files, refresh, or network. */
+export function createSecureModelCatalog(discovered: Model<"openai-completions">[] = []) {
+  const models: Model<Api>[] = [...openaiModels, ...new Map([...localModels, ...discovered].map((model) => [model.id, model])).values()];
+  return {
+    getAll: () => [...models],
+    find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id)
+  };
 }

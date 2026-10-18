@@ -1,4 +1,4 @@
-import type { Terminal } from "@mariozechner/pi-tui";
+import type { Terminal } from "@earendil-works/pi-tui";
 
 import { HeadlessInteractiveCoordinatorService } from "./interactive/service.js";
 import type { ReplCliOptions } from "./cli.js";

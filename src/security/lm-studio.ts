@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
 import type { ModelSwitchProgress } from "../types/model-selection.js";
 import { safeDisplayText } from "./display-text.js";
 import { createLocalModel, LM_STUDIO_BASE_URL } from "./models.js";

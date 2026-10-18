@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { TUI, visibleWidth } from "@mariozechner/pi-tui";
+import { TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
 import { ModelPicker } from "../../src/app/tui/model-picker.js";
 import { CoordinatorTuiApp } from "../../src/app/tui/app.js";
 import { HeadlessInteractiveCoordinatorService } from "../../src/app/interactive/service.js";
@@ -35,12 +35,23 @@ async function setup() {
     getModelPickerCatalog: async (role: "A" | "B"): Promise<ModelPickerCatalog> => ({ role, models: role === "A" ? aModels : bModels, currentModel: status.runtimes.find((runtime) => runtime.role === role)?.modelCanonical, currentThinking: status.runtimes.find((runtime) => runtime.role === role)?.thinking }),
     cancelActive: vi.fn(async () => { cancelled = true; release(); }) };
   const service = new HeadlessInteractiveCoordinatorService(coordinator); await service.start();
-  const terminal = new MemoryTerminal(); const tui = new TUI(terminal);
+  const terminal = new MemoryTerminal(); const tui = new TuiMainScreen(terminal);
   const app = new CoordinatorTuiApp(tui, terminal, service, { onExit() {} }); app.focused = true;
   tui.addChild(app); tui.setFocus(app); tui.start();
   return { app, service, tui, terminal, configure, coordinator, release };
 }
 describe("model selection controls", () => {
+  it("accepts a role key before the opened picker receives its first render", async () => {
+    const { app, service, tui } = await setup();
+    try {
+      app.render(80);
+      await service.dispatch({ type: "open_models", role: "A" });
+      expect(service.getState().modal).toMatchObject({ kind: "model_picker", catalog: { role: "A" } });
+      app.handleInput("b");
+      await settle();
+      expect(service.getState().modal).toMatchObject({ kind: "model_picker", catalog: { role: "B" } });
+    } finally { tui.stop(); await service.dispose(); }
+  });
   it.each([[76, 17], [96, 19]])("shows all GPT and reasoning options within %sx%s cells", (width, height) => {
     const picker = new ModelPicker({ role: "A", models: aModels, currentModel: "openai/gpt-6-luna", currentThinking: "high" });
     const lines = picker.render(width, height, false, false);

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
 import { McpClientPool } from "../../src/mcp/client-pool.js";
 import { createRoleMcpPolicy } from "../../src/mcp/policy.js";

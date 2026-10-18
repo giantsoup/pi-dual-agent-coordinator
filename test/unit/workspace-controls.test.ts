@@ -1,4 +1,4 @@
-import { TUI, visibleWidth } from "@mariozechner/pi-tui";
+import { TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { CoordinatorTuiApp } from "../../src/app/tui/app.js";
 import { HeadlessInteractiveCoordinatorService } from "../../src/app/interactive/service.js";
@@ -19,7 +19,7 @@ async function setup() {
   const emit = (type: string, details: Record<string, unknown>, extra: Partial<NormalizedTelemetryEvent> = {}) => listener({ eventType: type, details, operatorTurnId: "turn", runId: "run", role: "B", sessionId: "s", requestId: "r", timestamp: "2026-10-16T12:00:00Z", ...extra });
   emit("ui.turn_started", { objective: "Inspect tools" }); emit("runtime.run_started", { provenance: "coordinator_handoff" });
   for (let i = 0; i < 12; i++) { emit("pi.tool_execution_start", { toolName: "read", toolCallId: `call-${i}`, toolArgs: { path: `file-${i}` } }); emit("pi.tool_execution_end", { toolName: "read", toolCallId: `call-${i}`, isError: i === 4 }); }
-  const terminal = new MemoryTerminal(); const tui = new TUI(terminal);
+  const terminal = new MemoryTerminal(); const tui = new TuiMainScreen(terminal);
   const app = new CoordinatorTuiApp(tui, terminal, service, { onExit() {} }); app.focused = true;
   return { app, service, terminal, coordinator, status, emit };
 }
@@ -268,7 +268,7 @@ it.each(["A", "B"] as const)("keeps %s workspace and inspector prose on terminal
 });
 
 it("propagates Pi's IME cursor marker only to the focused composer", async () => {
-  const { CURSOR_MARKER } = await import("@mariozechner/pi-tui");
+  const { CURSOR_MARKER } = await import("@earendil-works/pi-tui");
   const { app, service } = await setup();
   app.handleInput("界 é 😀");
   expect(app.render(80).join("\n")).toContain(CURSOR_MARKER);

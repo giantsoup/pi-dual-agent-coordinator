@@ -1,7 +1,7 @@
 import { ResponseFormatError, PROTOCOL_TOOL_NAMES, type ResponseProgress } from "./response-repair.js";
 import { randomUUID } from "node:crypto";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 import { extractAssistantText } from "../handoff/handoff-envelope.js";
 import { normalizeEvent, normalizeLifecycleEvent } from "../telemetry/event-normalizer.js";
@@ -155,7 +155,8 @@ export class RuntimeEventBridge {
     } }));
     const pending = (async () => {
       try {
-        const [, message] = await Promise.all([prompt, turnEndPromise]);
+        await prompt;
+        const message = await turnEndPromise;
         this.assertActive();
         logRun("runtime.run_finished", { outcome: "completed", leafId: binding.session.sessionManager?.getLeafId() });
         return message;

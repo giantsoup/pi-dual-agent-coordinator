@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { buildSessionContext, migrateSessionEntries, parseSessionEntries } from "@mariozechner/pi-coding-agent";
+import { buildSessionContext, migrateSessionEntries, parseSessionEntries } from "@earendil-works/pi-coding-agent";
 
 /** Pi's open() repairs files in place. Previews must never use it. */
 export function readSessionHistory(path: string) {
@@ -34,6 +34,7 @@ export function readSessionHistory(path: string) {
     while (id && !checked.has(id)) {
       if (branch.has(id)) throw new Error("Cyclic session history. The original file has been preserved.");
       branch.add(id);
+      if (!parents.has(id)) throw new Error("Missing session parent. The original file has been preserved.");
       id = parents.get(id);
     }
     for (const visited of branch) checked.add(visited);
@@ -76,6 +77,8 @@ const archiveEntry = z.object({
       type: z.string(), text: z.string().optional(), id: z.string().optional(),
       name: z.string().optional(), arguments: z.unknown().optional()
     }))]).optional(),
+    sections: z.record(z.string(), z.string().nullable()).optional(),
+    toolsAdded: z.array(z.unknown()).optional(), toolsRemoved: z.array(z.unknown()).optional(),
     toolCallId: z.string().optional(), toolName: z.string().optional(), isError: z.boolean().optional(),
     errorMessage: z.string().optional(), stopReason: z.string().optional(), details: z.unknown().optional()
   }).optional()

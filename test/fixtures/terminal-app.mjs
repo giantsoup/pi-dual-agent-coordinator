@@ -1,4 +1,4 @@
-import { ProcessTerminal } from '@mariozechner/pi-tui';
+import { ProcessTerminal } from '@earendil-works/pi-tui';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';

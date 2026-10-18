@@ -16,7 +16,7 @@ or regular file as its credential-return descriptor. Status and errors contain
 no credential values. There is no public credential-export command.
 
 The trusted broker holds the project key in memory. Pi receives a fresh random
-broker capability in an in-memory `AuthStorage`, never the project key. Its
+broker capability in an asynchronous `ModelRuntime` with an in-memory credential store, never the project key. Its
 built-in OpenAI Responses provider sends requests to the broker. The broker
 replaces authentication, constructs its own headers, and forwards only
 `POST https://api.openai.com/v1/responses` for Agent A's selected approved model.
@@ -36,7 +36,7 @@ external execution integrations to this server for coordinator requests.
 The broker discards upstream error bodies and response headers. Whole SSE lines
 are redacted before returning to Pi, including credential strings split across
 transport chunks. Registered secrets and their common encodings are redacted
-before tool exposure, telemetry output, subscriber notification, MCP metadata
+before tool exposure, app telemetry output, subscriber notification, MCP metadata
 persistence, and ledger writes. Redaction is an additional safeguard, not the
 credential boundary. A key never belongs in prompts or repository content.
 
@@ -90,8 +90,9 @@ empty trusted directory. Workspace `AGENTS.md` is read as text through the
 isolated read tool, so a symlink to a protected credential cannot turn the
 resource loader into a credential reader. Coordinator-authored role prompts and
 the built-in MCP extension are the only executable extensions.
-The trusted catalog adds official GPT-6.1 Sol, GPT-5.6 Terra and GPT-6 Luna
-descriptors to Pi's built-in OpenAI models for Agent A. B's downloaded LLM keys
+The trusted metadata catalog filters Pi 1.3.0's bundled OpenAI descriptors by the
+original approved IDs, including GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna.
+Picker enumeration constructs no auth runtime and makes no catalog requests. B's downloaded LLM keys
 and capabilities are validated from the fixed loopback LM Studio inventory.
 Local descriptors use a 65,536-token context and API thinking off. The broker
 validates the selected logical model and resolves its ready instance before each
@@ -100,11 +101,14 @@ High reasoning is checked in the actual installed provider's serialized request;
 the no-tools live smoke uses the saved Agent A reasoning level and a 1,024-token
 cap that includes reasoning.
 
-Pi 0.67.68's high-level session factory uses `tools` for name selection, then
-rebuilds built-ins. Supplying wrapped tools there does not isolate execution.
+Pi 1.3.0's high-level session factory uses `tools` for name selection. Supplying
+executable tools there does not isolate execution.
 This app uses Pi's public `AgentSession` constructor with `baseToolsOverride`.
 The entire tool registry contains only sandboxed role tools and the trusted MCP
-adapter. The same construction runs on each coordinator-owned replacement.
+adapter. Explicit allowlists, `usesDefaultTools:false`, and exclusions for native
+`mcp__*`, `codemode`, and `tool_search` prevent persisted tool activation from
+expanding permissions. External MCP schemas and arguments are validated before
+execution, including proxy calls. The same construction runs on each coordinator-owned replacement.
 Session switching is limited to that role's private session directory and cannot
 change its workspace. Coordinator state must remain outside the workspace.
 
@@ -180,3 +184,24 @@ receive the abort signal, but remote side effects cannot be rolled back.
 Cancellation and timeout preserve changes already completed in the workspace.
 The coordinator blocks later automatic stages and records a terminal outcome.
 No browser restoration or automatic workflow continuation is introduced.
+
+## Pi 1.3 runtime confinement
+
+`ModelRuntime.create()` uses an in-memory credential store, `modelsPath:null`,
+`refreshOnCreate:false`, and `allowModelNetwork:false`. The app replaces every
+non-selected provider with an empty catalog and disabled auth adapter. The selected
+provider resolves only its private broker capability. Registration refreshes are
+held until initialization finishes. Every later refresh, including SDK reload,
+forces `allowNetwork:false` and the selected provider. This restriction is required
+because the creation flag alone does not control later refresh calls.
+
+Settings explicitly disable cache warming, install telemetry, and analytics. The
+direct constructor receives no cache warmer and no native MCP, codemode, or tool
+search extension. The optional codemode setting is omitted because its schema has
+no off value. Broker request validation still pins endpoint and model, independently
+of catalog and credential policy. Concurrent sessions and replacements use
+separate runtime instances and broker capabilities.
+
+The awaited prompt and `waitForIdle()` cover outer `agent_settled`, compaction, and
+recovery. Disposal aborts and drains the managed session before releasing the
+broker. Low-level awaited turn listeners still pause B before its next request.

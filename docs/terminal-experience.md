@@ -16,8 +16,8 @@ from the source checkout; keep that checkout separate from the installation:
 pi_dual_runtime="$HOME/.local/share/pi-dual/runtime-terminal-$(date +%Y%m%d-%H%M%S)"
 npm run build
 npm run secure:install -- "$pi_dual_runtime"
-node "$pi_dual_runtime/dist/src/index.js" doctor "$PWD" --no-mcp
-node "$pi_dual_runtime/dist/src/index.js" repl "$PWD" --no-mcp
+"$pi_dual_runtime/bin/node" "$pi_dual_runtime/dist/src/index.js" doctor "$PWD" --no-mcp
+"$pi_dual_runtime/bin/node" "$pi_dual_runtime/dist/src/index.js" repl "$PWD" --no-mcp
 ```
 
 An existing Keychain credential for this checkout's canonical path is reused.

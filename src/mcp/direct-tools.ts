@@ -1,6 +1,6 @@
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { mcpParameters, assertMcpArguments } from "./schema.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { getAllowedToolNames } from "../tools/role-capability-policy.js";
@@ -19,7 +19,7 @@ export function createDirectToolNamePlan(options: {
   toolSets: DirectToolMetadataSet[];
 }): Map<string, Map<string, string>> {
   const plan = new Map<string, Map<string, string>>();
-  const reserved = new Set([...getAllowedToolNames(options.role), "mcp"]);
+  const reserved = new Set([...getAllowedToolNames(options.role), "mcp", "codemode", "tool_search"]);
   const occurrences = new Map<string, number>();
 
   for (const set of options.toolSets) {
@@ -31,12 +31,17 @@ export function createDirectToolNamePlan(options: {
   for (const set of options.toolSets) {
     const toolPlan = new Map<string, string>();
     for (const tool of set.tools) {
-      const collides = reserved.has(tool.name) || (occurrences.get(tool.name) ?? 0) > 1;
+      const collides = tool.name.startsWith("mcp__") || reserved.has(tool.name) || (occurrences.get(tool.name) ?? 0) > 1;
       toolPlan.set(tool.name, collides ? `${set.serverName}__${tool.name}` : tool.name);
     }
     plan.set(set.serverName, toolPlan);
   }
 
+  const names = new Set(reserved);
+  for (const tools of plan.values()) for (const name of tools.values()) {
+    if (names.has(name) || name.startsWith("mcp__") || name.includes("*")) throw new Error(`Unsafe or colliding MCP tool name: ${name}`);
+    names.add(name);
+  }
   return plan;
 }
 
@@ -59,15 +64,14 @@ export function buildDirectToolDefinitions(options: {
           tool.description ??
           `Call the ${options.serverName}/${tool.name} MCP tool.`,
         promptSnippet: `Call MCP tool ${options.serverName}/${tool.name}`,
-        parameters: Type.Unsafe<Record<string, unknown>>(
-          normalizeObjectSchema(tool.inputSchema)
-        ),
+        parameters: mcpParameters(tool.inputSchema),
         async execute(_toolCallId, params, signal) {
           const gate = isMcpToolCallAllowed(options.policy, options.serverName, tool);
           if (!gate.allowed) {
             throw new Error(gate.reason ?? `Tool ${options.serverName}/${tool.name} is blocked.`);
           }
 
+          assertMcpArguments(tool, params);
           const result = await options.clientPool.callTool(
             options.serverName,
             tool.name,
@@ -101,19 +105,6 @@ export function toPiToolResult(
       structuredContent: normalized.structuredContent,
       isError: normalized.isError ?? false
     }
-  };
-}
-
-function normalizeObjectSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  if (schema.type === "object") {
-    return schema;
-  }
-  return {
-    type: "object",
-    properties: {
-      input: schema
-    },
-    required: ["input"]
   };
 }
 

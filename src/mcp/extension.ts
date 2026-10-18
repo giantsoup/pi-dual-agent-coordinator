@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { McpClientPool } from "./client-pool.js";
 import {
@@ -18,6 +18,7 @@ import type { Role } from "../types/role.js";
 export interface McpExtensionRuntime {
   extensionFactory: ExtensionFactory;
   getStatus(): RoleMcpStatusSnapshot;
+  getToolNames(): string[];
   dispose(): Promise<void>;
 }
 
@@ -33,6 +34,7 @@ export function createMcpExtension(options: {
   return {
     extensionFactory: (pi) => controller.bind(pi),
     getStatus: () => controller.getStatus(),
+    getToolNames: () => controller.getToolNames(),
     dispose: () => controller.dispose()
   };
 }
@@ -40,6 +42,7 @@ export function createMcpExtension(options: {
 class McpExtensionController {
   private readonly clientPool: McpClientPool;
   private readonly policy: RoleMcpPolicy;
+  private readonly registeredToolNames = new Set<string>(["mcp"]);
   private readonly directToolNames = new Map<string, Map<string, string>>();
 
   public constructor(
@@ -50,7 +53,9 @@ class McpExtensionController {
     this.policy = createRoleMcpPolicy(role, config.servers);
   }
 
-  public bind(pi: ExtensionAPI): void {
+  public async bind(pi: ExtensionAPI): Promise<void> {
+    this.registeredToolNames.clear();
+    this.registeredToolNames.add("mcp");
     pi.registerTool(
       createMcpProxyTool({
         role: this.role,
@@ -61,10 +66,8 @@ class McpExtensionController {
       })
     );
 
-    pi.on("session_start", async () => {
-      await this.clientPool.hydrateFromCache();
-      await this.initializeServers(pi);
-    });
+    await this.clientPool.hydrateFromCache();
+    await this.initializeServers(pi);
 
     pi.on("before_agent_start", async (event) => {
       const summary = this.buildPromptContext();
@@ -79,6 +82,10 @@ class McpExtensionController {
     pi.on("session_shutdown", async () => {
       await this.clientPool.closeAll();
     });
+  }
+
+  public getToolNames(): string[] {
+    return [...this.registeredToolNames];
   }
 
   public getStatus(): RoleMcpStatusSnapshot {
@@ -136,6 +143,7 @@ class McpExtensionController {
         namePlan: toolNames
       });
       for (const definition of definitions) {
+        this.registeredToolNames.add(definition.name);
         pi.registerTool(definition);
       }
     }

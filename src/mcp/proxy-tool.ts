@@ -1,5 +1,6 @@
-import { Type } from "@sinclair/typebox";
-import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { assertMcpArguments } from "./schema.js";
+import { Type } from "typebox";
+import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import type { Role } from "../types/role.js";
@@ -7,7 +8,6 @@ import type { McpClientPool } from "./client-pool.js";
 import { renderMcpContent, toPiToolResult } from "./direct-tools.js";
 import { isMcpToolCallAllowed } from "./policy.js";
 import type {
-  McpProxyAction,
   McpSearchToolResult,
   RoleMcpPolicy
 } from "./types.js";
@@ -53,7 +53,7 @@ export function createMcpProxyTool(
       cursor: Type.Optional(Type.String())
     }),
     async execute(_toolCallId, params, signal) {
-      switch (params.action as McpProxyAction) {
+      switch (params.action) {
         case "status":
           return {
             content: [
@@ -155,6 +155,7 @@ export function createMcpProxyTool(
           if (!gate.allowed) {
             throw new Error(gate.reason ?? `Tool ${target.serverName}/${target.toolName} is blocked.`);
           }
+          assertMcpArguments(tool, params.arguments);
           const result = await options.clientPool.callTool(
             target.serverName,
             target.toolName,
