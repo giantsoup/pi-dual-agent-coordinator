@@ -1,5 +1,9 @@
 # Pi upgrade verification
 
+Latest accepted artifact: the [dependency API audit follow-up](#dependency-api-audit-follow-up)
+at the end of this record. Earlier counts and runtime paths below describe the
+original migration and Qwen3.8 acceptance stages.
+
 Implementation date: 18 October 2026. Migration branch: `codex/pi-upgrade-20261018`.
 The migration worktree is `/Users/Taylor/pi-dual-agent-coordinator-pi-upgrade`.
 The original checkout is `/Users/Taylor/pi-dual-agent-coordinator`.
@@ -301,3 +305,130 @@ backup=/Users/Taylor/.local/share/pi-dual/state-backups/pi-upgrade-20261018T2051
 The original source checkout is still clean at `7d245c1a1a690d891016eb138ed077dfa03d1dfa`.
 The upgrade remains on its isolated branch/worktree. The current launcher already
 points at the preserved old runtime; the command above also pins its saved Node.
+
+## Dependency API audit follow-up
+
+Completed on 18 October 2026. Application changes are commit
+`05ed53401b8530d99c3a2dbec36bd844a8f842d0` on `codex/pi-upgrade-20261018`.
+The [API coverage record](dependency-api-audit.md) maps all upgraded dependencies
+to their callers, current public contracts, retained security adapters, and tests.
+The fresh official registry check found no stable delta beyond the frozen versions
+listed earlier. No package or lockfile change was required for this follow-up.
+
+The follow-up corrects MCP shutdown ownership, preserves native Pi tool-error and
+structured-result fields, validates worker JSON, collects paginated metadata,
+validates structured MCP output including cached tools, and forwards cancellation
+to metadata/resource/prompt requests. Cached protocol data is validated with SDK
+schemas. Empty caches no longer share mutable state; completed and failed write
+queues are released correctly. Unsupported task-only tools fail closed.
+
+Deprecated Zod URL, strict-object, issue-code and error-option usage is migrated.
+Configuration types derive from schemas; tool adapters and model-display types
+use public SDK generics. Broker callback failures settle through Pi's assistant
+stream protocol. Type-only imports and unused code are enforced alongside the
+existing strict NodeNext checks. The dependency guard covers the Vitest config
+and known legacy patterns. Existing roles, sandbox restrictions, history,
+workflow ownership, and the requested Qwen3.8 default remain intact.
+
+### Final source evidence
+
+Evidence directory: `/Users/Taylor/pi-api-audit-evidence-20261018`.
+The final sequential command script is `verify-final-source.sh`. All commands
+used scoped Node 24.22.0 and npm 12.2.0; builds did not overlap tests.
+
+| Gate | Result |
+| --- | --- |
+| Normal `npm ci` | Passed, 244 packages, prepare and native build completed |
+| `npm ls --all` | Passed, no invalid resolution or peer errors |
+| `npm run verify:dependencies` | Passed, 172 files and 9 imported external package names |
+| Lifecycle-script inventory | No unreviewed scripts |
+| `npm run check` | Passed, including new type-only and unused-code checks |
+| `npm test` | 58 files, 384 tests passed in 62.73 seconds |
+| `npm run build` | Passed |
+| `npm run verify:isolation` | 341 dummy assertions and 2 security tests passed |
+| `PI_TUI_SCREEN_CAPTURE=1 npm run verify:terminal` | 445 PTY assertions passed, TUI/plain and rendered capture |
+| `npm audit --json` | Zero vulnerabilities |
+| Working and staged diff checks | Passed |
+
+Logs are `final-*`. The earlier passing sequence, before the last API cleanup,
+is retained under `before-final-api-cleanup/`. Development failures and corrected
+test assumptions are documented in the API audit; no tests, assertions, or
+existing five-second Vitest limits were disabled or relaxed. Source terminal
+screens and ANSI traces remain in the worktree's `test-results/terminal-evidence`.
+
+### Installed and bounded live evidence
+
+The new trusted installation is:
+
+`/Users/Taylor/.local/share/pi-dual/runtime-pi-1.3.0-api-audit-20261018`
+
+It was copied from clean commit `05ed534` with an empty source diff. It contains
+its own Node 24.22.0/npm 12.2.0 and a manifest covering 26,631 files/symlinks and
+executable modes. All copy hashes matched. The snapshot was never rebuilt or
+edited after installation; verification output is confined to excluded test
+artifacts. Installed logs are `installed-*` in the evidence directory above.
+
+The separate gates ran in this order:
+
+1. All 26,631 manifest entries verified.
+2. Installed dependency guard passed.
+3. Installed dummy isolation passed all 341 assertions.
+4. Installed rendered terminal verification passed all 445 PTY assertions.
+5. Every manifest entry still matched.
+6. Doctor passed against the canonical original workspace with MCP disabled.
+7. One-request OpenAI smoke passed using GPT-6 Luna/high through the trusted
+   broker. It returned exactly `LOCAL_API_OK` in 2,064 ms, using 1,573 input and
+   7 output tokens. The existing 1,024-output-token cap, 40-second broker deadline,
+   45-second session abort, empty tool registry, and disabled project resources
+   remained in force. No credential was exported or supplied to editable source.
+8. The local verifier passed under its 120-second bound using the already-loaded
+   `lm-studio/qwen/qwen3.8-27b`. This run invoked real sandboxed `write` and `read`
+   tools and verified `LOCAL_EXECUTOR_OK` on disk. The disposable workspace was
+   removed. This run did not invoke `bash`; the earlier Qwen acceptance did.
+9. LM Studio inventory, loaded IDs and context lengths matched before/after:
+   five downloaded LLMs, only Qwen3.8 loaded at 65,536 tokens. No load/unload or
+   download request was made.
+10. All 26,631 installed manifest entries still matched after live checks. Both
+    earlier upgrade snapshots also passed their complete manifests, with 26,617
+    and 26,760 entries respectively.
+
+Preservation checks still verify 252 original application/doc hashes, 20 excluded
+calculator/demo files, 15 private backup files, 16 older runtime entry points,
+existing workspace history, saved defaults, and the launcher hash. During this
+follow-up, an unrelated untracked `docs/agent-prompt-qa-plan.md` appeared in the
+original checkout. It was left untouched, excluded from migration, and recorded
+in `concurrent-original-work.json`. The original tracked checkout remains at
+`7d245c1`; its status now includes that concurrent planning document. This is
+separate from the clean migration branch.
+
+### Use, rollback and remaining limits
+
+Use the verified artifact directly:
+
+```sh
+runtime=/Users/Taylor/.local/share/pi-dual/runtime-pi-1.3.0-api-audit-20261018
+"$runtime/bin/node" "$runtime/dist/src/index.js" repl /Users/Taylor/pi-dual-agent-coordinator --no-mcp
+```
+
+The existing launcher was not switched. The upgrade is committed in its isolated
+worktree; the original branch was not merged, pushed, or published. All previous
+runtime paths remain available. The earlier Qwen3.8 candidate can still be invoked
+with its own `bin/node` and `dist/src/index.js`.
+
+For a full pre-Pi rollback, stop the coordinator, archive current config/history,
+restore the matching private backup at
+`/Users/Taylor/.local/share/pi-dual/state-backups/pi-upgrade-20261018T205114Z`,
+and use the saved Node plus old runtime command in the rollback section above.
+Do not rely on a launcher change alone to downgrade newer session files. This
+follow-up did not change real config or persisted workspace history.
+
+The dependency exceptions remain Pi's nested TypeBox 1.3.27 and pinned vendor
+constraints, including the transitive `node-domexception@1.0.0` deprecation. No
+new exception or audit finding was introduced. Current direct versions are all
+listed in the frozen-versions section.
+
+Live model switching, a long-running live A-to-B workflow, third-party configured
+MCP servers, and coding-quality benchmarks remain unverified. MCP contracts and
+workflow/lifecycle behavior were tested with deterministic real SDK sessions;
+cloud and local connectivity were verified only by the bounded checks described
+above. These limits do not imply broader live verification.
