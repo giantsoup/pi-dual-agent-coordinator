@@ -258,7 +258,7 @@ export class RuntimeEventBridge {
       event.type === "tool_execution_start" &&
       (PROTOCOL_TOOL_NAMES.has(event.toolName) || this.submissions.get(sessionKey)?.formatOnly)
     ) {
-      this.observePseudoToolLoop(binding, sessionKey, event.toolName);
+      this.observePseudoToolLoop(sessionKey, event.toolName);
     }
 
     if (event.type !== "turn_end") {
@@ -349,7 +349,6 @@ export class RuntimeEventBridge {
   }
 
   private observePseudoToolLoop(
-    binding: RoleRuntimeBinding,
     sessionKey: string,
     toolName: string
   ): void {

@@ -9,6 +9,12 @@ const read = path => JSON.parse(readFileSync(join(root, path), 'utf8'));
 const manifest = read('package.json');
 const lock = read('package-lock.json');
 const declared = { ...manifest.dependencies, ...manifest.devDependencies };
+const compiler = read('tsconfig.json').compilerOptions;
+for (const option of ['strict', 'noUncheckedIndexedAccess', 'exactOptionalPropertyTypes', 'useUnknownInCatchVariables', 'verbatimModuleSyntax', 'noUnusedLocals', 'noUnusedParameters']) {
+  assert.equal(compiler[option], true, `Keep ${option} enabled`);
+}
+assert.equal(compiler.module, 'NodeNext');
+assert.equal(compiler.moduleResolution, 'NodeNext');
 assert.equal(manifest.packageManager, 'npm@12.2.0');
 assert.equal(manifest.engines.node, '>=24.22.0 <25');
 assert.equal(manifest.engines.npm, '>=12.2.0 <13');
@@ -27,26 +33,33 @@ assert.ok(pi.every(([, version]) => version === declared['@earendil-works/pi-cod
 for (const path of Object.keys(lock.packages)) assert.ok(!path.includes('@mariozechner/pi-'), `Legacy Pi family: ${path}`);
 const builtins = new Set(builtinModules.flatMap(name => [name, `node:${name}`]));
 let files = 0; const imports = new Set();
+function inspect(path) {
+  files++;
+  const source = readFileSync(join(root, path), 'utf8');
+  if (path.startsWith('src/')) {
+    for (const obsolete of [/\bz\.ZodIssueCode\b/, /\bz\.string\(\)\.url\(/, /\.strict\(\)/, /\btransport\.onclose\s*=/]) {
+      assert.ok(!obsolete.test(source), `Obsolete dependency pattern ${obsolete} in ${path}`);
+    }
+  }
+  for (const match of source.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|^\s*import\s*|\brequire\s*\(\s*)["']([^"']+)["']/gm)) {
+    const specifier = match[1];
+    assert.ok(!specifier.startsWith("@mariozechner/pi-") && !specifier.startsWith("@sinclair/typebox"), `Legacy import in ${path}`);
+    assert.notEqual(specifier, "@earendil-works/pi-ai/compat", `Obsolete global adapter in ${path}`);
+    if (specifier.startsWith('.') || specifier.startsWith('/') || builtins.has(specifier)) continue;
+    const name = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
+    assert.ok(name in declared, `Undeclared direct import ${name} in ${path}`);
+    imports.add(name);
+  }
+}
 function visit(directory) {
   for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) visit(path);
-    else if (/\.(?:[cm]?js|tsx?)$/.test(path)) {
-      files++;
-      const source = readFileSync(join(root, path), 'utf8');
-      for (const match of source.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|^\s*import\s*|\brequire\s*\(\s*)["']([^"']+)["']/gm)) {
-        const specifier = match[1];
-        assert.ok(!specifier.startsWith("@mariozechner/pi-") && !specifier.startsWith("@sinclair/typebox"), `Legacy import in ${path}`);
-        assert.notEqual(specifier, "@earendil-works/pi-ai/compat", `Obsolete global adapter in ${path}`);
-        if (specifier.startsWith('.') || specifier.startsWith('/') || builtins.has(specifier)) continue;
-        const name = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
-        assert.ok(name in declared, `Undeclared direct import ${name} in ${path}`);
-        imports.add(name);
-      }
-    }
+    else if (/\.(?:[cm]?js|tsx?)$/.test(path)) inspect(path);
   }
 }
 for (const directory of ['src', 'test', 'scripts', 'examples']) visit(directory);
+inspect('vitest.config.ts');
 const require = createRequire(import.meta.url);
 const tsPlatform = `@typescript/typescript-${process.platform}-${process.arch}`;
 assert.ok(existsSync(require.resolve(`${tsPlatform}/package.json`)), 'Native TypeScript platform package is required');

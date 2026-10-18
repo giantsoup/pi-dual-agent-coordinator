@@ -95,5 +95,9 @@ server.registerPrompt(
   })
 );
 
+server.registerTool("failure", { description: "Structured failure", inputSchema: {}, annotations: { readOnlyHint: true } }, async () => ({
+  content: [{ type: "text", text: "Fixture failure" }], structuredContent: { ok: false, reason: "fixture" }, isError: true
+}));
+
 const transport = new StdioServerTransport();
 await server.connect(transport);

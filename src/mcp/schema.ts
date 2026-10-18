@@ -1,6 +1,6 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Ajv } from "ajv";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Type } from "typebox";
 
 const validators = new WeakMap<Tool["inputSchema"], (args: unknown) => boolean>();
@@ -21,4 +21,12 @@ export function mcpParameters(schema: Tool["inputSchema"]) {
 export function assertMcpArguments(tool: Tool, args: unknown): void {
   mcpParameters(tool.inputSchema);
   if (!validators.get(tool.inputSchema)?.(args ?? {})) throw new Error(`Invalid arguments for MCP tool ${tool.name}.`);
+}
+
+export function assertMcpResult(tool: Tool, result: CallToolResult): void {
+  if (result.isError || !tool.outputSchema) return;
+  mcpParameters(tool.outputSchema);
+  if (result.structuredContent === undefined || !validators.get(tool.outputSchema)?.(result.structuredContent)) {
+    throw new Error(`Invalid structured result for MCP tool ${tool.name}.`);
+  }
 }

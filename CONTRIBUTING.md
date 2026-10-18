@@ -22,7 +22,7 @@ npm run verify:isolation
 npm run verify:terminal
 ```
 
-Use the separate trusted installation for interactive testing, with an approved OpenAI Responses model for Agent A and an approved local LM Studio model for Agent B. Agent A defaults to GPT-6 Luna with high reasoning; B defaults to Qwen3.6 35B A3B with API thinking off. Agent A requires API-key authentication; environment keys, plaintext Pi auth, and subscription auth are not accepted. Start LM Studio and load the selected executor before running doctor or the REPL. See the [local executor setup](README.md).
+Use the separate trusted installation for interactive testing, with an approved OpenAI Responses model for Agent A and an approved local LM Studio model for Agent B. Agent A defaults to GPT-6 Luna with high reasoning; B defaults to Qwen3.8 27B with API thinking off. Agent A requires API-key authentication; environment keys, plaintext Pi auth, and subscription auth are not accepted. Start LM Studio and load the selected executor before running doctor or the REPL. See the [local executor setup](README.md).
 
 The PTY verifier requires Python 3. It drives both interfaces with real Pi runtimes,
 dummy provider responses, and isolated mutation workspaces. Live API verification
@@ -47,3 +47,8 @@ in [Pi upgrade verification](docs/pi-upgrade-verification.md). Run build-depende
 checks sequentially because they replace `dist`. Vitest uses two fork workers to support tests that change cwd and to bound
 concurrent sandbox subprocess startup. Keep that worker cap when running the suite. Keep its default mock cleanup and strict NodeNext
 TypeScript checks enabled.
+
+The [dependency API audit](docs/dependency-api-audit.md) records current public
+integrations and the security reasons for retaining application adapters. Run
+`npm run verify:dependencies` with the scoped toolchain when changing imports or
+compiler settings.

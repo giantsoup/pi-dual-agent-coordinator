@@ -10,24 +10,20 @@ import {
   type StdioServerParameters
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
-  StreamableHTTPClientTransport,
-  StreamableHTTPError
-} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import {
+  CallToolResultSchema,
+  ErrorCode,
   ListRootsRequestSchema,
   ListToolsResultSchema,
   McpError,
   type Tool
 } from "@modelcontextprotocol/sdk/types.js";
 
-import { mcpParameters, assertMcpArguments } from "./schema.js";
+import { mcpParameters, assertMcpArguments, assertMcpResult } from "./schema.js";
 import { McpCacheStore } from "./cache-store.js";
 import type {
   McpMetadataCacheEntry,
   McpMetadataSnapshot,
   McpServerRuntimeState,
-  McpTransportType,
   ResolvedMcpConfig,
   ResolvedMcpServerConfig,
   RoleMcpStatusSnapshot
@@ -38,11 +34,6 @@ interface PoolEntry {
   config: ResolvedMcpServerConfig;
   state: McpServerRuntimeState;
   client?: Client | undefined;
-  transport?:
-    | StdioClientTransport
-    | StreamableHTTPClientTransport
-    | SSEClientTransport
-    | undefined;
   connectionPromise?: Promise<Client> | undefined;
   idleTimer?: NodeJS.Timeout | undefined;
   stderrChunks: string[];
@@ -56,6 +47,7 @@ const CLIENT_INFO = {
 
 export class McpClientPool {
   private readonly cacheStore: McpCacheStore;
+  private closing: Promise<void> | undefined;
   private isolation: ToolIsolation | undefined;
   private readonly entries = new Map<string, PoolEntry>();
 
@@ -108,12 +100,13 @@ export class McpClientPool {
     return this.entries.get(serverName)?.metadata;
   }
 
-  public async ensureMetadata(serverName: string): Promise<McpMetadataSnapshot> {
+  public async ensureMetadata(serverName: string, signal?: AbortSignal): Promise<McpMetadataSnapshot> {
+    signal?.throwIfAborted();
     const known = this.getKnownMetadata(serverName);
     if (known) {
       return known;
     }
-    return this.syncMetadata(serverName);
+    return this.syncMetadata(serverName, signal);
   }
 
   public setDirectToolNames(serverName: string, toolNames: string[]): void {
@@ -129,29 +122,37 @@ export class McpClientPool {
     return this.ensureConnected(entry);
   }
 
-  public async syncMetadata(serverName: string): Promise<McpMetadataSnapshot> {
+  public async syncMetadata(serverName: string, signal?: AbortSignal): Promise<McpMetadataSnapshot> {
+    signal?.throwIfAborted();
     const entry = this.requireEntry(serverName);
     const client = await this.ensureConnected(entry);
+    signal?.throwIfAborted();
     try {
       const capabilities = client.getServerCapabilities();
-      const [toolsResult, resourcesResult, resourceTemplatesResult, promptsResult] =
-        await Promise.all([
-          client.listTools(),
-          capabilities?.resources ? client.listResources() : Promise.resolve({ resources: [] }),
-          capabilities?.resources
-            ? this.tryListResourceTemplates(client)
-            : Promise.resolve({ resourceTemplates: [] }),
-          capabilities?.prompts ? client.listPrompts() : Promise.resolve({ prompts: [] })
-        ]);
-
-      for (const tool of toolsResult.tools) mcpParameters(tool.inputSchema);
-      const snapshot: McpMetadataSnapshot = {
-        tools: toolsResult.tools,
-        resources: resourcesResult.resources,
-        resourceTemplates: resourceTemplatesResult.resourceTemplates,
-        prompts: promptsResult.prompts,
-        instructions: client.getInstructions()
-      };
+      const requestOptions = signal ? { signal } : undefined;
+      const [tools, resources, resourceTemplates, prompts] = await Promise.all([
+        capabilities?.tools ? collectPages(async cursor => {
+          const page = await client.listTools(cursor === undefined ? undefined : { cursor }, requestOptions);
+          return { items: page.tools, nextCursor: page.nextCursor };
+        }) : [],
+        capabilities?.resources ? collectPages(async cursor => {
+          const page = await client.listResources(cursor === undefined ? undefined : { cursor }, requestOptions);
+          return { items: page.resources, nextCursor: page.nextCursor };
+        }) : [],
+        capabilities?.resources ? collectPages(async cursor => {
+          const page = await this.tryListResourceTemplates(client, cursor, signal);
+          return { items: page.resourceTemplates, nextCursor: page.nextCursor };
+        }) : [],
+        capabilities?.prompts ? collectPages(async cursor => {
+          const page = await client.listPrompts(cursor === undefined ? undefined : { cursor }, requestOptions);
+          return { items: page.prompts, nextCursor: page.nextCursor };
+        }) : []
+      ]);
+      for (const tool of tools) {
+        mcpParameters(tool.inputSchema);
+        if (tool.outputSchema) mcpParameters(tool.outputSchema);
+      }
+      const snapshot: McpMetadataSnapshot = { tools, resources, resourceTemplates, prompts, instructions: client.getInstructions() };
 
       entry.metadata = redactValue(snapshot);
       entry.state.lastMetadataSync = new Date().toISOString();
@@ -178,9 +179,10 @@ export class McpClientPool {
     args: Record<string, unknown> | undefined,
     signal?: AbortSignal
   ) {
-    const metadata = await this.ensureMetadata(serverName);
+    const metadata = await this.ensureMetadata(serverName, signal);
     const tool = metadata.tools.find((candidate) => candidate.name === toolName);
     if (!tool) throw new Error(`Unknown MCP tool ${serverName}/${toolName}`);
+    if (tool.execution?.taskSupport === "required") throw new Error("Task-only MCP tools are not enabled.");
     assertMcpArguments(tool, args);
     signal?.throwIfAborted();
     const client = await this.ensureConnected(this.requireEntry(serverName));
@@ -188,18 +190,22 @@ export class McpClientPool {
     const result = await client.callTool({
       name: toolName,
       arguments: redactValue(args)
-    }, undefined, { ...(signal ? { signal } : {}) });
+    }, CallToolResultSchema, { ...(signal ? { signal } : {}) });
+    const parsed = CallToolResultSchema.parse(redactValue(result));
+    assertMcpResult(tool, parsed);
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
-    return redactValue(result);
+    return parsed;
   }
 
-  public async listResources(serverName: string, cursor?: string | undefined) {
+  public async listResources(serverName: string, cursor?: string | undefined, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const client = await this.ensureConnected(this.requireEntry(serverName));
-    const result = await client.listResources(cursor ? { cursor } : undefined);
+    signal?.throwIfAborted();
+    const result = await client.listResources(cursor === undefined ? undefined : { cursor }, signal ? { signal } : undefined);
     const templates =
-      cursor
+      cursor !== undefined
         ? undefined
-        : await this.tryListResourceTemplates(client);
+        : await this.tryListResourceTemplates(client, undefined, signal);
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
     return {
       resources: result.resources,
@@ -208,16 +214,20 @@ export class McpClientPool {
     };
   }
 
-  public async readResource(serverName: string, uri: string) {
+  public async readResource(serverName: string, uri: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const client = await this.ensureConnected(this.requireEntry(serverName));
-    const result = await client.readResource({ uri });
+    signal?.throwIfAborted();
+    const result = await client.readResource({ uri }, signal ? { signal } : undefined);
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
     return result;
   }
 
-  public async listPrompts(serverName: string, cursor?: string | undefined) {
+  public async listPrompts(serverName: string, cursor?: string | undefined, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const client = await this.ensureConnected(this.requireEntry(serverName));
-    const result = await client.listPrompts(cursor ? { cursor } : undefined);
+    signal?.throwIfAborted();
+    const result = await client.listPrompts(cursor === undefined ? undefined : { cursor }, signal ? { signal } : undefined);
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
     return result;
   }
@@ -225,21 +235,31 @@ export class McpClientPool {
   public async getPrompt(
     serverName: string,
     name: string,
-    args: Record<string, string> | undefined
+    args: Record<string, string> | undefined,
+    signal?: AbortSignal
   ) {
+    signal?.throwIfAborted();
     const client = await this.ensureConnected(this.requireEntry(serverName));
+    signal?.throwIfAborted();
     const result = await client.getPrompt({
       name,
       arguments: redactValue(args)
-    });
+    }, signal ? { signal } : undefined);
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
     return result;
   }
 
-  public async closeAll(): Promise<void> {
-    await Promise.all([...this.entries.values()].map((entry) => this.closeEntry(entry)));
-    this.isolation?.dispose();
-    this.isolation = undefined;
+  public closeAll(): Promise<void> {
+    if (this.closing) return this.closing;
+    const closing = (async () => {
+      const results = await Promise.allSettled([...this.entries.values()].map(entry => this.closeEntry(entry)));
+      const failures = results.filter(result => result.status === "rejected");
+      if (failures.length) throw new AggregateError(failures.map(result => result.reason), "MCP shutdown failed.");
+      this.isolation?.dispose();
+      this.isolation = undefined;
+    })();
+    this.closing = closing;
+    return closing.finally(() => { if (this.closing === closing) this.closing = undefined; });
   }
 
   public getStatusSnapshot(): RoleMcpStatusSnapshot {
@@ -253,6 +273,7 @@ export class McpClientPool {
   }
 
   private async ensureConnected(entry: PoolEntry): Promise<Client> {
+    if (this.closing) throw new Error("MCP connections are closing.");
     if (entry.client) {
       this.scheduleIdleDisconnect(entry);
       return entry.client;
@@ -298,39 +319,26 @@ export class McpClientPool {
       ]
     }));
 
-    const connection = await this.openTransport(entry, client);
-    entry.transport = connection.transport;
-    entry.state.transport = connection.transportType;
-    connection.transport.onclose = () => {
+    if (entry.config.transport !== "stdio") {
+      throw new Error("Secure MCP currently supports sandboxed stdio servers only. HTTP/SSE peers cannot be verified as isolated; no unsandboxed fallback is available.");
+    }
+    const transport = new StdioClientTransport(this.buildStdioParams(entry.config));
+    this.attachStdioStderr(entry, transport);
+    client.onclose = () => {
+      if (entry.client && entry.client !== client) return;
+      if (entry.idleTimer) clearTimeout(entry.idleTimer);
+      entry.idleTimer = undefined;
       entry.state.connected = false;
       entry.client = undefined;
-      entry.transport = undefined;
     };
-    return client;
-  }
-
-  private async openTransport(
-    entry: PoolEntry,
-    client: Client
-  ): Promise<{
-    transport:
-      | StdioClientTransport
-      | StreamableHTTPClientTransport
-      | SSEClientTransport;
-    transportType: McpTransportType;
-  }> {
-    if (entry.config.transport === "stdio") {
-      const transport = new StdioClientTransport(this.buildStdioParams(entry.config));
-      this.attachStdioStderr(entry, transport);
+    client.onerror = error => this.recordError(entry, error);
+    try {
       await client.connect(transport);
-      return {
-        transport,
-        transportType: "stdio"
-      };
+      return client;
+    } catch (error) {
+      await client.close().catch(() => undefined);
+      throw error;
     }
-
-    throw new Error("Secure MCP currently supports sandboxed stdio servers only. HTTP/SSE peers cannot be verified as isolated; no unsandboxed fallback is available.");
-
   }
 
   private buildStdioParams(config: ResolvedMcpServerConfig): StdioServerParameters {
@@ -367,13 +375,13 @@ export class McpClientPool {
     });
   }
 
-  private async tryListResourceTemplates(client: Client): Promise<{ resourceTemplates: [] | Array<{ uriTemplate: string; name: string }> }> {
+  private async tryListResourceTemplates(client: Client, cursor?: string, signal?: AbortSignal): ReturnType<Client["listResourceTemplates"]> {
     try {
-      return await client.listResourceTemplates();
+      return await client.listResourceTemplates(cursor === undefined ? undefined : { cursor }, signal ? { signal } : undefined);
     } catch (error) {
       if (
         error instanceof McpError &&
-        error.code === -32601
+        error.code === ErrorCode.MethodNotFound
       ) {
         return { resourceTemplates: [] };
       }
@@ -388,7 +396,10 @@ export class McpClientPool {
     }
 
     const tools = ListToolsResultSchema.parse({ tools: cached.tools }).tools;
-    for (const tool of tools) mcpParameters(tool.inputSchema);
+    for (const tool of tools) {
+      mcpParameters(tool.inputSchema);
+      if (tool.outputSchema) mcpParameters(tool.outputSchema);
+    }
     entry.metadata = {
       tools,
       resources: cached.resources,
@@ -400,17 +411,15 @@ export class McpClientPool {
   }
 
   private async closeEntry(entry: PoolEntry): Promise<void> {
+    await entry.connectionPromise?.catch(() => undefined);
     if (entry.idleTimer) {
       clearTimeout(entry.idleTimer);
       entry.idleTimer = undefined;
     }
     if (entry.client) {
-      await entry.client.close().catch(() => undefined);
-    } else if (entry.transport) {
-      await entry.transport.close().catch(() => undefined);
+      await entry.client.close();
     }
     entry.client = undefined;
-    entry.transport = undefined;
     entry.state.connected = false;
   }
 
@@ -419,11 +428,11 @@ export class McpClientPool {
       clearTimeout(entry.idleTimer);
       entry.idleTimer = undefined;
     }
-    if (entry.config.lifecycle !== "lazy") {
+    if (this.closing || entry.config.lifecycle !== "lazy") {
       return;
     }
     entry.idleTimer = setTimeout(() => {
-      void this.closeEntry(entry);
+      void this.closeEntry(entry).catch(error => this.recordError(entry, error));
     }, entry.config.idleTimeoutMinutes * 60_000);
   }
 
@@ -440,4 +449,19 @@ export class McpClientPool {
     }
     return entry;
   }
+}
+
+async function collectPages<T>(read: (cursor?: string) => Promise<{ items: T[]; nextCursor?: string | undefined }>): Promise<T[]> {
+  const items: T[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < 100; page++) {
+    const result = await read(cursor);
+    items.push(...result.items);
+    cursor = result.nextCursor;
+    if (cursor === undefined) return items;
+    if (seen.has(cursor)) throw new Error("MCP metadata pagination repeated a cursor.");
+    seen.add(cursor);
+  }
+  throw new Error("MCP metadata exceeded 100 pages.");
 }

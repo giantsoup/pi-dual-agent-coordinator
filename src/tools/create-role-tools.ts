@@ -1,5 +1,7 @@
 import { createCodingTools, createReadOnlyTools } from "@earendil-works/pi-coding-agent";
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { TSchema } from "typebox";
+import { parseToolResult } from "./tool-result.js";
 import type { Role } from "../types/role.js";
 import { ToolIsolation, runIsolatedTool } from "../security/isolation.js";
 import { redactValue } from "../security/redact.js";
@@ -10,18 +12,18 @@ export interface CreateRoleToolsOptions extends SafeMutationOptions {
   isolation?: ToolIsolation;
 }
 
-export function createRoleTools(options: CreateRoleToolsOptions): AgentTool<any>[] {
+export function createRoleTools(options: CreateRoleToolsOptions): AgentTool<TSchema, unknown>[] {
   const tools = options.role === "A" ? createReadOnlyTools(options.cwd) : createCodingTools(options.cwd);
   return tools.map((definition) => {
-    const isolated: AgentTool<any> = {
+    const isolated: AgentTool<TSchema, unknown> = {
       ...definition,
       execute: async (_id, args, signal, onUpdate) => {
         const isolation = options.isolation ?? new ToolIsolation(options.cwd, options.role);
         try {
           isolation.verify();
           const result = await runIsolatedTool({ isolation, role: options.role, name: definition.name, args: redactValue(args),
-            signal, onUpdate: (update) => onUpdate?.(redactValue(update as AgentToolResult<unknown>)) });
-          return redactValue(result as AgentToolResult<unknown>);
+            signal, onUpdate: (update) => onUpdate?.(redactValue(parseToolResult(update))) });
+          return redactValue(parseToolResult(result));
         } finally { if (!options.isolation) isolation.dispose(); }
       }
     };

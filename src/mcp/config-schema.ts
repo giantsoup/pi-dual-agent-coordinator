@@ -25,7 +25,7 @@ export const mcpServerConfigSchema = z
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),
     cwd: z.string().min(1).optional(),
-    url: z.string().url().optional(),
+    url: z.url().optional(),
     headers: z.record(z.string(), z.string()).optional(),
     transport: z.enum(["stdio", "streamable-http", "sse", "http"]).optional(),
     "x-pi-dual": serverPiDualConfigSchema.optional()
@@ -33,13 +33,13 @@ export const mcpServerConfigSchema = z
   .superRefine((value, ctx) => {
     if (!value.command && !value.url) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Each MCP server requires either `command` or `url`."
       });
     }
     if (value.command && value.url) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "An MCP server cannot define both `command` and `url`."
       });
     }

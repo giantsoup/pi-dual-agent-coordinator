@@ -9,7 +9,7 @@ import {
   CombinedAutocompleteProvider,
   matchesKey,
   Key,
-  TUI,
+  type TUI,
   truncateToWidth,
   wrapTextWithAnsi,
   type Component,

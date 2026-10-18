@@ -1,4 +1,4 @@
-import { createBrokerModelRuntime } from "../security/model-runtime.js";
+import { createBrokerModelRuntime, failedModelStream } from "../security/model-runtime.js";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
@@ -244,13 +244,17 @@ export async function createRoleRuntime(
         initialState: { model, thinkingLevel, tools: [] }, convertToLlm: (messages) => convertToLlm(redactValue(messages)),
         sessionId: sessionManager.getSessionId(),
         streamFn: async (requestModel, context, streamOptions) => {
-          assertPromptActive();
-          if (requestModel.provider !== model.provider || requestModel.id !== model.id || requestModel.baseUrl !== model.baseUrl || requestModel.api !== model.api) {
-            throw new Error("Untrusted provider model or endpoint rejected.");
+          try {
+            assertPromptActive();
+            if (requestModel.provider !== model.provider || requestModel.id !== model.id || requestModel.baseUrl !== model.baseUrl || requestModel.api !== model.api) {
+              throw new Error("Untrusted provider model or endpoint rejected.");
+            }
+            return await modelRuntime.streamSimple(model, redactValue(context), { ...streamOptions, apiKey: ownedToken, maxRetries: 0,
+              ...(["gpt-6-luna", "gpt-6.1-sol", "gpt-5.6-terra"].includes(model.id) ? { cacheRetention: "none" } : {}),
+              ...(options.noTools ? { maxTokens: SMOKE_MAX_TOKENS } : {}) });
+          } catch (error) {
+            return failedModelStream(model, error, streamOptions?.signal?.aborted ?? false);
           }
-          return modelRuntime.streamSimple(model, redactValue(context), { ...streamOptions, apiKey: ownedToken, maxRetries: 0,
-            ...(["gpt-6-luna", "gpt-6.1-sol", "gpt-5.6-terra"].includes(model.id) ? { cacheRetention: "none" } : {}),
-            ...(options.noTools ? { maxTokens: SMOKE_MAX_TOKENS } : {}) });
         }
       });
       const restored = sessionManager.buildSessionContext();

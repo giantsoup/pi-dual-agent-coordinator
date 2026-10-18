@@ -7,7 +7,6 @@ import { pathToFileURL } from "node:url";
 import { ManagedSession } from "../runtime/managed-session.js";
 import { Type } from "typebox";
 import { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { ToolIsolation, installationRoot } from "./isolation.js";
 import { credentialAccount, credentialHelper, credentialStatus, loadCredential } from "./credentials.js";
 import { createProviderBroker, assertProviderEndpoint } from "./provider-broker.js";
@@ -225,7 +224,7 @@ export async function verifyCredentialIsolation(): Promise<IsolationReport> {
           assertLoadout();
           await piSession.reload();
           assertLoadout();
-          const read = piSession.agent.state.tools.find((tool: AgentTool<any>) => tool.name === "read");
+          const read = piSession.agent.state.tools.find((tool) => tool.name === "read");
           check(Boolean(read), "runtime", `${role} actual session supplied read tool`);
           await expectFailure(() => read!.execute("runtime-probe", { path: secretFile }), "runtime", `${role} supplied read denies protected file`);
           if (role === "B") {
