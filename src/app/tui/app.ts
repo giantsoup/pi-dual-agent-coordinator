@@ -1,6 +1,6 @@
 import { roleLabel } from "../../types/history.js";
 import { CurrentWorkspace, liveIdentity, paintRole, type WorkspaceFocus, frame } from "./workspace.js";
-import { bindingMatches, contextualHelp, footerBindings } from "./bindings.js";
+import { bindingMatches, browsingInput, controlActions, contextualHelp, footerBindings, type ControlAction } from "./bindings.js";
 import { safeDisplayText } from "../../security/display-text.js";
 import { ModelPicker } from "./model-picker.js";
 import {
@@ -46,6 +46,8 @@ export class CoordinatorTuiApp implements Component, Focusable {
   public focused = false;
 
   private readonly editor: Editor;
+  private controls: { kind: "menu"; selected: number } | { kind: "quit" } | undefined;
+  private controlsPaste = false;
   private lastCtrlCAt = 0;
   private lastModalKey: string | undefined;
   private modalScrollOffset = 0;
@@ -104,6 +106,18 @@ export class CoordinatorTuiApp implements Component, Focusable {
 
   public handleInput(data: string): void {
     const state = this.service.getState();
+    // Legacy terminals can deliver a quick Esc + letter as one Meta sequence.
+    if (!this.controls && state.modal.kind === "none" && this.paneFocus === "editor"
+      && data.length === 2 && data.startsWith("\x1b") && controlActions.some((item) => item.key === data[1])) {
+      this.handleInput("\x1b");
+      this.handleInput(data.slice(1));
+      return;
+    }
+    if (this.controls) {
+      this.handleControlsInput(data);
+      this.tui.requestRender(true);
+      return;
+    }
     const mouse = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
     if (mouse) {
       const button = Number(mouse[1]);
@@ -119,7 +133,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
     }
     if (state.modal.kind === "model_loading") {
       if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) void this.service.dispatch({ type: "cancel" });
-      else if (data.toLowerCase() === "q") void this.service.dispatch({ type: "quit" });
+      else if (matchesKey(data, "q")) this.controls = { kind: "quit" };
       this.tui.requestRender();
       return;
     }
@@ -130,7 +144,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
     if ((state.modal.kind === "model_picker" || state.modal.kind === "model_error") && matchesKey(data, Key.ctrl("c"))) {
       void this.service.dispatch({ type: "close_modal" }); this.tui.requestRender(true); return;
     }
-    if (bindingMatches(data, "help")) {
+    if (bindingMatches(data, "help") || ((state.modal.kind !== "none" || this.paneFocus !== "editor") && matchesKey(data, "h"))) {
       if (state.modal.kind !== "none") this.savedModals.set(state.modal.createdAt, { offset: this.modalScrollOffset, selected: this.selection?.getSelectedItem()?.value });
       void this.service.dispatch({ type: state.modal.kind === "help" ? "close_modal" : "open_help" });
       this.tui.requestRender(true);
@@ -152,12 +166,13 @@ export class CoordinatorTuiApp implements Component, Focusable {
       } else if (this.paneFocus !== "editor") {
         this.paneFocus = "editor";
         this.tui.requestRender(true);
-      } else if (this.transientHint) {
-        this.transientHint = undefined;
-        this.tui.requestRender();
-      } else {
+      } else if (this.editor.isShowingAutocomplete()) {
         this.editor.handleInput(data);
         this.tui.requestRender();
+      } else {
+        this.controls = { kind: "menu", selected: 0 };
+        this.transientHint = undefined;
+        this.tui.requestRender(true);
       }
       return;
     }
@@ -187,6 +202,15 @@ export class CoordinatorTuiApp implements Component, Focusable {
       return;
     }
 
+    if (this.paneFocus !== "editor") {
+      if (matchesKey(data, Key.tab)) {
+        this.cyclePaneFocus(1);
+        this.tui.requestRender(true);
+        return;
+      }
+      data = browsingInput(data);
+    }
+
     if ((this.paneFocus === "editor" || this.paneFocus === "transcript") && this.workspace.scrollInput(data, state)) {
       this.tui.requestRender(true);
       return;
@@ -201,9 +225,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
     }
 
     if (matchesKey(data, Key.alt("up")) && this.historyDraft === undefined) {
-      this.historyDraft = this.editor.getExpandedText();
-      this.editor.setText("");
-      this.editor.handleInput("\u001b[A");
+      this.openPromptHistory();
     } else if (this.historyDraft !== undefined && (matchesKey(data, Key.up) || matchesKey(data, Key.down))) {
       this.editor.handleInput(data);
       if (matchesKey(data, Key.down) && this.editor.getText() === "") {
@@ -222,12 +244,14 @@ export class CoordinatorTuiApp implements Component, Focusable {
     if (!["running", "cancelling"].includes(state.operation.kind) && this.transientHint?.startsWith("Cancelling")) this.transientHint = undefined;
     this.syncModalState(state);
     this.editor.focused =
-      this.focused && state.modal.kind === "none" && this.paneFocus === "editor";
+      this.focused && !this.controls && state.modal.kind === "none" && this.paneFocus === "editor";
 
     const live = liveIdentity(state);
     const headerLines = [padLine(`pi-dual  ${safeDisplayText(state.status.cwd)} | ${state.status.phaseLabel}`, width)];
     const liveLine = paintRole(padLine(this.workspace.pointer(state), width), live.role);
-    const footerLines = renderFooter(state, width, this.transientHint, this.paneFocus);
+    const footerLines = this.controls
+      ? [padLine(this.controls.kind === "menu" ? "Controls | Letter or Up/Down + Enter | Esc back" : "Quit? y confirm | n or Esc back", width), padLine("Your draft is preserved while this menu is open.", width)]
+      : renderFooter(state, width, this.transientHint, this.paneFocus);
     const editorLines = this.editor.render(width);
     const availableMainHeight = Math.max(1, this.terminal.rows - headerLines.length - footerLines.length - editorLines.length - 1);
     const activityHeight = this.showActivity ? Math.min(8, Math.max(3, Math.floor(availableMainHeight * .27))) : 0;
@@ -236,14 +260,14 @@ export class CoordinatorTuiApp implements Component, Focusable {
     const railWidth = this.historyRailVisible && !this.workspace.inspector ? Math.min(28, Math.floor(width * .22)) + 1 : 0;
     const compactHistoryHeight = !this.historyRailVisible && !this.workspace.inspector ? 1 : 0;
     this.workspaceBounds = { left: railWidth + 1, top: headerLines.length + 1 + compactHistoryHeight, width: width - railWidth, height: bodyHeight - compactHistoryHeight };
-    const mainLines = [...this.workspace.render(state, width, bodyHeight), ...(this.showActivity ? frame(`Activity${this.paneFocus === "activity" ? " [focus]" : ""}`, selectPanelViewport(renderActivity(state, width - 2), activityHeight, "bottom", this.activityScrollOffset).lines, width, activityHeight) : [])];
+    const mainLines = this.controls ? this.renderControls(width, availableMainHeight) : [...this.workspace.render(state, width, bodyHeight), ...(this.showActivity ? frame(`Activity${this.paneFocus === "activity" ? " [focus]" : ""}`, selectPanelViewport(renderActivity(state, width - 2), activityHeight, "bottom", this.activityScrollOffset).lines, width, activityHeight) : [])];
 
     let lines = [...headerLines, ...mainLines, liveLine, ...editorLines, ...footerLines];
     lines = normalizeScreen(lines, width, this.terminal.rows);
 
     if (width < 80 || this.terminal.rows < 24) {
       lines = normalizeScreen([
-        padLine("Compact terminal. Resize to at least 80x24. /quit exits; Ctrl+C cancels.", width),
+        padLine("Compact terminal. Resize to 80x24. Esc controls; /quit exits.", width),
         ...mainLines.slice(0, Math.max(0, this.terminal.rows - editorLines.length - 3)),
         ...editorLines,
         ...footerLines
@@ -251,6 +275,81 @@ export class CoordinatorTuiApp implements Component, Focusable {
     }
 
     return lines;
+  }
+
+  private openPromptHistory(): void {
+    this.paneFocus = "editor";
+    if (this.historyDraft !== undefined) return;
+    this.historyDraft = this.editor.getExpandedText();
+    this.editor.setText("");
+    this.editor.handleInput("\x1b[A");
+    if (!this.editor.getText()) {
+      this.editor.setText(this.historyDraft);
+      this.historyDraft = undefined;
+    }
+  }
+
+  private handleControlsInput(data: string): void {
+    if (data.includes("\x1b[200~")) this.controlsPaste = true;
+    if (this.controlsPaste) {
+      if (data.includes("\x1b[201~")) this.controlsPaste = false;
+      return;
+    }
+    const controls = this.controls;
+    if (!controls) return;
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+      this.controls = undefined;
+      if (matchesKey(data, Key.ctrl("c")) && ["running", "cancelling"].includes(this.service.getState().operation.kind)) this.handleCtrlC();
+      return;
+    }
+    if (controls.kind === "quit") {
+      if (matchesKey(data, "y")) {
+        this.controls = undefined;
+        void this.service.dispatch({ type: "quit" });
+      } else if (matchesKey(data, "n")) this.controls = undefined;
+      return;
+    }
+    if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
+      controls.selected = (controls.selected + (matchesKey(data, Key.up) ? -1 : 1) + controlActions.length) % controlActions.length;
+      return;
+    }
+    const choice = matchesKey(data, Key.enter) ? controlActions[controls.selected]
+      : controlActions.find((item) => matchesKey(data, item.key));
+    if (!choice) return;
+    this.controls = undefined;
+    this.runControl(choice.action);
+  }
+
+  private runControl(action: ControlAction): void {
+    switch (action) {
+      case "help": void this.service.dispatch({ type: "open_help" }); break;
+      case "models": void this.service.dispatch({ type: "open_models", role: "A" }); break;
+      case "activity":
+        this.showActivity = !this.showActivity;
+        if (!this.showActivity && this.paneFocus === "activity") this.paneFocus = "editor";
+        break;
+      case "workspace": this.workspace.focusWorkspace(); break;
+      case "history": this.workspace.focusHistory(this.service.getState(), this.historyRailVisible); break;
+      case "editor": this.paneFocus = "editor"; break;
+      case "prompts": this.openPromptHistory(); break;
+      case "latest": this.workspace.followLatest(this.service.getState()); break;
+      case "newline": this.paneFocus = "editor"; this.historyDraft = undefined; this.editor.insertTextAtCursor("\n"); break;
+      case "cancel": void this.service.dispatch({ type: "cancel" }); break;
+      case "quit": this.controls = { kind: "quit" }; break;
+      default: { const exhaustive: never = action; return exhaustive; }
+    }
+  }
+
+  private renderControls(width: number, height: number): string[] {
+    if (this.controls?.kind === "quit") {
+      return frame("Quit pi-dual?", ["Running work will be cancelled before exit.", "Unsubmitted draft text will be lost on exit.", "", "y confirm | n or Esc back"], width, height);
+    }
+    const selected = this.controls?.kind === "menu" ? this.controls.selected : 0;
+    const count = Math.max(1, height - 4);
+    const start = Math.max(0, Math.min(selected - count + 1, controlActions.length - count));
+    const body = controlActions.slice(start, start + count).map((item, index) =>
+      `${start + index === selected ? ">" : " "} ${item.key}  ${item.label} - ${item.description}`);
+    return frame("Controls", [...body, "", `Letter or Up/Down + Enter | Esc back | ${start + 1}-${Math.min(controlActions.length, start + count)} of ${controlActions.length}`], width, height);
   }
 
   private handleCtrlC(): void {
@@ -315,12 +414,13 @@ export class CoordinatorTuiApp implements Component, Focusable {
           this.modalViewport = { width, height: Math.max(3, this.terminal.rows - this.editor.render(this.terminal.columns).length - 4) };
           const modal = this.service.getState().modal;
           if (modal.kind === "none") return [];
+          if (this.controls) return this.renderControls(width, this.modalViewport.height);
           if (modal.kind === "model_picker") return this.modelPicker?.render(width, Math.min(19, this.modalViewport.height), ["running", "cancelling"].includes(this.service.getState().operation.kind), Boolean(this.service.getState().pendingPlan)) ?? [];
           if (modal.kind === "model_loading") {
             const elapsed = Math.max(0, Math.floor((Date.now() - modal.startedAt) / 1000));
             const spinner = ["|", "/", "-", "\\"][elapsed % 4];
             const content = modal.cancelling && modal.progress.phase !== "restoring" ? "Cancelling… waiting for LM Studio before restoring the previous model." : modal.content;
-            const body = ["", ...wrapBlock(`${spinner} ${content}`, width - 4), "", `${elapsed}s elapsed`, "Your conversation and draft are preserved.", "", modal.cancelling ? "Restoring safely. Please wait. | Q quit after cleanup" : "Esc / Ctrl+C cancel | Q quit"];
+            const body = ["", ...wrapBlock(`${spinner} ${content}`, width - 4), "", `${elapsed}s elapsed`, "Your conversation and draft are preserved.", "", modal.cancelling ? "Restoring safely. Please wait. | q quit with confirmation" : "Esc cancel | q quit with confirmation"];
             return frame(modal.title, body, width, Math.min(this.modalViewport.height, body.length + 2), modal.role);
           }
           if (modal.kind === "model_error") {
@@ -348,12 +448,14 @@ export class CoordinatorTuiApp implements Component, Focusable {
       return false;
     }
 
+    this.syncModalState(state);
     if (state.modal.kind === "model_picker") {
       const action = this.modelPicker?.handleInput(data, ["running", "cancelling"].includes(state.operation.kind));
       if (action) void this.service.dispatch(action);
       return true;
     }
 
+    data = browsingInput(data);
     if (this.selection && (state.modal.kind !== "history" || matchesKey(data, Key.enter))) {
       this.selection.handleInput(data);
       return true;
@@ -401,11 +503,19 @@ function renderFooter(
   transientHint: string | undefined,
   paneFocus: PaneFocus
 ): string[] {
+  if (state.modal.kind !== "none") {
+    return [padLine(state.modal.kind === "model_picker" ? "Esc back | h help | a/b agent | Arrows choose | Enter apply"
+      : state.modal.kind === "model_loading" ? "Esc cancel | q quit with confirmation"
+      : state.modal.choices?.length && state.modal.kind !== "history" ? "Esc back | h help | Up/Down choose | Enter apply"
+      : "Esc back | h help | Up/Down scroll | u/d page | g/l edges", width),
+      padLine("Your draft is preserved while browsing.", width)];
+  }
   const baseHint = footerBindings(paneFocus);
   const statusHint = transientHint ?? state.lastError?.message ?? state.notification?.message ??
-    (paneFocus === "editor" || paneFocus === "transcript" ? "Shift+Up/Down scroll line | End follow | F6 select records | Esc editor"
-      : paneFocus === "inspector" ? "Up/Down scroll | PgUp/PgDn page | Home/End edges | Esc back"
-      : "Arrows select | PgUp/PgDn page | End current/follow | Esc back | Ctrl+C cancel");
+    (paneFocus === "editor" ? "Esc then: w workspace | r history | l latest | n newline | x cancel"
+      : paneFocus === "transcript" ? "u/d page | g beginning | l follow | Space fold | Left/Right expand/collapse"
+      : paneFocus === "inspector" || paneFocus === "activity" ? "Up/Down scroll | u/d page | g/l edges | Esc back"
+      : "u/d page | g beginning | l latest | Esc back");
   return [padLine(baseHint, width), padLine(safeDisplayText(statusHint), width)];
 }
 
@@ -506,7 +616,7 @@ function renderModal(
   const body = wrapped.slice(clampedOffset, clampedOffset + bodyHeight);
   const footerText =
     maxOffset > 0
-      ? `${modal.choices?.length ? "Enter switch | " : ""}Scroll ${clampedOffset + 1}-${Math.min(wrapped.length, clampedOffset + body.length)} of ${wrapped.length} | Up/Down PgUp/PgDn Home/End | Esc close`
+      ? `${modal.choices?.length ? "Enter switch | " : ""}Scroll ${clampedOffset + 1}-${Math.min(wrapped.length, clampedOffset + body.length)} of ${wrapped.length} | Up/Down u/d page g/l edges | Esc close`
       : modal.choices?.length ? "Enter switch session | Esc close" : "Esc close";
   const lines = [
     `+${truncateToWidth(` ${modal.title} `, innerWidth, "...", true)}+`,

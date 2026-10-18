@@ -36,12 +36,12 @@ describe("selected workspace through shared history service", () => {
       const screen = () => strip(app.render(width).join("\n"));
       const position = () => Number(screen().match(/↑ (\d+)/)?.[1]);
       expect(screen()).toContain("PROSE[59]");
-      expect(screen()).toContain("Wheel/PgUp/PgDn scroll");
-      expect(screen()).toContain("F6 panes");
+      expect(screen()).toContain("Wheel scroll");
+      expect(screen()).toContain("Esc controls");
       const bottom = position();
       app.handleInput("\x1b[5~");
       expect(position()).toBeLessThan(bottom);
-      expect(screen()).toContain("Paused, End follows");
+      expect(screen()).toContain("Paused");
       const page = position();
       app.handleInput("\x1b[1;2A"); expect(position()).toBe(page - 1);
       app.handleInput("\x1b[1;2B"); expect(position()).toBe(page);
@@ -71,6 +71,42 @@ describe("selected workspace through shared history service", () => {
       expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
     } finally { await service.dispose(); }
   });
+  it.each([[80, 24], [120, 40]])("uses portable controls for workspace, history, activity and inspector at %sx%s", async (width, height) => {
+    const { app, service, terminal, coordinator } = await setup();
+    try {
+      terminal.columns = width; terminal.rows = height;
+      app.render(width); app.handleInput("draft");
+      app.handleInput("\x1b"); app.handleInput("w");
+      const screen = () => strip(app.render(width).join("\n"));
+      expect(screen()).toContain("[focus]");
+      app.handleInput("u"); expect(screen()).toContain("Paused");
+      app.handleInput("d"); app.handleInput("l"); expect(screen()).toContain("Following");
+      app.handleInput("g"); app.handleInput("\x1b[B"); app.handleInput("\r"); await settle();
+      expect(screen()).toContain("READ-ONLY INSPECTOR");
+      app.handleInput("3"); await settle(); app.handleInput("d");
+      const beforeHelp = screen();
+      app.handleInput("h"); app.render(width); app.handleInput("\x1b");
+      expect(screen()).toBe(beforeHelp);
+      app.handleInput("l"); await settle();
+      expect(screen()).toContain("retained line 399");
+      app.handleInput("g"); await settle();
+      expect(screen()).toContain("retained line 0");
+      app.handleInput("\t");
+      app.handleInput("\x1b"); app.handleInput("\x1b"); app.handleInput("\x1b"); app.handleInput("r");
+      expect(screen()).toContain("HISTORY [focus]");
+      app.handleInput("\x1b");
+      if (width < 104) app.handleInput("\x1b");
+      app.handleInput("\x1b"); app.handleInput("a");
+      expect(screen()).toContain("Activity");
+      app.handleInput("\x1b"); app.handleInput("a");
+      expect(screen()).not.toContain("+ Activity");
+      app.handleInput("\x1b"); app.handleInput("l");
+      expect(screen()).toContain("Following");
+      expect(screen()).toContain("draft");
+      expect(coordinator.submitUserInput).not.toHaveBeenCalled();
+      expect(coordinator.replaceRuntime).not.toHaveBeenCalled();
+    } finally { await service.dispose(); }
+  });
   it("anchors paused prose when new calls arrive and the live preview rolls over", async () => {
     const { service, emit } = await setup();
     try {
@@ -85,7 +121,7 @@ describe("selected workspace through shared history service", () => {
       emit("pi.tool_execution_start", { toolName: "read", toolCallId: "new-call", toolArgs: { path: "arrived-while-paused" } });
       state = { ...service.getState(), liveStream: { ...stream, text: Array.from({ length: 140 }, (_, i) => `ANCHOR[${i}]`).join("\n") } };
       expect(prose()).toEqual(before);
-      expect(screen()).toContain("Paused, End follows");
+      expect(screen()).toContain("Paused");
       workspace.scrollInput("\x1b[F", state);
       expect(screen()).toContain("ANCHOR[139]");
       expect(screen()).toContain("Following");
@@ -190,7 +226,7 @@ describe("selected workspace through shared history service", () => {
       terminal.columns = columns ?? 80; terminal.rows = rows ?? 24;
       const lines = app.render(terminal.columns); expect(lines).toHaveLength(terminal.rows);
       expect(lines.every((line) => visibleWidth(line) <= terminal.columns)).toBe(true);
-      expect(lines.join("\n")).toContain("F1 help");
+      expect(lines.join("\n")).toContain("h help");
     }
     expect(app.render(80).join("\n")).toContain("precious draft");
     expect(app.render(80).join("\n")).toContain("Active: A - Senior");

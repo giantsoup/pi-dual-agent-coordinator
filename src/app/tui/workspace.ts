@@ -1,4 +1,4 @@
-import { bindingMatches, inspectorTabs } from "./bindings.js";
+import { bindingMatches, browsingInput, inspectorTabs } from "./bindings.js";
 import { Key, matchesKey, visibleWidth, truncateToWidth, wrapTextWithAnsi, Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
 import type { InteractiveCoordinatorService } from "../interactive/service.js";
 import type { InteractiveUiState } from "../../types/ui.js";
@@ -87,6 +87,22 @@ export class CurrentWorkspace {
       this.browse(state);
     }
   }
+  public focusWorkspace(): void {
+    this.inspector = undefined;
+    this.historyOpen = false;
+    this.focus = "transcript";
+  }
+  public focusHistory(state: InteractiveUiState, wide: boolean): void {
+    this.inspector = undefined;
+    this.focus = "history";
+    this.historyOpen = !wide;
+    this.historySelection ??= this.historyRows(state).at(-1)?.id;
+    this.browse(state);
+  }
+  public followLatest(state: InteractiveUiState): void {
+    this.inspector = undefined;
+    this.current(state);
+  }
   private rows(state: InteractiveUiState): HistoryRecord[] {
     const records = state.history.records;
     const turnId = this.viewedTurnId ?? state.history.currentTurnId;
@@ -130,6 +146,7 @@ export class CurrentWorkspace {
     return true;
   }
   public handleInput(data: string, state: InteractiveUiState, wide: boolean): boolean {
+    data = browsingInput(data);
     if (this.inspector && this.focus === "inspector") return this.inspectorInput(data);
     if (this.focus !== "transcript" && this.focus !== "history") return false;
     if (this.focus === "transcript" && this.scrollInput(data, state)) return true;
@@ -332,10 +349,10 @@ export class CurrentWorkspace {
     while (visible.length < contentBudget) visible.push("");
     const below = Math.max(0, body.length - this.viewportStart - contentBudget);
     const position = `↑ ${this.viewportStart} / ↓ ${below}`;
-    visible.push(...statusLines, `${position} | Wheel/PgUp/PgDn scroll | ${this.following ? "Following" : "Paused, End follows"}`);
+    visible.push(...statusLines, `${position} | ${this.following ? "Following" : "Paused"} | Wheel scroll | ${this.focus === "transcript" ? "u/d page | l follow" : "Esc controls"}`);
     const frameRole = live.role ?? (latestRun?.kind === "run" ? latestRun.role : undefined);
     const main = frame(title, [...heading, ...visible], currentWidth, mainHeight, viewingCurrent ? frameRole : undefined);
-    if (!wide) return [pad(`History / ${turns.filter((turn) => turn.id !== state.history.currentTurnId).length} past turns${this.focus === "history" ? " [focus]" : ""} | F6 then Enter opens | ${this.unread} unread | End current`, width), ...main];
+    if (!wide) return [pad(`History / ${turns.filter((turn) => turn.id !== state.history.currentTurnId).length} past turns${this.focus === "history" ? " [focus]" : ""} | Esc then r opens | ${this.unread} unread | Esc then l current`, width), ...main];
     const history = frame(`HISTORY${this.focus === "history" ? " [focus]" : ""}`, this.renderHistory(state, railWidth - 2, height - 2), railWidth, height);
     return history.map((line, index) => `${line} ${main[index] ?? " ".repeat(currentWidth)}`);
   }
@@ -344,7 +361,7 @@ export class CurrentWorkspace {
     const run = [...state.history.records].reverse().find((record) => record.kind === "run" && record.outcome.kind === "running");
     const tool = run ? children(state.history.records, run.id).find((record) => record.outcome.kind === "running") : undefined;
     const activity = state.operation.kind === "running" ? tool ? `${tool.title} / running, no final exit status` : run ? "No tool currently running" : "Preparing next role run" : state.pendingPlan ? "/approve to execute" : `Last result: ${live.phase}`;
-    return `${live.text} / ${live.phase}${run && state.operation.kind === "running" ? ` / ${this.duration(run)}` : ""} / ${activity}${this.unread ? ` | ${this.unread} unread, End current` : ""}`;
+    return `${live.text} / ${live.phase}${run && state.operation.kind === "running" ? ` / ${this.duration(run)}` : ""} / ${activity}${this.unread ? ` | ${this.unread} unread, Esc then l current` : ""}`;
   }
   private historyRows(state: InteractiveUiState): HistoryRecord[] {
     const records = state.history.records;
@@ -367,7 +384,7 @@ export class CurrentWorkspace {
       const label = record.kind === "turn" ? `Turn ${turns.findIndex((turn) => turn.id === record.id) + 1}` : `${record.kind === "tool" ? "  " : " "}${roleLabel(record.role)} ${record.title}`;
       return [pad(`${record.id === selected?.id ? ">" : " "} ${this.expanded.has(record.id) ? "-" : "+"} ${label} [${record.outcome.kind}]`, width),
         pad(`  ${record.title}`, width), pad(`  ${recordSummary(record, state.history.records)}`, width)];
-    }), pad(`${this.unread} unread | End current`, width), ...state.history.warnings.slice(0, 1).flatMap((warning) => wrap(warning, width))];
+    }), pad(`${this.unread} unread | l current`, width), ...state.history.warnings.slice(0, 1).flatMap((warning) => wrap(warning, width))];
   }
   private renderInspector(state: InteractiveUiState, width: number, height: number): string[] {
     const view = this.inspector;
@@ -408,7 +425,7 @@ export class CurrentWorkspace {
       pad(`${view.section} / ${record?.outcome.kind ?? "unknown"} / line ${sourceLine + 1} of ${detail?.totalLines ?? "?"}`, width - 2),
       ...(detail?.reason ? wrap(detail.reason, width - 2).slice(0, 3) : []),
       ...(view.loading && !detail ? ["Loading retained detail…"] : wrapped.slice(view.visualOffset, view.visualOffset + Math.max(1, height - 9)) ?? ["Output unavailable"]),
-      "Esc back | F1 help | Up/Down PgUp/PgDn scroll"];
+      "Esc back | h help | Up/Down scroll | u/d page | g/l edges"];
     return frame(`READ-ONLY INSPECTOR${this.focus === "inspector" ? " [focus]" : ""}`, body, width, height, role);
   }
 }

@@ -64,18 +64,118 @@ describe("real Pi editor and terminal components", () => {
     await service.dispose();
   });
 
-  it("keeps Tab for completion, F6 for panes, and restores the draft after history", async () => {
+  it("keeps Tab for completion and browsing panes, and restores the draft after history", async () => {
     const { app, service, release } = await setup();
     app.handleInput("old prompt"); app.handleInput("\r"); release(); await settle();
-    app.handleInput("current draft"); app.handleInput("\u001b[1;3A");
+    app.handleInput("current draft"); app.handleInput("\x1b"); app.handleInput("p");
     expect(text(app)).toContain("old prompt");
     app.handleInput("\u001b[B");
     expect(text(app)).toContain("current draft");
-    app.handleInput("\u001b[17~"); expect(text(app)).toContain("[focus]");
+    app.handleInput("\x1b"); app.handleInput("w"); expect(text(app)).toContain("[focus]");
     app.handleInput("\u001b"); app.handleInput("\u0003");
     app.handleInput("/sta"); app.handleInput("\t"); await settle(); app.handleInput("\t"); await settle();
     expect(text(app)).toContain("/status");
     await service.dispose();
+  });
+
+  it.each(["separate", "combined", "kitty"])("inserts a newline at the draft cursor with %s keys", async (encoding) => {
+    const { app, service, coordinator, release } = await setup();
+    try {
+      release();
+      app.handleInput("abc"); app.handleInput("\x1b[D");
+      if (encoding === "combined") app.handleInput("\x1bn");
+      else {
+        app.handleInput(encoding === "kitty" ? "\x1b[27u" : "\x1b");
+        expect(text(app)).toContain("Controls");
+        app.handleInput(encoding === "kitty" ? "\x1b[110u" : "n");
+      }
+      expect(coordinator.submitUserInput).not.toHaveBeenCalled();
+      app.handleInput("X"); app.handleInput("\r"); await settle();
+      expect(coordinator.submitUserInput).toHaveBeenCalledWith("ab\nXc");
+    } finally { await service.dispose(); }
+  });
+
+  it("preserves the cursor when the menu closes and never steals printable editor keys", async () => {
+    const { app, service, coordinator, release } = await setup();
+    try {
+      release();
+      app.handleInput("ab"); app.handleInput("\x1b[D");
+      app.handleInput("\x1b"); app.handleInput("\x1b");
+      for (const key of "hmawreplnxqudg") app.handleInput(key);
+      app.handleInput("\r"); await settle();
+      expect(coordinator.submitUserInput).toHaveBeenCalledWith("ahmawreplnxqudgb");
+      expect(service.getState().shouldExit).toBe(false);
+    } finally { await service.dispose(); }
+  });
+
+  it("keeps the menu open through updates and resizing, and scrolls choices with arrows", async () => {
+    const { app, service, terminal } = await setup();
+    try {
+      app.handleInput("saved draft"); app.handleInput("\x1b");
+      await service.dispatch({ type: "cancel" });
+      for (const [columns = 80, rows = 24] of [[80, 24], [120, 40], [40, 12], [80, 24]]) {
+        terminal.columns = columns; terminal.rows = rows;
+        const lines = app.render(columns);
+        expect(lines).toHaveLength(rows);
+        expect(lines.every((line) => visibleWidth(line) <= columns)).toBe(true);
+        expect(lines.join("\n")).toContain("Controls");
+        expect(lines.join("\n")).toContain("saved draft");
+      }
+      terminal.columns = 40; terminal.rows = 12;
+      app.handleInput("\x1b[A");
+      expect(text(app, 40)).toContain("> q  Quit");
+      app.handleInput("\r");
+      expect(text(app, 40)).toContain("Quit pi-dual?");
+      app.handleInput("\r");
+      expect(service.getState().shouldExit).toBe(false);
+      app.handleInput("n");
+      expect(text(app, 40)).toContain("saved draft");
+    } finally { await service.dispose(); }
+  });
+
+  it("ignores pasted commands in menus and confirms quit explicitly", async () => {
+    const { app, service } = await setup();
+    try {
+      app.handleInput("saved draft"); app.handleInput("\x1b");
+      app.handleInput("\x1b[200~qyx\x1b[201~");
+      expect(text(app)).toContain("Controls");
+      app.handleInput("q");
+      app.handleInput("\x1b[200~"); app.handleInput("y"); app.handleInput("\x1b[201~");
+      expect(service.getState().shouldExit).toBe(false);
+      app.handleInput("\x1b");
+      expect(text(app)).toContain("saved draft");
+      app.handleInput("\x1b"); app.handleInput("q"); app.handleInput("y"); await settle();
+      expect(service.getState().shouldExit).toBe(true);
+    } finally { await service.dispose(); }
+  });
+
+  it.each(["x", "\x03"])("cancels active work from the menu with %j without clearing or submitting the draft", async (cancelKey) => {
+    const { app, service, coordinator } = await setup();
+    try {
+      app.handleInput("task"); app.handleInput("\r"); app.handleInput("precious draft");
+      app.handleInput("\x1b"); app.handleInput(cancelKey); await settle();
+      expect(coordinator.cancelActive).toHaveBeenCalledOnce();
+      expect(coordinator.submitUserInput).toHaveBeenCalledOnce();
+      expect(text(app)).toContain("precious draft");
+    } finally { await service.dispose(); }
+  });
+
+  it("opens help with arrows, keeps the draft through completion dismissal, and handles empty prompt history", async () => {
+    const { app, service } = await setup();
+    try {
+      app.handleInput("draft"); app.handleInput("\x1b"); app.handleInput("p");
+      expect(text(app)).toContain("draft");
+      app.handleInput("\x1b"); app.handleInput("\r");
+      expect(service.getState().modal.kind).toBe("help");
+      app.handleInput("\x1b"); app.handleInput("\x03");
+      app.handleInput("/"); await settle();
+      app.handleInput("\x1b");
+      expect(text(app)).not.toContain("Letter or Up/Down");
+      app.handleInput("\x1b");
+      expect(text(app)).toContain("Letter or Up/Down");
+      app.handleInput("e");
+      expect(service.getState().shouldExit).toBe(false);
+    } finally { await service.dispose(); }
   });
 
   it("does not claim that a rejected command stopped active work", async () => {
@@ -101,13 +201,13 @@ describe("real Pi editor and terminal components", () => {
     release();
     app.handleInput("\u001b[200~older first\nolder second\u001b[201~"); app.handleInput("\r"); await settle();
     app.handleInput("most recent"); app.handleInput("\r"); await settle();
-    app.handleInput("current draft"); app.handleInput("\u001b[1;3A");
+    app.handleInput("current draft"); app.handleInput("\x1b"); app.handleInput("p");
     app.handleInput("\u001b[A"); app.handleInput("\u001b[A");
     app.handleInput("\u001b[B"); app.handleInput("\u001b[B");
     // Submitting proves which editor value was selected, independently of the transcript.
     app.handleInput("\r"); await settle();
     expect(service.getState().conversation.filter((entry) => entry.kind === "operator_message").at(-1)).toMatchObject({ text: "most recent" });
-    app.handleInput("draft again"); app.handleInput("\u001b[1;3A"); app.handleInput("\u001b[B");
+    app.handleInput("draft again"); app.handleInput("\x1b"); app.handleInput("p"); app.handleInput("\u001b[B");
     app.handleInput("\r"); await settle();
     expect(service.getState().conversation.filter((entry) => entry.kind === "operator_message").at(-1)).toMatchObject({ text: "draft again" });
     await service.dispose();

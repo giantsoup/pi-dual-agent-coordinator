@@ -46,8 +46,8 @@ it. You can edit the next draft during work. An attempted second submission stay
 in the editor with a busy explanation. No steering or follow-up queue is created.
 Help, status, history viewing, cancellation, and exit remain available.
 
-Use `/cancel` or Ctrl+C during work. The coordinator aborts Pi, waits for its
-runtime to become idle, and prevents later execution, review, repair, or handoff
+Use Esc then x from the editor, `/cancel`, or Ctrl+C during work. The coordinator
+aborts Pi, waits for its runtime to become idle, and prevents later execution, review, repair, or handoff
 requests. The editor keeps your draft. Completed changes remain on disk.
 Cancellation does not roll them back. `/quit` cancels work and exits.
 
@@ -98,51 +98,74 @@ older records without this telemetry do not invent a model-turn count.
 
 Previous turns occupy a slim left rail when at least 104 columns and 14 body rows
 are available. The rail takes 22% of the width, capped at 28 cells. At 80 columns,
-a compact History control replaces the rail. Focus it with F6 and press Enter to
-open the same record list in the body. Inspectors also replace the body, leaving
-the live pointer, composer and F1 hint visible. Below 80x24, a compact notice
-preserves input, resize, cancellation and exit handling. Pi retains its existing
+a compact History control replaces the rail. Press Esc then r from the editor
+to open the same record list in the body. Inspectors also replace the body, leaving
+the live pointer, composer and contextual control hints visible. Below 80x24, a
+compact notice preserves input, resize, cancellation and exit handling. Pi retains its existing
 bounded multiline editor viewport and IME cursor marker.
 
-- F1 opens contextual help from any pane or overlay. F1 or Esc restores the
-  previous view, focus, record selection and inspector position. `/help` is the
-  typed editor fallback. The footer and shortcut help use the binding definitions.
-- F6 and Shift+F6 cycle visible panes. Normally these are editor, workspace,
-  history and activity when shown. An open body inspector cycles with the editor
-  and visible activity. Opening an inspector focuses it explicitly.
-- F2 shows or hides activity diagnostics.
-- Wheel or trackpad scrolling over the request pane moves through its records
-  and visible prose. PageUp/PageDown scrolls a page and Shift+Up/Down scrolls a
-  line, even while the composer has focus. The pane shows counts of lines above
-  and below the viewport, its scroll controls, and Following or Paused status.
-  Scrolling pauses following so incoming events do not pull the view away.
-  End returns to the current request and resumes following. The request heading,
-  operation status and draft stay visible. Long prose previews remain bounded;
-  select a run and inspect its retained output to read beyond that preview.
-- After F6 focuses the workspace, Up/Down selects semantic records and brings
-  the selected record into view. In history, PageUp/PageDown also pages through
-  records. Home selects the beginning. End returns to the current
-  turn and resumes following. Space toggles one fold; Right expands; Left
-  collapses or selects the parent. Enter opens read-only inspection.
-- Turn folds expose role runs. Run folds expose individual calls. Tool output
-  stays folded by default, with names, targets, states, counts and failure markers
-  visible. Each planning, execution, review and protocol-repair run has its own ID.
-- In the focused inspector, 1 selects summary, 2 safe request or objective,
-  3 retained output or visible assistant prose, and 4 identity/status metadata.
-  Up/Down, PageUp/PageDown and wheel scrolling over the inspector scroll
-  independently; Home/End reaches the output
-  edges. Printable inspector shortcuts never intercept editor typing.
-- Mouse reporting is enabled only during the TUI session. Use your terminal's
-  Shift+drag selection gesture to select text while mouse reporting is active.
-- Esc closes one view at a time, then returns to the editor. Closing help over
-  inspection restores inspection first.
-- Editor Enter submits, Shift+Enter inserts a newline, and bracketed paste keeps
-  multiline input. Tab retains Pi completion. Alt+Up opens prompt history while
-  saving the draft; Down returns toward that draft. Busy submissions retain it.
+### Keyboard controls
+
+From the editor, press **Esc**, then choose a letter from the visible controls
+menu. Press the keys separately; there is nothing to hold down and the menu does
+not time out. Fast Esc-then-letter input also works in legacy terminals. The menu
+supports Up/Down and Enter, and keeps your draft and cursor intact. Esc dismisses
+completion or closes the current view before it opens controls from the editor.
+
+| Menu key | Action |
+| --- | --- |
+| h | Open help with the full command and shortcut list |
+| m | Choose models and reasoning settings |
+| a | Show or hide activity diagnostics |
+| w | Focus the workspace records |
+| r | Open request history, including at 80 columns |
+| e | Return to the editor |
+| p | Browse previous prompts with Up/Down; Down returns toward your saved draft |
+| l | Jump to the current request and resume following output |
+| n | Insert a newline at the draft cursor |
+| x | Cancel running work while preserving your draft |
+| q | Ask to quit; y confirms, n or Esc returns without exiting |
+
+In the editor, **Enter submits** and **Tab completes text**. Bracketed paste
+preserves multiline input. Letter shortcuts do not intercept ordinary typing.
+Pasting into the controls menu or quit confirmation does not activate actions.
+
+While browsing the workspace, history, activity, or an inspector:
+
+- Tab cycles visible panes, including the editor. Once back in the editor, Tab
+  returns to text completion. Esc closes one view at a time, then returns focus
+  to the editor.
+- h opens contextual help and Esc restores your previous view and position.
+- Up/Down selects records or scrolls inspector/activity text. Left/Right
+  collapses or expands a record. Space toggles the selected fold. Enter opens
+  read-only inspection.
+- u/d moves up or down a page. g goes to the beginning. l returns to the current
+  request and resumes following in workspace/history, or goes to the end of
+  the focused inspector/activity output.
+- In an inspector, 1 selects summary, 2 safe request or objective, 3 retained
+  output or visible assistant prose, and 4 identity/status metadata.
+
+Wheel or trackpad scrolling over the request pane moves through its records and
+visible prose. Scrolling pauses following so incoming events do not pull the
+view away. The pane shows the lines above and below, and Following or Paused.
+Use Esc then l from the editor to return to current work. Long prose previews
+remain bounded; select a run and inspect its retained output to read beyond the
+preview. Turn folds expose role runs, and run folds expose individual calls.
+Tools stay folded by default, with names, targets, states, and failure markers.
+
+Mouse reporting is enabled only during the TUI session. Use your terminal's
+Shift+drag gesture to select text. Existing F1/F2/F3/F6, Shift+F6, PageUp/PageDown,
+Home/End, Shift+Up/Down, Shift+Enter, Alt+Up, and Ctrl+C bindings remain optional
+aliases. The controls menu provides paths that do not require those keys.
+
+The footer shows controls for the current view. The menu and help share the same
+action definitions. `/help`, `/history`, `/model A`, `/model B`, `/cancel`, and
+`/quit` remain available as typed commands. `/quit` exits directly; menu q asks
+for confirmation.
 
 Browsing pauses following and anchors the reader to a record ID. New output,
-completion and resize retain that record. An unread activity count and End action
-provide a path back to current work. Completed results remain current until a new
+completion and resize retain that record. An unread activity count and the
+latest-output action provide a path back to current work. Completed results remain current until a new
 request is accepted. Approval continues the originating plan's operator turn.
 A Pi model turn ending at a tool boundary does not create another operator turn.
 
@@ -216,10 +239,10 @@ workflows with fresh sessions. Status reports that supersession. Cancelled,
 timed-out, and failed operations remain terminal after replay. Session and model
 changes clear a pending plan, so ask for a new plan before approving work.
 
-F3 opens the model picker. A/B chooses the agent; Up/Down chooses a model;
-Left/Right selects Low, Medium, or High reasoning for A; Enter applies the choice.
-S toggles Remember after restart (on by default), R refreshes, and Esc returns
-to the draft. These controls are shown inside the picker.
+Esc then m from the editor opens the model picker. a/b chooses the agent;
+Up/Down chooses a model; Left/Right selects Low, Medium, or High reasoning for A;
+Enter applies the choice. s toggles Remember after restart (on by default),
+r refreshes, h opens help, and Esc returns to the draft. These controls are shown inside the picker.
 
 A offers GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna. This manual list is maintained
 in `src/security/models.ts`. B lists downloaded LM Studio LLMs, marks readiness,
@@ -227,8 +250,9 @@ and explains when a model lacks tool calling or the required context support.
 When B changes, the app unloads the previous model, loads the selection, and waits
 for readiness. A compact progress panel shows the stage and elapsed time; a
 notification confirms readiness. Esc or Ctrl+C requests cancellation and restores
-the previous model after any pending LM Studio operation settles. Q quits after
-cleanup. Failed restoration marks B unavailable until a model is selected again.
+the previous model after any pending LM Studio operation settles. q asks to quit;
+y confirms exit after cleanup, while n or Esc returns to loading. Failed
+restoration marks B unavailable until a model is selected again.
 
 `/model A` and `/model B` open the same picker. In plain mode they print the choices
 and commands. `/thinking A` lists Low, Medium, and High; `/thinking B` lists Off.

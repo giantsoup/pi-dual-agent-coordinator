@@ -1,4 +1,4 @@
-import { Key, matchesKey } from "@mariozechner/pi-tui";
+import { Key, matchesKey, type KeyId } from "@mariozechner/pi-tui";
 export const bindings = {
   help: { key: Key.f1, hint: "F1 help", description: "Open contextual help; F1 or Esc restores the previous view" },
   models: { key: Key.f3, hint: "F3 models", description: "Choose Agent A or B's model; choose A's Low/Medium/High reasoning" },
@@ -24,26 +24,52 @@ export const inspectorTabs = [
   { key: "3", section: "output", label: "Retained output" },
   { key: "4", section: "metadata", label: "Identity" }
 ] satisfies Array<{ key: string; section: import("../../types/history.js").HistoryDetail["section"]; label: string }>;
+export const controlActions = [
+  { key: "h", action: "help", label: "Help", description: "Show commands and keyboard controls" },
+  { key: "m", action: "models", label: "Models", description: "Choose models and reasoning settings" },
+  { key: "a", action: "activity", label: "Activity", description: "Show or hide diagnostic activity" },
+  { key: "w", action: "workspace", label: "Workspace", description: "Browse the current request's records" },
+  { key: "r", action: "history", label: "Request history", description: "Browse earlier requests" },
+  { key: "e", action: "editor", label: "Editor", description: "Return to your draft" },
+  { key: "p", action: "prompts", label: "Previous prompts", description: "Up/Down browse; Down returns to your draft" },
+  { key: "l", action: "latest", label: "Latest output", description: "Resume following the current request" },
+  { key: "n", action: "newline", label: "Newline", description: "Insert a newline at the draft cursor" },
+  { key: "x", action: "cancel", label: "Cancel work", description: "Stop running work and preserve your draft" },
+  { key: "q", action: "quit", label: "Quit", description: "Confirm before exiting" }
+] satisfies Array<{ key: KeyId; action: "help" | "models" | "activity" | "workspace" | "history" | "editor" | "prompts" | "latest" | "newline" | "cancel" | "quit"; label: string; description: string }>;
+export type ControlAction = typeof controlActions[number]["action"];
+
+// Translate printable navigation only after input has left the editor.
+export function browsingInput(data: string): string {
+  for (const [key, sequence] of [["u", "\x1b[5~"], ["d", "\x1b[6~"], ["g", "\x1b[H"], ["l", "\x1b[F"]] satisfies Array<[KeyId, string]>) {
+    if (matchesKey(data, key)) return sequence;
+  }
+  return data;
+}
+
 export function footerBindings(context: string): string {
-  const common = [bindings.help.hint, bindings.models.hint, bindings.nextPane.hint];
-  const local = context === "editor" ? ["PgUp/PgDn scroll", "Enter submit", "Tab complete"]
-    : context === "inspector" ? ["1-4 tabs", "PgUp/PgDn scroll", bindings.close.hint]
-    : context === "activity" ? ["Up/Down scroll", bindings.close.hint] : ["Up/Down select", bindings.inspect.hint, bindings.fold.hint];
-  return [...common, ...local, bindings.activity.hint].join(" | ");
+  if (context === "editor") return "Esc controls | Enter submit | Tab complete";
+  if (context === "activity") return "Esc editor | h help | Tab panes | Up/Down scroll | u/d page";
+  if (context === "inspector") return "Esc back | h help | Tab panes | 1-4 sections | u/d page";
+  return "Esc editor | h help | Tab panes | Arrows select | Enter inspect";
 }
 export function contextualHelp(context: string): string {
-  return [`Controls / ${context}`, ...Object.values(bindings).map((binding) => `${binding.hint}: ${binding.description}`),
-    "Request: Wheel/trackpad or PgUp/PgDn scroll | Shift+Up/Down scroll a line",
-    "Scrolling pauses following. End returns to the current request and follows.",
-    "Models: F3 opens | A/B agent | Up/Down model | Left/Right reasoning",
-    "Models: S remember after restart | Enter apply | Esc close",
-    "Model loading: Esc/Ctrl+C cancel | Q quit after cleanup",
-    "Mouse: wheel over request or inspector | Shift+drag selects terminal text",
-    "Records: F6 to focus | Up/Down select | Home first | End current/follow",
-    "History: Up/Down select | PgUp/PgDn page | Home first | End current/follow",
+  return [`Controls / ${context}`, "From the editor, press Esc, then choose a letter. Nothing to hold; no timeout.",
+    ...controlActions.map((item) => `${item.key} ${item.label}: ${item.description}`),
+    "Esc closes completion or the current view first. Esc again in the editor opens controls.",
+    "Controls: Up/Down choose | Enter select | Esc return without changing your draft",
+    "Browsing: Tab next pane | h help | u/d page | g beginning | l latest/end",
+    "Scrolling pauses following. Esc then l from the editor resumes following the current request.",
+    "Records: Arrows select/expand/collapse | Enter inspect | Space fold",
     `Inspector only: ${inspectorTabs.map((tab) => `${tab.key} ${tab.label}`).join(" | ")}`,
-    "Inspector: Up/Down scroll | PgUp/PgDn range | Home/End output edges",
-    "Editor: Enter submit | Shift+Enter newline | Tab completion | Alt+Up prompt history",
-    "Editor: /help typed fallback | /history | /inspect ID [section] [line offset]",
+    "Inspector: Up/Down scroll | u/d page | g/l output edges | Esc back",
+    "Models: a/b agent | Up/Down model | Left/Right reasoning | h help",
+    "Models: s remember after restart | r refresh | Enter apply | Esc close",
+    "Model loading: Esc cancel | q quit with confirmation",
+    "Editor: Enter submit | Tab completion | Esc then n newline | Esc then p previous prompts",
+    "Mouse: Wheel/trackpad scroll | Shift+drag selects terminal text",
+    "Optional aliases: F1 help | F2 activity | F3 models | F6/Shift+F6 panes",
+    "Optional aliases: PgUp/PgDn page | Home/End edges | Shift+Enter newline | Alt+Up prompts | Ctrl+C cancel",
+    "Typed commands: /help | /history | /inspect ID [section] [line offset] | /cancel | /quit",
     "Selection and inspection are read-only. Session switching remains explicit."].join("\n");
 }

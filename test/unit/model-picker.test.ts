@@ -54,13 +54,13 @@ describe("model selection controls", () => {
     expect(picker.handleInput("\r", false)).toMatchObject({ save: false });
     expect(picker.handleInput("\r", true)).toBeUndefined();
   });
-  it("opens via F3, keeps model/reasoning through help and resize, and preserves the draft", async () => {
+  it("opens via the controls menu, keeps model/reasoning through help and resize, and preserves the draft", async () => {
     const { app, service, terminal, tui, configure, coordinator } = await setup();
     try {
-      app.handleInput("precious model draft"); app.handleInput("\x1bOR"); await settle(); app.render(80);
+      app.handleInput("precious model draft"); app.handleInput("\x1b"); app.handleInput("m"); await settle(); app.render(80);
       expect(service.getState().modal.kind).toBe("model_picker");
       app.handleInput("\x1b[H"); app.handleInput("\x1b[D");
-      app.handleInput("\x1bOP"); app.render(80); app.handleInput("\x1b"); app.render(80);
+      app.handleInput("h"); app.render(80); app.handleInput("\x1b"); app.render(80);
       terminal.columns = 120; terminal.rows = 40; app.render(120);
       app.handleInput("\r"); await settle();
       expect(configure).toHaveBeenCalledWith("A", { model: "openai/gpt-6.1-sol", thinking: "medium", save: true }, expect.any(Function));
@@ -69,14 +69,31 @@ describe("model selection controls", () => {
       expect(coordinator.submitUserInput).not.toHaveBeenCalled();
     } finally { tui.stop(); await service.dispose(); }
   });
+  it("accepts model picker input before its first render", async () => {
+    const { app, service, tui } = await setup();
+    tui.stop();
+    try {
+      app.handleInput("\x1bm"); await settle();
+      expect(service.getState().modal.kind).toBe("model_picker");
+      app.handleInput("b"); await settle();
+      expect(service.getState().modal).toMatchObject({ kind: "model_picker", catalog: { role: "B" } });
+    } finally { await service.dispose(); }
+  });
   it.each([false, true])("shows a small loading view and %s cancellation feedback", async (cancel) => {
     const { app, service, terminal, tui, coordinator, release } = await setup();
     try {
-      app.handleInput("draft survives loading"); app.handleInput("\x1bOR"); await settle(); app.render(80);
+      app.handleInput("draft survives loading"); app.handleInput("\x1b"); app.handleInput("m"); await settle(); app.render(80);
       app.handleInput("b"); await settle(); app.render(80);
       app.handleInput("\x1b[B"); app.handleInput("\r"); await settle();
       expect(service.getState().modal).toMatchObject({ kind: "model_loading", progress: { phase: "loading" } });
       expect(terminal.output).toContain("Loading Qwen3 Coder Next");
+      app.handleInput("q"); app.render(80);
+      await vi.waitFor(() => expect(terminal.output).toContain("Quit pi-dual?"));
+      app.handleInput("\r");
+      expect(service.getState().shouldExit).toBe(false);
+      app.handleInput("n");
+      expect(service.getState().modal.kind).toBe("model_loading");
+      expect(coordinator.cancelActive).not.toHaveBeenCalled();
       app.handleInput("ignored keys");
       if (cancel) app.handleInput("\x1b"); else release();
       await settle(); await settle();

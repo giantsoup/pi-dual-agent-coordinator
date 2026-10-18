@@ -54,9 +54,9 @@ export class ModelPicker {
     while (body.length < 3 + rows * 2) body.push("");
     if (role === "A") body.push(`Reasoning: ${pickerReasoningLevels.map((level) => this.reasoning === level ? `[${capitalize(level)}]` : capitalize(level)).join("   ")}`);
     body.push(`[${this.remember ? "x" : " "}] Remember after restart${models.length > rows ? `    ${this.index + 1}/${models.length}` : ""}`,
-      busy ? "Finish work or Ctrl+C to cancel before changing models." : pendingPlan ? "Changing settings clears the pending plan." : "Conversation and draft are preserved.",
+      busy ? "Finish work, or close and use Controls > Cancel work." : pendingPlan ? "Changing settings clears the pending plan." : "Conversation and draft are preserved.",
       role === "A" ? "↑/↓ model | ←/→ reasoning | Enter apply" : "↑/↓ model | Enter load and apply",
-      "A/B agent | S remember | R refresh | Esc back");
+      "a/b agent | s remember | r refresh | h help | Esc back");
     return frame("Models", body, width, Math.min(height, body.length + 2), role);
   }
 }

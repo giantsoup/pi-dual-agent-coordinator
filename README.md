@@ -59,10 +59,10 @@ Use the trusted installation's `dist/src/index.js` entry point:
 - `repl /absolute/project --plain`: use the plain terminal fallback.
 - `repl /absolute/project --no-mcp`: disable MCP for that run.
 
-F3 opens a model picker with GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna for A,
-plus Low/Medium/High reasoning. B lists downloaded LM Studio LLMs with tool calling
-and at least 65,536 context tokens. Use A/B to change agents, arrows to choose,
-Enter to apply, and S to toggle saving for restart. Controls appear in the picker.
+Press Esc in the editor, then m to open a model picker with GPT-6.1 Sol,
+GPT-5.6 Terra, and GPT-6 Luna for A, plus Low/Medium/High reasoning. B lists downloaded LM Studio LLMs with tool calling
+and at least 65,536 context tokens. Use a/b to change agents, arrows to choose,
+Enter to apply, and s to toggle saving for restart. Controls appear in the picker.
 For example, `--model-a openai/gpt-6-luna --thinking-a high --model-b lm-studio/qwen3.6-35b-a3b --thinking-b off`.
 Pi 0.67.68 lacks these latest GPT descriptors; the app maintains the three picker
 choices in `src/security/models.ts`, using the official OpenAI endpoint. Coordinator defaults are
@@ -138,9 +138,10 @@ Useful slash commands:
 - `/quit`
 
 The TUI gives the current operator turn most of the workspace, with a history
-rail on wide terminals and a focusable history control at 80 columns. F1 opens
-contextual help; F6 cycles panes. Earlier role runs and tools remain individually
-inspectable across session changes and restart.
+rail on wide terminals and a history view at 80 columns. Press Esc in the editor
+to see the controls menu, then h for help, w for the workspace, or r for history.
+Tab cycles panes when browsing; it completes text in the editor. Earlier role
+runs and tools remain individually inspectable across session changes and restart.
 The current-turn border and role labels use cyan for A and amber for B. Prose
 keeps the terminal's default foreground and background, with no colored fill.
 

@@ -194,3 +194,39 @@ That report records the delivered history rail/control, durable read-only
 inspection, contextual help, additional checks and current limitations. The
 historical live-provider evidence above was not rerun or relabelled as part of
 this fixture-backed UI task.
+
+## Portable controls verification, 2026-10-18
+
+Implemented on `codex/portable-controls` in an isolated worktree from `main` at
+`0ebeefa`. The original checkout remains clean on `main`. No merge, push, or
+trusted-runtime installation was performed.
+
+The editor's Esc menu exposes help, models, activity, workspace, request history,
+previous prompts, latest output, newline insertion, cancellation, and confirmed
+quit. Contextual footers, picker hints, README, and the terminal guide describe
+the controls. Existing function-key bindings remain optional aliases.
+
+Final checks on the feature code:
+
+- `npm run check`: passed.
+- `npm run build`: passed, including the native helper.
+- `npm test`: 371 tests across 54 files passed.
+- `PI_TUI_SCREEN_CAPTURE=1 python3 scripts/verify-terminal.py`: 498 assertions
+  passed across TUI and plain modes, using an isolated Python environment with
+  `pyte` and `wcwidth`. Captured 35 terminal screens, including the new menu at
+  80x24 and 40x12, with dimensions, control visibility, and color checks.
+- `git diff --check`: passed.
+
+New regressions exercise separate, combined legacy, and Kitty-encoded keys;
+newline insertion at the cursor; ordinary typing; completion dismissal;
+prompt-history restoration; pane navigation; help restoration; scrolling;
+resizing; pasted commands; cancellation; and quit confirmation. A real PTY run
+caught model-picker input arriving before its first render. Input now initializes
+the picker from the current modal state before dispatching the key, and a
+regression covers that ordering. Screen checks allow Pi's editor caret while
+rejecting inverse text outside the editor.
+
+The PTY run uses installed Pi runtimes, dummy provider fixtures, and disposable
+workspaces. It does not certify live-provider behavior or physical keyboard
+handling in every terminal. Screen evidence is generated under
+`test-results/terminal-evidence/` and is not committed.
