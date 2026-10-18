@@ -1,8 +1,9 @@
 # Pi upgrade verification
 
-Latest accepted artifact: the [dependency API audit follow-up](#dependency-api-audit-follow-up)
-at the end of this record. Earlier counts and runtime paths below describe the
-original migration and Qwen3.8 acceptance stages.
+Latest accepted artifact and active launcher: the [Qwen3.8 Xhigh reasoning
+follow-up](qwen38-reasoning-verification.md). It saves Xhigh and switches the
+launcher to its verified runtime. Counts, runtime paths, and statements about an
+unchanged launcher below describe earlier acceptance stages.
 
 Implementation date: 18 October 2026. Migration branch: `codex/pi-upgrade-20261018`.
 The migration worktree is `/Users/Taylor/pi-dual-agent-coordinator-pi-upgrade`.
