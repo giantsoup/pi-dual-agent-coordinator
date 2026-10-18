@@ -1,6 +1,6 @@
 # Upgrade Pi and the development stack
 
-Status: implementation in progress on the frozen 1.3.0 target. See [execution evidence](pi-upgrade-verification.md). The following research baseline is historical. Researched on 18 October 2026 against `main` at `8532d2d54d56c9f3b37bafa2f568989c39098c3e`, including existing uncommitted application and model-picker work. No dependencies or application code were changed while preparing this plan.
+Status: implementation and acceptance gates complete on the frozen 1.3.0 target, including the requested Qwen3.8 default and separate trusted cloud/local checks. The existing launcher remains unchanged. See [execution evidence](pi-upgrade-verification.md). The following research baseline is historical. Researched on 18 October 2026 against `main` at `8532d2d54d56c9f3b37bafa2f568989c39098c3e`, including existing uncommitted application and model-picker work. No dependencies or application code were changed while preparing this plan.
 
 ## Outcome and scope
 
@@ -165,13 +165,13 @@ The rollback unit is the previous runtime and Node environment plus the matching
 
 ## Completion checklist
 
-- [ ] The frozen current stable Pi family is declared directly, consistently versioned, and reproducibly installed.
-- [ ] Current intended WIP behavior is preserved; unrelated work and old trusted artifacts remain intact.
-- [ ] Active legacy imports and obsolete adapters are removed. Any direct dependency exception has evidence and is visible.
-- [ ] New model/auth, tool registry, resource loading, lifecycle, transcript, and TUI contracts are implemented through public APIs.
-- [ ] Required typecheck, full tests, build, dummy isolation, and PTY checks pass against the actual candidate.
-- [ ] A fresh supported install and the separate trusted snapshot are verified. Live checks are individually passed or explicitly unverified.
-- [ ] Current docs and a new verification record match the implemented artifact. No subagent feature or unrelated redesign was added.
+- [x] The frozen current stable Pi family is declared directly, consistently versioned, and reproducibly installed.
+- [x] Current intended WIP behavior is preserved; unrelated work and old trusted artifacts remain intact.
+- [x] Active legacy imports and obsolete adapters are removed. Any direct dependency exception has evidence and is visible.
+- [x] New model/auth, tool registry, resource loading, lifecycle, transcript, and TUI contracts are implemented through public APIs.
+- [x] Required typecheck, full tests, build, dummy isolation, and PTY checks pass against the actual candidate.
+- [x] A fresh supported install and the separate trusted snapshot are verified. Live checks are individually passed or explicitly unverified.
+- [x] Current docs and a new verification record match the implemented artifact. No subagent feature or unrelated redesign was added.
 
 ## Evidence and limits of this plan
 

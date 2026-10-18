@@ -5,8 +5,9 @@ The migration worktree is `/Users/Taylor/pi-dual-agent-coordinator-pi-upgrade`.
 The original checkout is `/Users/Taylor/pi-dual-agent-coordinator`.
 
 This record separates baseline proof, candidate acceptance, and trusted live checks.
-Source acceptance is complete. Installed-artifact and live checks are recorded
-separately below; source compilation alone does not establish those gates.
+Source acceptance, installed-artifact verification, and bounded cloud/local checks
+passed. Their separate evidence is recorded below; source compilation alone does
+not establish those gates.
 
 ## Preserved baseline
 
@@ -192,15 +193,77 @@ rerun after the last script/config changes.
 
 ## Trusted runtime and live verification
 
-Source acceptance passed. No credential-backed source execution is permitted.
-The new snapshot must pass its own hash, dummy-isolation, and PTY checks before
-its separate doctor, one-request cloud smoke, and already-loaded local-model check.
-The launcher is outside this migration's switch scope and remains unchanged.
-The local verifier now resolves the saved Agent B selection and validates its
-already-loaded inventory entry before constructing a runtime. It never loads or
-downloads a model. Before the operator's Qwen3.8 request, this workspace selected
-`lm-studio/qwen3-coder-next`. The final snapshot will be separately verified before
-saving the requested `lm-studio/qwen/qwen3.8-27b` default and checking live execution.
+The final trusted installation is:
+
+`/Users/Taylor/.local/share/pi-dual/runtime-pi-1.3.0-qwen3.8-20261018`
+
+Its source commit is `5a3d7c270a134306c44de1de52327e34e2c3ae81`, with an empty
+source diff at installation. The SDK migration is commit `1e579f63ad5e22eeebee7a547b25a9a97283269a`;
+the second commit adds the requested Qwen3.8 default. The installation contains
+its own Node 24.22.0 and npm 12.2.0. Its manifest covers 26,617 files and symlinks,
+including executable modes. Final evidence-only documentation follows that source
+commit; the trusted snapshot is not edited or rebuilt after installation.
+
+Installed gates ran sequentially using the snapshot's own `bin/node` and `bin/npm`:
+
+- Manifest verification before testing: all 26,617 entries passed.
+- `npm run verify:dependencies`: passed with the copied exact dependency set.
+- `bin/node dist/src/security/verify-isolation.js`: 341 assertions passed.
+- `PI_TUI_SCREEN_CAPTURE=1 python3 scripts/verify-terminal.py`: 445 assertions passed,
+  including rendered TUI/plain screens. No build ran inside the snapshot.
+- Manifest verification after dummy checks: all entries remained unchanged.
+- Doctor against `/Users/Taylor/pi-dual-agent-coordinator --no-mcp`: passed.
+  The existing private Keychain account was available and Qwen3.8 was loaded and ready.
+- Cloud smoke: passed through the trusted broker with `gpt-6-luna`, high reasoning,
+  exactly `LOCAL_API_OK`, 1,836 ms, 1,573 input tokens and 7 output tokens.
+  The smoke has one request, a 1,024-output-token cap, 40-second broker deadline,
+  45-second session abort, no tools, no MCP, and no project resources.
+
+The local verifier resolves the saved Agent B selection and requires it to be
+already loaded with supported tools and context. It never loads or downloads models.
+At the operator's request, the saved default changed from
+`lm-studio/qwen3-coder-next` to `lm-studio/qwen/qwen3.8-27b`, with API thinking off.
+The trusted configuration writer preserved every other field. The prior config
+was separately copied into the private backup as `config-before-qwen-default.json`.
+Before live verification, inventory showed only Qwen3.8 loaded, under the matching
+`qwen/qwen3.8-27b` instance ID with 65,536 context tokens.
+
+The live local executor check passed within its 120-second abort bound. Qwen3.8
+invoked the actual sandboxed `write`, `read`, and `bash` tools. The disposable
+`verification.txt` contained `LOCAL_EXECUTOR_OK`; the session finished normally
+and the temporary workspace was removed. This proves tool execution for this
+bounded task, not general coding quality.
+
+After both live checks, LM Studio's downloaded-model inventory and loaded instance
+IDs/context lengths matched the before snapshot exactly. No load/unload request
+or model download was performed. All 26,617 installation manifest entries still
+matched. The earlier candidate's complete 26,760-entry manifest also still matched.
+Final preservation checks verified all 252 original source/doc hashes, the clean
+original checkout, all 20 excluded demo files, all 15 private backup files, the
+16 older runtime entry points, and the unchanged launcher hash. Existing workspace
+history is unchanged. The requested saved Agent B default is the only intentional
+real-state change. Evidence is in `saved-default.json`, `lm-studio-before.json`,
+`lm-studio-after.json`, `installed-hashes-after-live.log`,
+`previous-candidate-preservation.log`, and `final-preservation.json`.
+
+The earlier candidate `/Users/Taylor/.local/share/pi-dual/runtime-pi-1.3.0-20261018`
+remains intact. It also passed installed dummy gates and a bounded cloud smoke before
+the Qwen3.8 request. Those logs are retained under the evidence directory's
+`pre-qwen-default/`. Final installed logs are `installed-*`; rendered screens are in
+the final trusted installation's `test-results/terminal-evidence` directory.
+
+The existing `/Users/Taylor/bin/pi-dual` launcher remains unchanged. To use the
+verified upgrade directly, run:
+
+```sh
+runtime=/Users/Taylor/.local/share/pi-dual/runtime-pi-1.3.0-qwen3.8-20261018
+"$runtime/bin/node" "$runtime/dist/src/index.js" repl /Users/Taylor/pi-dual-agent-coordinator --no-mcp
+```
+
+No launcher switch, push, publication, or PR was performed. Live model switching
+was not run because it changes LM Studio state. The deterministic suite covers
+loading, cancellation, rollback, and failed restoration. No long-running live
+A-to-B workflow, live configured MCP server, or inference benchmark was claimed.
 
 ## Rollback
 
@@ -223,4 +286,18 @@ state backup, with provenance in `previous-node.json`. The initial old-stack
 baseline above was run under the earlier session's Node 24.10.0/npm 11.6.0.
 All candidate gates use the explicitly scoped 24.22.0/12.2.0 toolchain.
 
-The exact trusted path, live results, and launch command are added after installation.
+To roll back, stop coordinator processes first. Preserve the current config and
+`~/.pi/dual-agent-coordinator/projects/6613200899766f20` under new archive names.
+Restore `config.json` and `workspace-state` from the private backup to their
+original paths recorded in `backup-manifest.json`. This preserves any newer
+history separately instead of feeding it to the old SDK. Then use the matching
+saved Node executable and old runtime:
+
+```sh
+backup=/Users/Taylor/.local/share/pi-dual/state-backups/pi-upgrade-20261018T205114Z
+"$backup/previous-host-node" /Users/Taylor/.local/share/pi-dual/runtime-response-repair-20261018T200415Z/dist/src/index.js repl /Users/Taylor/pi-dual-agent-coordinator --no-mcp
+```
+
+The original source checkout is still clean at `7d245c1a1a690d891016eb138ed077dfa03d1dfa`.
+The upgrade remains on its isolated branch/worktree. The current launcher already
+points at the preserved old runtime; the command above also pins its saved Node.
