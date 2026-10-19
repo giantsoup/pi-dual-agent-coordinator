@@ -1,7 +1,8 @@
 import { HistoryIndex, type loadHistoryEvents } from "./history.js";
 import { projectHistoryDetail } from "./history-detail.js";
+import { RequestTranscript } from "./transcript.js";
 import type { ArchiveEntry } from "../../runtime/session-history.js";
-import type { HistoryDetail, HistoryRecord } from "../../types/history.js";
+import type { HistoryDetail, HistoryRecord, TranscriptBlock } from "../../types/history.js";
 import { safeDisplayText, safeDisplayFields, visibleProse } from "../../security/display-text.js";
 import { renderCheckInSummary } from "../presentation/check-in.js";
 import type { SessionInfo } from "@earendil-works/pi-coding-agent";
@@ -67,6 +68,8 @@ export interface InteractiveCoordinatorLike {
 }
 
 export interface InteractiveCoordinatorService {
+  getTranscript?(turnId: string): TranscriptBlock[];
+  loadTranscript?(turnId: string): Promise<void>;
   loadHistoryDetail?(id: string, section: HistoryDetail["section"], offset?: number, limit?: number): Promise<HistoryDetail>;
   start(): Promise<void>;
   dispose(): Promise<void>;
@@ -93,6 +96,10 @@ export class HeadlessInteractiveCoordinatorService
   private disposed = false;
   private busy = false;
   private readonly historyIndex = new HistoryIndex();
+  private readonly transcript = new RequestTranscript(async (run) => {
+    if (!this.coordinator.getRunArchive) throw new Error("This runtime has no retained archive reader.");
+    return this.coordinator.getRunArchive(run);
+  }, (runId) => this.historyIndex.getMessageSequences(runId));
   private helpReturn: InteractiveUiState["modal"] | undefined;
   private readonly committedMessages = new Set<string>();
   private operationTexts = new Set<string>();
@@ -140,6 +147,7 @@ export class HeadlessInteractiveCoordinatorService
   }
 
   public async dispose(): Promise<void> {
+    this.transcript.reset();
     if (this.disposed) {
       return;
     }
@@ -586,7 +594,9 @@ export class HeadlessInteractiveCoordinatorService
     if (this.disposed) {
       return;
     }
-    if (this.historyIndex.observe(event)) this.updateState({ type: "set_history", history: this.historyIndex.snapshot() });
+    const historyChanged = this.historyIndex.observe(event);
+    this.transcript.observeTool(event, this.historyIndex.eventSequence);
+    if (historyChanged) this.updateState({ type: "set_history", history: this.historyIndex.snapshot() });
     event = { ...event, details: safeDisplayFields(event.details) };
     const status = this.coordinator.getStatus();
     if (event.eventType === "ui.conversation_reset") {
@@ -646,6 +656,9 @@ export class HeadlessInteractiveCoordinatorService
     }
     const currentSession = this.coordinator.getStatus().runtimes.find((runtime) => runtime.role === event.role)?.sessionId;
     if (currentSession && currentSession !== event.sessionId) return;
+    const run = [...this.state.history.records].reverse().find((record) => record.kind === "run" && record.role === event.role && record.sessionId === event.sessionId && record.outcome.kind === "running" && (!event.runId || record.id === event.runId));
+    if (event.runId && !run) return;
+    if (run?.kind === "run") this.transcript.observeOutput(event, run, this.historyIndex.eventSequence + 0.1);
     if (event.type === "assistant_text_delta") {
       this.updateState({
         type: "append_stream_delta",
@@ -684,6 +697,14 @@ export class HeadlessInteractiveCoordinatorService
       sessionId: event.sessionId,
       text: committedText
     });
+  }
+
+  public getTranscript(turnId: string): TranscriptBlock[] {
+    return this.transcript.blocks(this.state.history.records, turnId);
+  }
+
+  public async loadTranscript(turnId: string): Promise<void> {
+    await this.transcript.hydrate(this.state.history.records, turnId);
   }
 
   public async loadHistoryDetail(id: string, section: HistoryDetail["section"], offset = 0, limit = 100): Promise<HistoryDetail> {

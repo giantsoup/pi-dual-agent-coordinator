@@ -1,5 +1,5 @@
 import { extractMachineBlock } from "../../handoff/handoff-envelope.js";
-import { completionRecordSchema, finalDecisionSchema, planProposalEnvelopeSchema } from "../../handoff/handoff-envelope-schema.js";
+import { completionRecordSchema, executionPlanEnvelopeSchema, finalDecisionSchema, handoffEnvelopeSchema, planProposalEnvelopeSchema } from "../../handoff/handoff-envelope-schema.js";
 import type { ArchiveEntry } from "../../runtime/session-history.js";
 import type { HistoryDetail, HistoryRecord } from "../../types/history.js";
 import { roleLabel } from "../../types/history.js";
@@ -48,7 +48,7 @@ export function projectHistoryDetail(record: HistoryRecord, records: HistoryReco
     text = entries.filter((entry) => entry.message?.role === "assistant").map((entry) => {
       const message = entry.message;
       const prose = Array.isArray(message?.content) ? message.content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n") : "";
-      return [visibleProse(prose), reportedResult(prose), message?.errorMessage ? `Result: ${message.errorMessage}` : ""].filter(Boolean).join("\n\n");
+      return [readableAssistantOutput(prose), message?.errorMessage ? `Result: ${message.errorMessage}` : ""].filter(Boolean).join("\n\n");
     }).filter(Boolean).join("\n\n");
     if (!text) reason ??= "Visible assistant prose unavailable: none retained for this run. Hidden reasoning and workflow blocks are excluded.";
     text += `\n\nCalls:\n${calls.map((call) => `${call.outcome.kind}: ${call.title} [${call.id}]`).join("\n")}`;
@@ -57,6 +57,10 @@ export function projectHistoryDetail(record: HistoryRecord, records: HistoryReco
   const lines = safeDisplayText(text).split("\n");
   const start = Math.max(0, Math.min(Math.floor(offset), Math.max(0, lines.length - 1)));
   return { recordId: record.id, section, offset: start, lines: lines.slice(start, start + Math.max(1, Math.min(200, limit))), totalLines: lines.length, reason: reason ? safeDisplayText(reason) : undefined };
+}
+
+export function readableAssistantOutput(text: string): string {
+  return safeDisplayText([visibleProse(text), reportedResult(text)].filter(Boolean).join("\n\n"));
 }
 
 function reportedResult(text: string): string {
@@ -73,5 +77,10 @@ function reportedResult(text: string): string {
   if (final.success) return `Review decision: ${final.data.decision}\n${final.data.summary}\n${final.data.userResponse}`;
   const plan = planProposalEnvelopeSchema.safeParse(parse("pi-plan"));
   if (plan.success) return `Proposed plan: ${plan.data.summary}\n${plan.data.executionPlan.join("\n")}\nAcceptance criteria:\n${plan.data.acceptanceCriteria.join("\n")}`;
+  const execution = executionPlanEnvelopeSchema.safeParse(parse("pi-execute"));
+  if (execution.success) return `Execution plan: ${execution.data.summary}\n${execution.data.executionPlan.join("\n")}\nAcceptance criteria:\n${execution.data.acceptanceCriteria.join("\n")}`;
+  const handoff = handoffEnvelopeSchema.safeParse(parse("pi-handoff"));
+  if (handoff.success) return [`Handoff: ${handoff.data.summary}`, ...(handoff.data.executionPlan ?? []), ...(handoff.data.reviewNotes ?? []),
+    `Acceptance criteria:\n${handoff.data.acceptanceCriteria.join("\n")}`].join("\n");
   return "";
 }

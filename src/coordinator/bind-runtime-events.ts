@@ -22,6 +22,7 @@ export type RuntimeUiBridgeEvent =
       type: "assistant_text_delta";
       role: Role;
       sessionId: string;
+      runId?: string | undefined;
       sessionFile?: string | undefined;
       timestamp: string;
       messageId?: string | undefined;
@@ -31,6 +32,7 @@ export type RuntimeUiBridgeEvent =
       type: "assistant_turn_committed";
       role: Role;
       sessionId: string;
+      runId?: string | undefined;
       sessionFile?: string | undefined;
       timestamp: string;
       messageId?: string | undefined;
@@ -242,6 +244,7 @@ export class RuntimeEventBridge {
     const model = getModelDisplayInfo(binding.session.model);
     telemetry.details = {
       ...telemetry.details,
+      messageId: this.turnIds.get(binding.role),
       modelName: model.name,
       modelProvider: model.provider,
       modelId: model.id,
@@ -298,6 +301,7 @@ export class RuntimeEventBridge {
         type: "assistant_text_delta",
         role: binding.role,
         sessionId: binding.sessionId,
+        runId: this.runIds.get(binding.role),
         sessionFile: binding.sessionFile,
         timestamp: new Date().toISOString(),
         messageId: this.turnIds.get(binding.role),
@@ -314,6 +318,7 @@ export class RuntimeEventBridge {
       type: "assistant_turn_committed",
       role: binding.role,
       sessionId: binding.sessionId,
+      runId: this.runIds.get(binding.role),
       sessionFile: binding.sessionFile,
       timestamp: new Date().toISOString(),
       messageId: this.turnIds.get(binding.role),

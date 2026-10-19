@@ -1,8 +1,9 @@
-import { TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
+import { TuiMainScreen, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { CoordinatorTuiApp } from "../../src/app/tui/app.js";
 import { HeadlessInteractiveCoordinatorService } from "../../src/app/interactive/service.js";
 import { MemoryTerminal } from "../helpers/terminal.js";
+import type { HistoryRecord } from "../../src/types/history.js";
 import type { NormalizedTelemetryEvent } from "../../src/types/telemetry.js";
 import type { CoordinatorStatusSnapshot } from "../../src/types/status.js";
 import { CurrentWorkspace, liveIdentity } from "../../src/app/tui/workspace.js";
@@ -21,10 +22,23 @@ async function setup() {
   for (let i = 0; i < 12; i++) { emit("pi.tool_execution_start", { toolName: "read", toolCallId: `call-${i}`, toolArgs: { path: `file-${i}` } }); emit("pi.tool_execution_end", { toolName: "read", toolCallId: `call-${i}`, isError: i === 4 }); }
   const terminal = new MemoryTerminal(); const tui = new TuiMainScreen(terminal);
   const app = new CoordinatorTuiApp(tui, terminal, service, { onExit() {} }); app.focused = true;
+  // These control tests exercise individual calls after explicitly expanding their group.
+  app.render(80); app.handleInput("\x1bw"); app.handleInput("\x1b[H"); app.handleInput("\x1b[C"); app.handleInput("\x1bl"); app.handleInput("\x1be");
   return { app, service, terminal, coordinator, status, emit };
 }
 const strip = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 describe("selected workspace through shared history service", () => {
+  it("keeps following the newest output when a response exceeds the preview budget", async () => {
+    const { app, service } = await setup();
+    try {
+      const getState = service.getState.bind(service);
+      vi.spyOn(service, "getState").mockImplementation(() => ({ ...getState(), liveStream: { role: "B", sessionId: "s", startedAt: "now", text: "earlier output\n".repeat(2500) + "NEWEST_RESPONSE_TAIL" } }));
+      const screen = strip(app.render(80).join("\n"));
+      expect(screen).toContain("NEWEST_RESPONSE_TAIL");
+      expect(screen).toContain("Recent response preview");
+      expect(screen).toContain("Following");
+    } finally { await service.dispose(); }
+  });
   it.each([[80, 24], [120, 40]])("scrolls records and prose while preserving the draft at %sx%s", async (width, height) => {
     const { app, service, terminal, coordinator } = await setup();
     try {
@@ -92,10 +106,9 @@ describe("selected workspace through shared history service", () => {
       app.handleInput("g"); await settle();
       expect(screen()).toContain("retained line 0");
       app.handleInput("\t");
-      app.handleInput("\x1b"); app.handleInput("\x1b"); app.handleInput("\x1b"); app.handleInput("r");
-      expect(screen()).toContain("HISTORY [focus]");
+      app.handleInput("\x1b"); app.handleInput("\x1b"); app.handleInput("r");
+      expect(screen()).toContain("Request history");
       app.handleInput("\x1b");
-      if (width < 104) app.handleInput("\x1b");
       app.handleInput("\x1b"); app.handleInput("a");
       expect(screen()).toContain("Activity");
       app.handleInput("\x1b"); app.handleInput("a");
@@ -145,7 +158,6 @@ describe("selected workspace through shared history service", () => {
       app.handleInput("\x1b[<64;50;1M");
       app.handleInput("\x1b[<0;50;8M");
       app.handleInput("\x1b[<64;50;8m");
-      if (width >= 104) app.handleInput("\x1b[<64;5;8M");
       expect(position()).toBe(bottom);
       app.handleInput("\x1bOP"); app.render(width);
       app.handleInput("\x1b[<64;50;8M"); app.handleInput("\x1b");
@@ -236,16 +248,19 @@ describe("selected workspace through shared history service", () => {
     expect(coordinator.replaceRuntime).not.toHaveBeenCalled(); expect(coordinator.submitUserInput).not.toHaveBeenCalled(); expect(coordinator.discardPendingPlan).not.toHaveBeenCalled();
     await service.dispose();
   });
-  it("opens the narrow history control and folds one turn, run and tool independently", async () => {
+  it("chooses a past request and keeps run and tool inspection in the transcript", async () => {
     const { app, service, emit } = await setup();
-    emit("ui.turn_started", { objective: "Next operator turn" }, { operatorTurnId: "next-turn" });
-    app.handleInput("\x1b[17~"); app.handleInput("\x1b[17~");
-    expect(app.render(80).join("\n")).toContain("History / 1 past turns [focus]");
-    app.handleInput("\r"); app.handleInput(" "); app.handleInput("\x1b[B"); app.handleInput(" "); app.handleInput("\x1b[B"); app.handleInput("\r"); await settle();
-    expect(app.render(80).join("\n")).toContain("READ-ONLY INSPECTOR");
-    app.handleInput("\x1b"); expect(app.render(80).join("\n")).toContain("HISTORY [focus]");
-    app.handleInput("\x1b[F"); expect(app.render(80).join("\n")).toContain("CURRENT REQUEST");
-    await service.dispose();
+    try {
+      emit("ui.turn_started", { objective: "Next operator turn" }, { operatorTurnId: "next-turn" });
+      app.render(80); app.handleInput("\x1bOS"); app.handleInput("g"); app.handleInput("\r");
+      expect(app.render(80).join("\n")).toContain("HISTORY REQUEST 1");
+      app.handleInput("\x1b[H"); app.handleInput(" ");
+      expect(app.render(80).join("\n")).not.toContain("file-0");
+      app.handleInput(" "); app.handleInput("\x1b[B"); app.handleInput(" "); app.handleInput("\r"); await settle();
+      expect(app.render(80).join("\n")).toContain("READ-ONLY INSPECTOR");
+      app.handleInput("\x1b"); app.handleInput("\x1bOS"); app.handleInput("l");
+      expect(app.render(80).join("\n")).toContain("CURRENT REQUEST 2");
+    } finally { await service.dispose(); }
   });
   it.each(["idle", "completed", "failed", "cancelled", "timed_out", "cancelling"] as const)("never calls cached activeRole running in %s", async (kind) => {
     const { service } = await setup();
@@ -257,12 +272,12 @@ describe("selected workspace through shared history service", () => {
     const { service } = await setup();
     const workspace = new CurrentWorkspace(service, () => {}); workspace.focus = "transcript";
     const tool = service.getState().history.records.find((record) => record.kind === "tool"); if (!tool) throw new Error("tool");
-    workspace.inspect(tool.id); await settle(); workspace.handleInput("3", service.getState(), false); await settle();
+    workspace.inspect(tool.id); await settle(); workspace.handleInput("3", service.getState()); await settle();
     workspace.render(service.getState(), 80, 17);
-    for (let i = 0; i < 25; i++) { workspace.handleInput("\x1b[6~", service.getState(), false); await settle(); }
+    for (let i = 0; i < 25; i++) { workspace.handleInput("\x1b[6~", service.getState()); await settle(); }
     const lines = workspace.render(service.getState(), 80, 17).join("\n");
     expect(lines).toMatch(/retained line (1[2-9]\d|[23]\d\d)/);
-    workspace.close(); workspace.focus = "editor"; expect(workspace.handleInput("3", service.getState(), false)).toBe(false);
+    workspace.close(); workspace.focus = "editor"; expect(workspace.handleInput("3", service.getState())).toBe(false);
     await service.dispose();
   });
 });
@@ -310,7 +325,7 @@ it("propagates Pi's IME cursor marker only to the focused composer", async () =>
   expect(app.render(80).join("\n")).toContain(CURSOR_MARKER);
   app.handleInput("\x1b[17~");
   expect(app.render(80).join("\n")).not.toContain(CURSOR_MARKER);
-  app.handleInput("\x1b");
+  app.handleInput("\x1b"); app.handleInput("e");
   expect(app.render(80).join("\n")).toContain(CURSOR_MARKER);
   await service.dispose();
 });
@@ -331,10 +346,245 @@ it("shows unread prose while following is paused before a role run completes", a
   const { service } = await setup();
   const workspace = new CurrentWorkspace(service, () => {}); workspace.focus = "transcript";
   const state = service.getState(); workspace.render(state, 80, 17);
-  workspace.handleInput("\x1b[H", state, false);
+  workspace.handleInput("\x1b[H", state);
   workspace.render({ ...state, liveStream: { role: "B", sessionId: "s", startedAt: new Date().toISOString(), text: "New prose while the run is still active" } }, 80, 17);
   expect(workspace.pointer(state)).toContain("1 unread");
-  workspace.handleInput("\x1b[F", state, false);
+  workspace.handleInput("\x1b[F", state);
   expect(workspace.pointer(state)).not.toContain("unread");
   await service.dispose();
+});
+
+const chooserState = (state: ReturnType<HeadlessInteractiveCoordinatorService["getState"]>, count = 18) => {
+  const timestamp = "2026-10-19T12:00:00Z";
+  const outcomes = ["completed", "failed", "cancelled", "interrupted", "timed_out"] as const;
+  const turns = Array.from({ length: count }, (_, index) => ({ kind: "turn" as const, id: `past-${index}`, title: `Past ${index} 界 😀 é ${"long title ".repeat(20)}`,
+    timestamp, requestIds: [], outcome: { kind: outcomes[index % outcomes.length] ?? "completed", endedAt: timestamp } }));
+  return { ...state, history: { ...state.history, records: [...turns, ...state.history.records], warnings: ["Some archives are unavailable."] } };
+};
+
+it.each([[80,24], [103,30], [104,30], [105,30], [120,40], [180,50]])("gives the closed request the entire body at %sx%s", async (width, height) => {
+  const { service } = await setup();
+  try {
+    const workspace = new CurrentWorkspace(service, () => {});
+    const state = chooserState(service.getState());
+    const lines = workspace.render(state, width, height);
+    expect(lines).toHaveLength(height);
+    expect(lines.every((line) => visibleWidth(line) === width)).toBe(true);
+    expect(strip(lines[0] ?? "")).toMatch(/^\+ CURRENT REQUEST/);
+    expect(strip(lines.join("\n"))).not.toMatch(/HISTORY|History \/|Request history/);
+    workspace.cycle(1, true); expect(workspace.focus).toBe("transcript");
+    workspace.cycle(1, true); expect(workspace.focus).toBe("activity");
+    workspace.cycle(1, true); expect(workspace.focus).toBe("editor");
+  } finally { await service.dispose(); }
+});
+
+it("keeps highlights provisional, clamps navigation, and selects Current only on confirmation", async () => {
+  const { service } = await setup();
+  try {
+    const workspace = new CurrentWorkspace(service, () => {});
+    const state = chooserState(service.getState());
+    const screen = () => strip(workspace.render(state, 120, 30).join("\n"));
+    const before = screen();
+    workspace.openHistory(state); workspace.openHistory(state);
+    workspace.handleInput("g", state); workspace.handleInput("\x1b[A", state);
+    expect(screen()).toContain("> Request 1 [completed]");
+    workspace.handleInput("d", state); expect(screen()).toContain("> Request 9");
+    workspace.handleInput("u", state); expect(screen()).toContain("> Request 1");
+    workspace.close(); expect(screen()).toBe(before); expect(workspace.focus).toBe("editor");
+    workspace.openHistory(state); workspace.handleInput("g", state); workspace.handleInput("\r", state);
+    expect(screen()).toContain("HISTORY REQUEST 1"); expect(screen()).toContain("Paused");
+    expect(screen()).toContain("New prompts use current conversation");
+    workspace.openHistory(state); expect(screen()).toContain("> Request 1");
+    workspace.handleInput("\x1b[F", state); workspace.handleInput("\x1b[B", state);
+    expect(screen()).toContain("> Current request");
+    workspace.close(); expect(screen()).toContain("HISTORY REQUEST 1");
+    workspace.openHistory(state); workspace.handleInput("l", state);
+    expect(workspace.historyVisible).toBe(false); expect(screen()).toContain("CURRENT REQUEST"); expect(screen()).toContain("Following");
+    const empty = { ...state, history: { ...state.history, currentTurnId: undefined } };
+    workspace.openHistory(empty);
+    expect(strip(workspace.render(empty, 80, 17).join("\n"))).toContain("> Current conversation · empty");
+    workspace.handleInput("\r", empty);
+    expect(strip(workspace.render(empty, 80, 17).join("\n"))).toContain("Send a request");
+    expect(workspace.historyVisible).toBe(false);
+  } finally { await service.dispose(); }
+});
+
+it("keeps candidate IDs through progress and requires a new confirmation for a missing request", async () => {
+  const { service } = await setup();
+  try {
+    const workspace = new CurrentWorkspace(service, () => {});
+    let state = chooserState(service.getState());
+    workspace.render(state, 80, 17); workspace.openHistory(state); workspace.handleInput("g", state); workspace.handleInput("\x1b[B", state);
+    state = { ...state, history: { ...state.history, revision: state.history.revision + 1, records: state.history.records.filter((record) => record.id !== "past-0") } };
+    expect(strip(workspace.render(state, 80, 17).join("\n"))).toContain("Past 1");
+    workspace.handleInput("\r", state);
+    expect(strip(workspace.render(state, 80, 17).join("\n"))).toContain("HISTORY REQUEST 1");
+    workspace.openHistory(state);
+    state = { ...state, history: { ...state.history, records: state.history.records.filter((record) => record.id !== "past-1") } };
+    workspace.handleInput("\r", state);
+    expect(workspace.historyVisible).toBe(true);
+    expect(strip(workspace.render(state, 80, 17).join("\n"))).toContain("Request unavailable");
+    workspace.handleInput("\r", state);
+    expect(workspace.historyVisible).toBe(false);
+    expect(strip(workspace.render(state, 80, 17).join("\n"))).toContain("CURRENT REQUEST");
+    workspace.openHistory(state);
+    state = { ...state, history: { ...state.history, resetId: "new-conversation", currentTurnId: undefined } };
+    workspace.render(state, 80, 17);
+    expect(workspace.historyVisible).toBe(false); expect(workspace.focus).toBe("editor");
+  } finally { await service.dispose(); }
+});
+
+it("preserves paused anchors and folds on dismissal and never reads covered output", async () => {
+  const { service } = await setup();
+  try {
+    const workspace = new CurrentWorkspace(service, () => {});
+    const state = { ...service.getState(), liveStream: { role: "B" as const, sessionId: "s", startedAt: "now", text: Array.from({ length: 60 }, (_, i) => `COVERED[${i}]`).join("\n") } };
+    const screen = (current = state) => strip(workspace.render(current, 80, 17).join("\n"));
+    screen(); workspace.scroll(-7, state); workspace.focus = "transcript";
+    const paused = screen();
+    workspace.openHistory(state); workspace.handleInput("g", state); workspace.close();
+    expect(workspace.focus).toBe("transcript"); expect(screen()).toBe(paused);
+    workspace.handleInput("g", state);
+    const folded = screen(); expect(folded).not.toContain("file-0");
+    workspace.openHistory(state); workspace.close(); expect(screen()).toBe(folded);
+    workspace.handleInput(" ", state);
+    workspace.followLatest(state); screen(); workspace.openHistory(state);
+    const updated = { ...state, history: { ...state.history, revision: state.history.revision + 2 }, liveStream: { ...state.liveStream, text: state.liveStream.text + "\nhidden" } };
+    screen(updated); expect(workspace.pointer(updated)).toContain("3 unread");
+    workspace.handleInput("g", updated); workspace.handleInput("\x1b[F", updated);
+    screen(updated); expect(workspace.pointer(updated)).toContain("3 unread");
+    workspace.close(); screen(updated); expect(workspace.pointer(updated)).not.toContain("unread");
+    workspace.scroll(-1, updated); workspace.openHistory(updated);
+    const later = { ...updated, history: { ...updated.history, revision: updated.history.revision + 1 } };
+    screen(later); workspace.close(); screen(later);
+    expect(workspace.pointer(later)).toContain("1 unread");
+  } finally { await service.dispose(); }
+});
+
+it("invalidates deferred inspector loads after navigation and conversation reset", async () => {
+  const { service } = await setup();
+  try {
+    let release: (detail: Awaited<ReturnType<typeof service.loadHistoryDetail>>) => void = () => {};
+    vi.spyOn(service, "loadHistoryDetail").mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    const workspace = new CurrentWorkspace(service, () => {});
+    let state = chooserState(service.getState());
+    workspace.render(state, 80, 17); workspace.focusWorkspace(); workspace.inspect("run");
+    workspace.close(); workspace.openHistory(state); workspace.handleInput("g", state); workspace.handleInput("\r", state);
+    release({ recordId: "run", section: "summary", offset: 0, lines: ["STALE DETAIL"], totalLines: 1 }); await settle();
+    expect(workspace.inspector).toBeUndefined();
+    expect(strip(workspace.render(state, 80, 17).join("\n"))).toContain("HISTORY REQUEST 1");
+    workspace.inspect("run"); state = { ...state, history: { ...state.history, resetId: "reset" } };
+    workspace.render(state, 80, 17); release({ recordId: "run", section: "summary", offset: 0, lines: ["STALE DETAIL"], totalLines: 1 }); await settle();
+    expect(workspace.inspector).toBeUndefined(); expect(workspace.focus).toBe("editor");
+    expect(strip(workspace.render(state, 80, 17).join("\n"))).not.toContain("STALE DETAIL");
+  } finally { await service.dispose(); }
+});
+
+it.each([[80,24], [120,40]])("routes wheel to the visible chooser after editor/activity resize at %sx%s", async (width, height) => {
+  const { app, service, terminal } = await setup();
+  try {
+    const state = chooserState(service.getState(), 25);
+    vi.spyOn(service, "getState").mockReturnValue(state);
+    terminal.columns = width; terminal.rows = height;
+    app.handleInput("\x1b[200~first\nsecond\nthird\x1b[201~"); app.handleInput("\x1bOQ");
+    const screen = () => strip(app.render(terminal.columns).join("\n"));
+    const before = screen();
+    app.handleInput("\x1bOS"); screen();
+    app.handleInput("\x1b[<64;5;3M");
+    expect(screen()).toContain("> Request 23");
+    const candidate = screen().match(/> Request \d+/)?.[0];
+    for (const input of [`\x1b[<64;5;${height}M`, "\x1b[<64;5;2M", "\x1b[<64;1;3M"]) app.handleInput(input);
+    expect(screen().match(/> Request \d+/)?.[0]).toBe(candidate);
+    terminal.columns = width === 80 ? 120 : 80; terminal.rows = width === 80 ? 40 : 24;
+    expect(screen().match(/> Request \d+/)?.[0]).toBe(candidate);
+    app.handleInput("\x1b[<64;5;3M"); expect(screen()).toContain("> Request 20");
+    app.handleInput("\x1bOS"); terminal.columns = width; terminal.rows = height;
+    expect(screen()).toBe(before);
+  } finally { await service.dispose(); }
+});
+
+it("keeps Current live across a new request and renders every retained outcome", async () => {
+  const { service } = await setup();
+  try {
+    const workspace = new CurrentWorkspace(service, () => {});
+    const timestamp = "2026-10-19T12:00:00Z";
+    const outcomes: HistoryRecord["outcome"][] = [
+      { kind: "running", startedAt: timestamp }, { kind: "waiting_approval", endedAt: timestamp },
+      ...(["completed", "failed", "cancelled", "timed_out", "interrupted"] as const).map((kind) => ({ kind, endedAt: timestamp }))
+    ];
+    let state = service.getState();
+    state = { ...state, history: { ...state.history, records: [...outcomes.map((outcome, i) => ({ kind: "turn" as const, id: `outcome-${i}`, title: `Outcome ${i}`, requestIds: [], timestamp, outcome })), ...state.history.records] } };
+    workspace.render(state, 80, 17); workspace.openHistory(state); workspace.handleInput("g", state);
+    for (const outcome of outcomes) {
+      expect(strip(workspace.render(state, 80, 17).join("\n"))).toContain(`[${outcome.kind}]`);
+      workspace.handleInput("\x1b[B", state);
+    }
+    workspace.handleInput("\x1b[F", state);
+    state = { ...state, history: { ...state.history, currentTurnId: "next", revision: state.history.revision + 1, records: [...state.history.records,
+      { kind: "turn", id: "next", title: "New live request", requestIds: [], timestamp, outcome: { kind: "running", startedAt: timestamp } }] } };
+    const open = strip(workspace.render(state, 80, 17).join("\n"));
+    expect(open).toContain("> Current request [running]"); expect(open).toContain("New live request");
+    workspace.handleInput("\r", state);
+    expect(strip(workspace.render(state, 80, 17).join("\n"))).toContain("New live request");
+    expect(workspace.historyVisible).toBe(false);
+  } finally { await service.dispose(); }
+});
+
+
+it("does not acknowledge live output covered by contextual help", async () => {
+  const { service } = await setup();
+  try {
+    const workspace = new CurrentWorkspace(service, () => {});
+    const state = service.getState(); workspace.render(state, 80, 17);
+    await service.dispatch({ type: "open_help" });
+    const covered = { ...service.getState(), history: { ...state.history, revision: state.history.revision + 1 } };
+    workspace.render(covered, 80, 17); expect(workspace.pointer(covered)).toContain("1 unread");
+    workspace.render(covered, 120, 30); expect(workspace.pointer(covered)).toContain("1 unread");
+    await service.dispatch({ type: "close_modal" });
+    const visible = { ...service.getState(), history: covered.history };
+    workspace.render(visible, 80, 17); expect(workspace.pointer(visible)).not.toContain("unread");
+  } finally { await service.dispose(); }
+});
+
+it("restores editor focus and footer on the first frame after history resets", async () => {
+  const { CURSOR_MARKER } = await import("@earendil-works/pi-tui");
+  const { app, service, emit } = await setup();
+  try {
+    app.render(80); app.handleInput("saved draft"); app.handleInput("\x1bOS"); app.render(80);
+    emit("ui.conversation_reset", {}, { sessionId: "new-conversation" });
+    const first = app.render(80).join("\n");
+    expect(first).not.toContain("+ Request history");
+    expect(first).toContain(CURSOR_MARKER); expect(first).toContain("Enter submit");
+    expect(first).toContain("saved draft");
+  } finally { await service.dispose(); }
+});
+
+it("keeps the visible read baseline when history opens after hidden modal activity", async () => {
+  const { service } = await setup();
+  try {
+    const workspace = new CurrentWorkspace(service, () => {});
+    const original = service.getState(); workspace.render(original, 80, 17);
+    await service.dispatch({ type: "open_help" });
+    const covered = { ...service.getState(), history: { ...original.history, revision: original.history.revision + 2 } };
+    workspace.render(covered, 80, 17); expect(workspace.pointer(covered)).toContain("2 unread");
+    await service.dispatch({ type: "close_modal" });
+    const beforeRender = { ...service.getState(), history: covered.history };
+    workspace.openHistory(beforeRender);
+    const updated = { ...beforeRender, history: { ...beforeRender.history, revision: original.history.revision + 5 } };
+    workspace.render(updated, 80, 17); expect(workspace.pointer(updated)).toContain("5 unread");
+  } finally { await service.dispose(); }
+});
+
+it("keeps unread activity readable at 80 columns while long tool activity is live", async () => {
+  const { app, service, emit } = await setup();
+  try {
+    app.render(80); app.handleInput("ab"); app.handleInput("\x1b[D"); app.handleInput("\x1bOS");
+    emit("pi.tool_execution_start", { toolName: "read", toolCallId: "long-live-call", toolArgs: { path: "long-active-path/".repeat(20) } });
+    const lines = strip(app.render(80).join("\n")).split("\n");
+    const live = lines.find((line) => line.startsWith("Active: B - Junior"));
+    expect(live).toContain("unread, l current"); expect(live).not.toContain("Esc then l");
+    app.handleInput("l"); expect(strip(app.render(80).join("\n"))).toContain("Following");
+    app.handleInput("\x1be"); app.handleInput("X");
+    expect(stripTerminalSequences(app.render(80).join("\n"))).toContain("aXb");
+  } finally { await service.dispose(); }
 });

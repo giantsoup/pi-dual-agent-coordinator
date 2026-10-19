@@ -11,6 +11,7 @@ interface HistoryBase {
   id: string;
   title: string;
   timestamp: string;
+  sequence?: number | undefined;
   outcome: RecordOutcome;
 }
 export type HistoryRecord =
@@ -32,4 +33,13 @@ export interface HistoryDetail {
   totalLines: number;
   reason?: string | undefined;
 }
+export type TranscriptBlock = {
+  id: string;
+  runId: string;
+  timestamp: string;
+  sequence: number;
+} & (
+  | { kind: "response"; text: string }
+  | { kind: "tools"; callIds: string[] }
+);
 export const roleLabel = (role: Role): string => role === "A" ? "A - Senior" : "B - Junior";

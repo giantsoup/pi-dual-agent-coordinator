@@ -46,6 +46,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
   public focused = false;
 
   private readonly editor: Editor;
+  private readonly autocompleteProvider: CombinedAutocompleteProvider;
   private controls: { kind: "menu"; selected: number } | { kind: "quit" } | undefined;
   private controlsPaste = false;
   private lastCtrlCAt = 0;
@@ -58,7 +59,8 @@ export class CoordinatorTuiApp implements Component, Focusable {
   private readonly savedModals = new Map<string, { offset: number; selected?: string | undefined }>();
   private activityScrollOffset = 0;
   private showActivity = false;
-  private historyRailVisible = false;
+  private historyPaste = false;
+  private historyPasteTail = "";
   private overlay: ReturnType<TUI["showOverlay"]> | undefined;
   private historyDraft: string | undefined;
   private selection: SelectList | undefined;
@@ -78,7 +80,8 @@ export class CoordinatorTuiApp implements Component, Focusable {
       paddingX: 1,
       autocompleteMaxVisible: 8
     });
-    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(REPL_COMPLETION_COMMANDS, this.service.getState().status.cwd));
+    this.autocompleteProvider = new CombinedAutocompleteProvider(REPL_COMPLETION_COMMANDS, this.service.getState().status.cwd);
+    this.editor.setAutocompleteProvider(this.autocompleteProvider);
     this.editor.onSubmit = (text) => {
       if (!text.trim()) return;
       // Pi clears before onSubmit. Restore until the shared service accepts it.
@@ -106,9 +109,11 @@ export class CoordinatorTuiApp implements Component, Focusable {
 
   public handleInput(data: string): void {
     const state = this.service.getState();
+    this.workspace.syncState(state);
     this.syncModalState(state);
+    if (this.captureHistoryPaste(data)) return;
     // Legacy terminals can deliver a quick Esc + letter as one Meta sequence.
-    if (!this.controls && state.modal.kind === "none" && this.paneFocus === "editor"
+    if (!this.controls && state.modal.kind === "none" && !this.workspace.historyVisible && !this.workspace.inspector
       && data.length === 2 && data.startsWith("\x1b") && controlActions.some((item) => item.key === data[1])) {
       this.handleInput("\x1b");
       this.handleInput(data.slice(1));
@@ -138,10 +143,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
       this.tui.requestRender();
       return;
     }
-    if (bindingMatches(data, "models")) {
-      void this.service.dispatch({ type: "open_models", role: "A" });
-      this.tui.requestRender(true); return;
-    }
+    if (this.workspace.historyVisible && (matchesKey(data, Key.f2) || bindingMatches(data, "models"))) return;
     if ((state.modal.kind === "model_picker" || state.modal.kind === "model_error") && matchesKey(data, Key.ctrl("c"))) {
       void this.service.dispatch({ type: "close_modal" }); this.tui.requestRender(true); return;
     }
@@ -164,10 +166,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
         this.tui.requestRender(true);
       } else if (this.workspace.close()) {
         this.tui.requestRender(true);
-      } else if (this.paneFocus !== "editor") {
-        this.paneFocus = "editor";
-        this.tui.requestRender(true);
-      } else if (this.editor.isShowingAutocomplete()) {
+      } else if (this.paneFocus === "editor" && this.editor.isShowingAutocomplete()) {
         this.editor.handleInput(data);
         this.tui.requestRender();
       } else {
@@ -178,6 +177,20 @@ export class CoordinatorTuiApp implements Component, Focusable {
       return;
     }
 
+    if (state.modal.kind === "none" && this.workspace.historyVisible) {
+      this.workspace.handleInput(data, state);
+      this.tui.requestRender(true);
+      return;
+    }
+    if (bindingMatches(data, "history")) {
+      if (state.modal.kind === "none" && !this.workspace.inspector) this.openHistory(state);
+      this.tui.requestRender(true);
+      return;
+    }
+    if (bindingMatches(data, "models")) {
+      void this.service.dispatch({ type: "open_models", role: "A" });
+      this.tui.requestRender(true); return;
+    }
     if (matchesKey(data, Key.f2) && state.modal.kind !== "none") {
       this.showActivity = !this.showActivity; this.tui.requestRender(true); return;
     }
@@ -242,6 +255,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
 
   public render(width: number): string[] {
     const state = this.service.getState();
+    this.workspace.syncState(state);
     if (!["running", "cancelling"].includes(state.operation.kind) && this.transientHint?.startsWith("Cancelling")) this.transientHint = undefined;
     this.syncModalState(state);
     this.editor.focused =
@@ -249,7 +263,6 @@ export class CoordinatorTuiApp implements Component, Focusable {
 
     const live = liveIdentity(state);
     const headerLines = [padLine(`pi-dual  ${safeDisplayText(state.status.cwd)} | ${state.status.phaseLabel}`, width)];
-    const liveLine = paintRole(padLine(this.workspace.pointer(state), width), live.role);
     const footerLines = this.controls
       ? [padLine(this.controls.kind === "menu" ? "Controls | Letter or Up/Down + Enter | Esc back" : "Quit? y confirm | n or Esc back", width), padLine("Your draft is preserved while this menu is open.", width)]
       : renderFooter(state, width, this.transientHint, this.paneFocus);
@@ -257,12 +270,10 @@ export class CoordinatorTuiApp implements Component, Focusable {
     const availableMainHeight = Math.max(1, this.terminal.rows - headerLines.length - footerLines.length - editorLines.length - 1);
     const activityHeight = this.showActivity ? Math.min(8, Math.max(3, Math.floor(availableMainHeight * .27))) : 0;
     const bodyHeight = Math.max(1, availableMainHeight - activityHeight);
-    this.historyRailVisible = width >= 104 && bodyHeight >= 14;
-    const railWidth = this.historyRailVisible && !this.workspace.inspector ? Math.min(28, Math.floor(width * .22)) + 1 : 0;
-    const compactHistoryHeight = !this.historyRailVisible && !this.workspace.inspector ? 1 : 0;
-    this.workspaceBounds = { left: railWidth + 1, top: headerLines.length + 1 + compactHistoryHeight, width: width - railWidth, height: bodyHeight - compactHistoryHeight };
+    this.workspaceBounds = { left: 2, top: headerLines.length + 2, width: Math.max(0, width - 2), height: Math.max(0, bodyHeight - 2) };
     const mainLines = this.controls ? this.renderControls(width, availableMainHeight) : [...this.workspace.render(state, width, bodyHeight), ...(this.showActivity ? frame(`Activity${this.paneFocus === "activity" ? " [focus]" : ""}`, selectPanelViewport(renderActivity(state, width - 2), activityHeight, "bottom", this.activityScrollOffset).lines, width, activityHeight) : [])];
 
+    const liveLine = paintRole(padLine(this.workspace.pointer(state), width), live.role);
     let lines = [...headerLines, ...mainLines, liveLine, ...editorLines, ...footerLines];
     lines = normalizeScreen(lines, width, this.terminal.rows);
 
@@ -276,6 +287,24 @@ export class CoordinatorTuiApp implements Component, Focusable {
     }
 
     return lines;
+  }
+
+  private openHistory(state: InteractiveUiState): void {
+    // Pi cancels visible and pending completion when the provider is reattached.
+    this.editor.setAutocompleteProvider(this.autocompleteProvider);
+    this.workspace.openHistory(state);
+  }
+
+  private captureHistoryPaste(data: string): boolean {
+    const start = "\x1b[200~";
+    const end = "\x1b[201~";
+    if (!this.historyPaste && this.workspace.historyVisible
+      && (data.includes(start) || (data.length > 1 && start.startsWith(data)))) this.historyPaste = true;
+    if (!this.historyPaste) return false;
+    const chunk = this.historyPasteTail + data;
+    if (chunk.includes(end)) { this.historyPaste = false; this.historyPasteTail = ""; }
+    else this.historyPasteTail = chunk.slice(-(end.length - 1));
+    return true;
   }
 
   private openPromptHistory(): void {
@@ -330,7 +359,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
         if (!this.showActivity && this.paneFocus === "activity") this.paneFocus = "editor";
         break;
       case "workspace": this.workspace.focusWorkspace(); break;
-      case "history": this.workspace.focusHistory(this.service.getState(), this.historyRailVisible); break;
+      case "history": this.openHistory(this.service.getState()); break;
       case "editor": this.paneFocus = "editor"; break;
       case "prompts": this.openPromptHistory(); break;
       case "latest": this.workspace.followLatest(this.service.getState()); break;
@@ -354,9 +383,22 @@ export class CoordinatorTuiApp implements Component, Focusable {
   }
 
   private handleCtrlC(): void {
-    if (["running", "cancelling"].includes(this.service.getState().operation.kind)) {
+    const state = this.service.getState();
+    if (["running", "cancelling"].includes(state.operation.kind)) {
       void this.service.dispatch({ type: "cancel" });
       this.transientHint = "Cancelling work. Your draft and completed file changes are preserved.";
+      this.tui.requestRender(true);
+      return;
+    }
+    if (state.modal.kind !== "none") {
+      void this.service.dispatch({ type: "close_modal" });
+      this.lastCtrlCAt = 0;
+      this.tui.requestRender(true);
+      return;
+    }
+    if (this.workspace.historyVisible) {
+      this.workspace.close();
+      this.lastCtrlCAt = 0;
       this.tui.requestRender(true);
       return;
     }
@@ -489,7 +531,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
   }
 
   private handlePaneInput(data: string, state: InteractiveUiState): boolean {
-    if (this.paneFocus !== "activity") return this.workspace.handleInput(data, state, this.historyRailVisible);
+    if (this.paneFocus !== "activity") return this.workspace.handleInput(data, state);
     const next = getNextScrollOffset(data, this.activityScrollOffset, Math.max(0, renderActivity(state, this.terminal.columns - 2).length - 4), widthSafePageSize(this.terminal.rows), "bottom");
     if (next !== undefined) this.activityScrollOffset = next;
     return true;

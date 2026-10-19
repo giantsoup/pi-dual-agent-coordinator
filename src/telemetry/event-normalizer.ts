@@ -61,6 +61,8 @@ export function normalizeLifecycleEvent(options: {
 
 function normalizeEventDetails(event: AgentSessionEvent): Record<string, unknown> {
   switch (event.type) {
+    case "message_end":
+      return { messageRole: event.message.role };
     case "message_update": {
       const details: Record<string, unknown> = {
         assistantEventType: event.assistantMessageEvent.type

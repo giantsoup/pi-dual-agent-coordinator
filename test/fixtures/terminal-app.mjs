@@ -65,7 +65,8 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
       if (count < 12) {
         stressCalls.set(handoffId, count + 1);
         await new Promise(resolve => setTimeout(resolve, 70));
-        return fixtureChatToolResponse('read', {path:count === 4 ? 'missing-stress.txt' : 'evidence.txt'}, `stress-${count}`);
+        return fixtureChatToolResponse('read', {path:count === 4 ? 'missing-stress.txt' : 'evidence.txt'}, `stress-${count}`,
+          count === 0 ? 'I am inspecting the retained evidence before making a change.' : count === 11 ? 'The senior check-in is complete. I am checking the remaining evidence.' : undefined);
       }
     } else if (!executed.has(handoffId)) {
       executed.add(handoffId);

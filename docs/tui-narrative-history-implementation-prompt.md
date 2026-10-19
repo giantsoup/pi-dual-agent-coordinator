@@ -1,5 +1,12 @@
 # Implement narrative TUI history
 
+The [request-history pane refactor](tui-history-pane-refactor-plan.md) supersedes
+only this document's persistent history rail, drawer, and history-navigation
+recommendations. The request chooser is implemented separately. The narrative
+transcript was outside that refactor. Ordinary response retention and collapsed
+tool totals are now implemented. This historical prompt also specifies unshipped
+reasoning summaries, animation, and range cursors; re-scope it before reuse.
+
 Use this prompt from the repository root:
 
 ```text

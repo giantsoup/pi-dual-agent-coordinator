@@ -40,6 +40,11 @@ export class HistoryIndex {
   private resetId: string | undefined;
   private revision = 0;
   private warnings: string[] = [];
+  private sequence = 0;
+  private readonly messageSequences = new Map<string, number[]>();
+  private readonly indexedMessages = new Set<string>();
+  public get eventSequence(): number { return this.sequence; }
+  public getMessageSequences(runId: string): number[] { return this.messageSequences.get(runId) ?? []; }
   public restore(input: ReturnType<typeof loadHistoryEvents>): void {
     this.warnings = input.warnings;
     if (input.events.some((event) => event.eventType.startsWith("pi.tool_execution") && !event.runId)) this.warnings.push("Earlier calls have no durable run association. Full task history was not retained by the previous UI.");
@@ -51,9 +56,18 @@ export class HistoryIndex {
   public snapshot(): HistorySnapshot { return { records: [...this.records.values()], currentTurnId: this.currentTurnId, resetId: this.resetId, revision: this.revision, warnings: this.warnings }; }
   public get(id: string): HistoryRecord | undefined { return this.records.get(id); }
   public observe(event: NormalizedTelemetryEvent): boolean {
+    this.sequence++;
     const d = event.details;
     const turnId = event.operatorTurnId ?? [...this.records.values()].find((record) => record.kind === "turn" && event.requestId && record.requestIds.includes(event.requestId))?.id;
     const runId = event.runId;
+    if (runId && event.eventType === "pi.message_end" && d.messageRole === "assistant") {
+      const key = JSON.stringify([runId, d.messageId ?? event.leafId ?? event.timestamp]);
+      if (!this.indexedMessages.has(key)) {
+        this.indexedMessages.add(key);
+        const sequences = this.messageSequences.get(runId) ?? [];
+        sequences.push(this.sequence); this.messageSequences.set(runId, sequences);
+      }
+    }
     let changed = false;
     if (event.eventType === "ui.conversation_reset" && this.resetId !== event.sessionId) {
       this.currentTurnId = undefined;
@@ -61,6 +75,7 @@ export class HistoryIndex {
       changed = true;
     }
     const put = (record: HistoryRecord) => {
+      record = { ...record, sequence: this.records.get(record.id)?.sequence ?? this.sequence };
       if (JSON.stringify(this.records.get(record.id)) === JSON.stringify(record)) return;
       this.records.set(record.id, record); changed = true;
     };

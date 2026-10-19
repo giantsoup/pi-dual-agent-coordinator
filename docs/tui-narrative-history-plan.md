@@ -1,6 +1,20 @@
 # Plan narrative history for both agents
 
-Date: 2026-10-18. Status: proposed, implementation not started.
+The [request-history pane refactor](tui-history-pane-refactor-plan.md) supersedes
+only this document's persistent history rail, drawer, and history-navigation
+recommendations. The request chooser is implemented separately. The narrative
+transcript was outside that refactor. The response transcript and collapsed tool
+totals are now implemented. The reasoning-summary, animation, and range-cursor
+designs below remain proposals.
+
+Date: 2026-10-18. Status: partially implemented, updated 2026-10-19.
+
+The shipped response view retains ordinary model text from both roles and uses
+read-only Pi archives for completed runs. Consecutive tool-only messages roll into
+one batch until readable output or a role/run boundary. Run disclosure expands
+the calls for inspection. This deliberately differs from the proposed per-message
+batch boundary and independently selectable batch rows below. It preserves the
+existing controls and groups tool-only model turns into a useful compact row.
 
 Replace the current request pane's run-and-tool list with a chronological narrative. Show each agent's readable output where it occurred, followed by a single compact row for each uninterrupted batch of tool activity. Keep Agent A's planning, check-ins, review, and repair visible alongside Agent B's execution.
 

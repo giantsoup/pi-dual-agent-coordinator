@@ -1,5 +1,9 @@
 # Terminal implementation verification
 
+For the 2026-10-19 request chooser implementation and current toolchain results,
+see [current workspace verification](current-workspace-verification.md).
+The dated checks below describe their original builds.
+
 Date: 2026-10-16. Branch: `main`. The initial working tree was clean, including
 the updated terminal plan. No repository or ancestor `AGENTS.md` was present.
 The cleanup in `2290d60` and browser branch were verified, not repeated.

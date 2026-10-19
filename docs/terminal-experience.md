@@ -51,9 +51,12 @@ aborts Pi, waits for its runtime to become idle, and prevents later execution, r
 requests. The editor keeps your draft. Completed changes remain on disk.
 Cancellation does not roll them back. `/quit` cancels work and exits.
 
-While idle, Ctrl+C clears a TUI draft. On an empty editor, press Ctrl+C twice
+While an idle service modal is open, Ctrl+C closes it before the underlying view.
+While Request history is open, idle Ctrl+C dismisses it and preserves the draft.
+Otherwise, idle Ctrl+C clears a TUI draft. On an empty editor, press Ctrl+C twice
 within 1.2 seconds to exit. Readline also requires a repeated idle Ctrl+C to exit.
-Esc closes an overlay, returns focus to the editor, or dismisses editor completion. SIGTERM, SIGHUP, and SIGINT
+Esc closes the current view or dismisses editor completion before opening controls.
+Use Esc then e to focus the editor from the base screen. SIGTERM, SIGHUP, and SIGINT
 use the supported shutdown path. Startup failures dispose partially created
 runtimes. Normal TUI shutdown restores input mode, cursor visibility, and the
 main screen.
@@ -86,7 +89,19 @@ operation displays `Active: A - Senior` or `Active: B - Junior`. Idle, approval
 waiting, cancellation and terminal results have separate labels. Inspecting older
 work never changes that live identity. The current phase follows the tool list,
 and live activity is the last line below the workspace and optional Activity panel.
-Records follow event order, including tools executed after a senior check-in.
+The body shows both agents' readable responses in order, including planning,
+execution updates, check-ins, review, and repair. Earlier responses remain visible
+when another role starts. Committed responses reload from the read-only Pi archive.
+Private reasoning and raw workflow blocks stay hidden; validated plan, check-in,
+completion, and review fields use the existing readable summaries.
+
+Uninterrupted tool activity is collapsed into one totals row beneath the response.
+A new response, role run, or check-in starts a separate group. Failures, cancellation,
+timeouts, and running calls remain visible in the totals. Focus the workspace with
+Esc then w, select a role run, and press Right or Space to show its individual calls.
+Enter on a run or call opens the existing read-only inspector. Left collapses calls
+without hiding the agent's response. Long responses show a marked 24,000-character
+preview; the run inspector provides the full retained output.
 
 During execution, `B turns` shows completed model turns for the current handoff
 and the next Agent A check, or that A is checking the current boundary. One model
@@ -96,21 +111,31 @@ resets for each new handoff. A terminal response goes to final review instead of
 a process check. Counts and check state are retained with request history;
 older records without this telemetry do not invent a model-turn count.
 
-Previous turns occupy a slim left rail when at least 104 columns and 14 body rows
-are available. The rail takes 22% of the width, capped at 28 cells. At 80 columns,
-a compact History control replaces the rail. Press Esc then r from the editor
-to open the same record list in the body. Inspectors also replace the body, leaving
-the live pointer, composer and contextual control hints visible. Below 80x24, a
-compact notice preserves input, resize, cancellation and exit handling. Pi retains its existing
-bounded multiline editor viewport and IME cursor marker.
+The displayed request uses the full body width at every terminal size. Press
+Esc then r, or F4, to open the temporary **Request history** pane. It lists past
+operator requests followed by **Current request**, or **Current conversation · empty**.
+Opening history dismisses editor completion, including pending suggestions, so the
+chooser has room beside a multiline draft. The draft and cursor stay intact.
+The composer, live pointer, and footer remain visible.
+
+Arrows change the provisional highlight. Enter displays the highlighted request
+and closes history. Esc or F4 dismisses history and restores the previous request,
+focus, folds, scroll position, and follow state. Selecting a past request pauses
+following and labels the body `HISTORY REQUEST`. New prompts always continue the
+current conversation. Selection never resumes an agent session or workflow and
+never approves a plan. The displayed request's runs and calls remain inspectable.
+
+Inspectors also replace the body. Below 80x24, a compact notice preserves input,
+resize, cancellation, and exit handling. Pi retains its bounded multiline editor
+viewport and IME cursor marker.
 
 ### Keyboard controls
 
-From the editor, press **Esc**, then choose a letter from the visible controls
-menu. Press the keys separately; there is nothing to hold down and the menu does
-not time out. Fast Esc-then-letter input also works in legacy terminals. The menu
+From the editor, workspace, or activity pane, press **Esc**, then choose a letter
+from the visible controls menu. Press the keys separately; there is nothing to hold
+down and the menu does not time out. Fast Esc-then-letter input also works in legacy terminals. The menu
 supports Up/Down and Enter, and keeps your draft and cursor intact. Esc dismisses
-completion or closes the current view before it opens controls from the editor.
+completion or closes the current view before it opens controls on the base screen.
 
 | Menu key | Action |
 | --- | --- |
@@ -118,7 +143,7 @@ completion or closes the current view before it opens controls from the editor.
 | m | Choose models and reasoning settings |
 | a | Show or hide activity diagnostics |
 | w | Focus the workspace records |
-| r | Open request history, including at 80 columns |
+| r | Choose the displayed request in Request history |
 | e | Return to the editor |
 | p | Browse previous prompts with Up/Down; Down returns toward your saved draft |
 | l | Jump to the current request and resume following output |
@@ -130,40 +155,56 @@ In the editor, **Enter submits** and **Tab completes text**. Bracketed paste
 preserves multiline input. Letter shortcuts do not intercept ordinary typing.
 Pasting into the controls menu or quit confirmation does not activate actions.
 
-While browsing the workspace, history, activity, or an inspector:
+While browsing the workspace, activity, or an inspector:
 
 - Tab cycles visible panes, including the editor. Once back in the editor, Tab
-  returns to text completion. Esc closes one view at a time, then returns focus
-  to the editor.
+  returns to text completion. Esc closes one view at a time, then opens controls.
+  Esc then e focuses the editor. Closed history is absent from focus cycling.
 - h opens contextual help and Esc restores your previous view and position.
 - Up/Down selects records or scrolls inspector/activity text. Left/Right
   collapses or expands a record. Space toggles the selected fold. Enter opens
   read-only inspection.
 - u/d moves up or down a page. g goes to the beginning. l returns to the current
-  request and resumes following in workspace/history, or goes to the end of
+  request and resumes following in the workspace, or goes to the end of
   the focused inspector/activity output.
 - In an inspector, 1 selects summary, 2 safe request or objective, 3 retained
   output or visible assistant prose, and 4 identity/status metadata.
+
+While Request history is open:
+
+- Up/Down highlights one request. PageUp/PageDown or u/d moves by the visible
+  request count. Home or g highlights the first request. End highlights Current.
+- Enter displays the highlighted request. l selects Current and resumes following.
+- Esc or F4 dismisses the pane. h or F1 opens help and preserves the highlight.
+  While idle, Ctrl+C closes help first, then history on another press.
+- Tab, F6, F2, F3, typing, and paste stay inside history without editing the draft.
+- Ctrl+C cancels running work and preserves the draft. When idle, it dismisses
+  history without clearing the draft or exiting.
+- Wheel input inside the history body moves the highlight without selecting.
+  Hidden live output retains unread activity until you return to visible live output.
 
 Wheel or trackpad scrolling over the request pane moves through its records and
 visible prose. Scrolling pauses following so incoming events do not pull the
 view away. The pane shows the lines above and below, and Following or Paused.
 Use Esc then l from the editor to return to current work. Long prose previews
 remain bounded; select a run and inspect its retained output to read beyond the
-preview. Turn folds expose role runs, and run folds expose individual calls.
-Tools stay folded by default, with names, targets, states, and failure markers.
+preview. Run disclosure exposes individual calls with names, targets, states,
+and failure markers. Their short previews start folded. Collapsing a run's calls
+keeps its narrative responses visible.
 
 Mouse reporting is enabled only during the TUI session. Use your terminal's
-Shift+drag gesture to select text. Existing F1/F2/F3/F6, Shift+F6, PageUp/PageDown,
+Shift+drag gesture to select text. Existing F1/F2/F3/F4/F6, Shift+F6, PageUp/PageDown,
 Home/End, Shift+Up/Down, Shift+Enter, Alt+Up, and Ctrl+C bindings remain optional
 aliases. The controls menu provides paths that do not require those keys.
 
 The footer shows controls for the current view. The menu and help share the same
 action definitions. `/help`, `/history`, `/model A`, `/model B`, `/cancel`, and
 `/quit` remain available as typed commands. `/quit` exits directly; menu q asks
-for confirmation.
+for confirmation. `/history` still opens the service's textual retained-record
+view in either interface; `/inspect ID` still opens retained detail. These commands
+are separate from the TUI's presentation-only request chooser.
 
-Browsing pauses following and anchors the reader to a record ID. New output,
+Transcript browsing pauses following and anchors the reader to a record ID. New output,
 completion and resize retain that record. An unread activity count and the
 latest-output action provide a path back to current work. Completed results remain current until a new
 request is accepted. Approval continues the originating plan's operator turn.

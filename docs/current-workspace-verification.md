@@ -1,5 +1,186 @@
 # Current workspace and retained history verification
 
+## Response narrative and tool totals, 2026-10-19
+
+The previous renderer listed every tool and appended only the latest run's prose.
+That hid earlier A/B responses when ownership changed. The request body now uses
+ordered response blocks and collapsed tool totals. The live overlay is scoped by
+run and message; completed bodies reload through the existing read-only archive
+reader. Body-free message metadata preserves ordering on replay. Older logs without
+that metadata use retained timestamps. New commentary, run changes, and check-ins
+separate tool groups; consecutive tool-only turns roll into one row. B's role is
+repeated when it resumes after A's check-in.
+
+The transcript and inspector share validated, readable plan, execution-plan,
+handoff, check-in, completion, and review summaries. Raw workflow JSON and thinking
+content stay hidden. A response preview keeps the latest 24,000 characters; full
+retained output remains available in the run inspector. Expanding a run exposes
+its individual calls without hiding narrative responses.
+
+Verification used Node 24.22.0, npm 12.2.0, and the installed Pi 1.3.0 packages:
+
+- Dependency verification, strict TypeScript checking, and build passed.
+- The final focused run passed 55 tests. The full suite passed 455 tests in 61 files.
+- Isolation passed 341 dummy assertions and both security tests.
+- The updated terminal verifier passed 889 assertions across TUI and readline.
+  Captures at 80x24 and 120x40 were inspected for A/B prose, collapsed tools,
+  check-in/resumption order and attribution, resize, retained selection,
+  cancellation, live return, draft preservation, and run/tool inspection.
+- A real-Pi integration fixture executed sandboxed write/read calls, retained
+  intervening commentary, and restored the identical narrative after restart.
+  Reading it left session identities and archive bytes unchanged.
+- Regression cases cover repeated tool events, tool-only groups, failed/running
+  totals, stale archive loads and runtime text, interrupted responses, long-output
+  following, and exclusion of thinking and terminal control sequences.
+- `git diff --check` and Markdown fence/local-link checks passed.
+
+These are dummy-provider, sandbox, and PTY results. Live provider inference and
+a physical terminal trial were not repeated for this fix. The broader reasoning
+summary, animation, and range-cursor proposal remains separate. Existing calculator
+changes and the untracked repository instructions were preserved.
+
+## Request history pane refactor, 2026-10-19
+
+The [approved plan](tui-history-pane-refactor-plan.md) replaces the persistent rail
+and compact summary row with one temporary request chooser. This section records
+the current implementation. The 2026-10-16 results below remain historical.
+
+The checkout started on `main` at `d994140`, with only the untracked approved plan.
+No applicable `AGENTS.md` existed at the initial inspection. An unrelated untracked
+`AGENTS.md` appeared during implementation; it and its referenced
+`CONTRIBUTING.md` were read, and that file was preserved.
+
+The installed direct dependencies match `package.json` and `package-lock.json`.
+All four Pi packages are 1.3.0, TypeScript is 7.0.2, and Vitest is 5.0.5.
+Verification uses scoped Node 24.22.0 and npm 12.2.0. The ambient shell's
+Node 24.10.0 and npm 11.6.0 were not used for acceptance checks. No application
+dependencies, lockfile, global defaults, or launchers changed.
+
+### Behavior and evidence
+
+- Closed history reserves no body column, summary row, or focus-cycle target.
+  Unit checks cover 80, 103, 104, 105, 120, and 180 columns with ANSI-aware sizing.
+- Esc then r opens history from the editor, transcript, or activity pane. F4 opens
+  and dismisses it directly. Esc on the base screen opens controls; Esc then e
+  focuses the editor. Higher-priority views still close first.
+- The workspace owns a provisional request target and chooser viewport.
+  Navigation changes neither the displayed request nor execution ownership.
+  Enter chooses; Esc/F4 cancels. Current includes a blank current conversation.
+- Real Pi Editor tests prove multiline draft and insertion-cursor preservation,
+  fragmented paste capture, help restoration, focus capture, contextual End/l,
+  model-loading precedence, scroll anchors, folds, and deferred inspector rejection.
+  Status fixtures cover every retained outcome and missing candidates.
+- The real Pi integration creates a pending plan, chooses and inspects an earlier
+  request, and compares the pending-plan object, current turn, runtime binding
+  objects, session messages, session IDs, and all persisted JSONL bytes.
+  Submit, approve, discard, and replacement spies remain untouched.
+- PTYs exercise the built app with real Pi sessions, sandboxed tools, and dummy
+  Responses/Chat Completions providers. They preserve the existing approval,
+  supervision, cancellation, terminal-restoration, and plain-mode command checks.
+  New flows compare pending-plan/session identity and archive hashes while idle,
+  plus running request ownership during retained selection and cancellation.
+- Captured screens at 80x24 and 120x40 include closed/open history, provisional
+  highlight, help return, resize while choosing, paste, dismissal, historical
+  selection, return to live output, cancellation, and empty Current. Screen
+  assertions verify row/cell budgets, terminal-default bodies, and role accents.
+
+Pi 1.3's installed `matchesKey` recognizes legacy F4 but misses enhanced F4 forms.
+The binding table normalizes unmodified enhanced press/repeat forms into `Key.f4`
+matching. Release and modified events remain inactive. Encodings follow the
+[Kitty keyboard specification](https://sw.kovidgoyal.net/kitty/keyboard-protocol/#functional-key-definitions).
+No dependency patch or upgrade is involved.
+
+### Verification results
+
+Checks ran sequentially under Node 24.22.0 and npm 12.2.0:
+
+- `npm run verify:dependencies`: passed, including pinned installed versions and
+  strict compiler settings.
+- `npm run check`: passed.
+- Focused Vitest command below: 100 tests in five files passed.
+- `npm run build`: passed, including the native helper.
+- `npm test`: 445 tests in 58 files passed.
+- `PI_TUI_SCREEN_CAPTURE=1 PYTHONPATH=/tmp/pi-terminal-screen-tools npm run verify:terminal`:
+  passed all 883 PTY assertions with screen capture enabled. The actual 80x24 and
+  120x40 captures were inspected, including resize, selection, cancellation, wheel
+  routing, unread activity, and return to live output.
+- Markdown validation: seven edited documents, 73 local link targets, and balanced
+  code fences passed.
+- `git diff --check`: passed. The complete final diff was reviewed. No commit,
+  push, dependency upgrade, or launcher change was made.
+
+A PTY rerun exposed a verifier timing assumption: the initial screen could be
+captured before retained prose hydrated. The verifier now waits for visible prose
+before comparing dismissal screens. The application keeps normal live updates.
+
+### QA follow-up
+
+A second QA pass reviewed the full uncommitted diff against repository standards
+and the approved plan. Independent Standards and Spec reviewers found no hard
+standards violations. The Spec review identified missing running-selection
+coverage, which is now implemented with a real Pi request held at a provider gate.
+The QA pass reproduced four interaction bugs with failing regression tests and
+fixed their owning presentation paths:
+
+- Idle Ctrl+C now dismisses contextual help before the covered history pane.
+  Repeated dismissal preserves the draft and chooser until each visible view closes.
+- Conversation reset synchronizes workspace state before app input, focus, footer,
+  and editor rendering. The first frame restores the editor's IME cursor marker.
+- Opening history retains the last visible read baseline. Activity that arrived
+  under help remains unread when history opens before another live-body render.
+- Opening history cancels visible and pending editor completion through Pi's
+  public `setAutocompleteProvider()` API. At 80x24, a seven-line draft plus activity
+  no longer lets completion hide the chooser or footer. The editor object, text,
+  cursor, and prompt history remain mounted; completion works after dismissal.
+
+The new real Pi integration selects, inspects, and dismisses retained history
+while the current request is running. It verifies the current turn, run, operation,
+runtime bindings, and mutating action counts remain unchanged. After normal
+completion, an explicitly submitted prompt retains the current conversation's
+messages. Archive byte equality remains covered separately in the idle fixture.
+Fixed sleeps in that archive inspection test were replaced with content-based waits.
+Captured output also exposed a readability issue at 80 columns: long active tool
+labels could truncate the unread count and return-to-current shortcut. The live
+pointer now places unread activity before elapsed time and tool detail. Its action
+hint follows the visible view: `l current` in the chooser, `Esc back` for a modal
+or inspector, and `Esc then l current` on the base screen. The 80-column regression
+executes the displayed action and verifies draft cursor preservation.
+
+Both independent reviewers re-read the fixes and reported no additional findings.
+Their reviews were read-only; the automated and PTY checks were run against the actual
+workspace and built application.
+
+### Reproduce
+
+Use the required project-scoped Node/npm toolchain. Run these checks sequentially:
+
+```sh
+npm run verify:dependencies
+npm run check
+npx vitest run test/unit/workspace-controls.test.ts test/unit/tui-app.test.ts test/unit/terminal-interaction.test.ts test/unit/retained-history.test.ts test/integration/retained-history.test.ts
+npm run build
+npm test
+PI_TUI_SCREEN_CAPTURE=1 PYTHONPATH=/tmp/pi-terminal-screen-tools npm run verify:terminal
+git diff --check
+```
+
+Screen capture uses the existing external verification-only Python setup shown
+below. `test-results/terminal-evidence/chooser-80-*` and `chooser-120-*` contain the
+new screen and color reports. `history-chooser-80.ansi` and
+`history-chooser-120.ansi` contain actual PTY bytes. The generated `report.json`
+records the current verifier result. Captures are ignored disposable artifacts.
+
+### Limits
+
+These checks use fixture providers, not live OpenAI or LM Studio inference.
+No credential-backed trial, trusted installation, launcher activation, or physical
+terminal test was performed. Injected PTY F4/wheel input does not establish that
+an OS or terminal configuration delivers physical F4 presses or trackpad gestures.
+The separate narrative transcript redesign and conversation resumption remain
+outside this change. Existing bounded prose and archive-loading limits still apply.
+
+## Original workspace implementation, 2026-10-16
+
 Implementation date: 2026-10-16. This implements selected option 3 in the real Pi
 terminal app. The HTML studies remain visual references. Both installed Pi
 packages are 0.67.68. No dependencies, providers, role permissions, approval gates,

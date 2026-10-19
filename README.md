@@ -107,7 +107,11 @@ Inside the REPL:
 - Agent A reviews the result and either finalizes or sends another handoff.
 
 To start a new conversation, enter `/new`. This resets both agent contexts and
-opens an empty current view. Previous work remains available in History. Use
+opens an empty current view. Previous work remains available in Request history.
+Press Esc then r, or F4, to open it. Arrows highlight a request, Enter displays it,
+and Esc or F4 dismisses the pane. Current returns to live output, even when the
+current conversation is empty. History selection changes the display only;
+new prompts continue the current conversation. Use
 `/new A` or `/new B` to reset only one agent. Cancel active work first with `/cancel`.
 
 During an ongoing handoff, Agent B pauses after every 10 completed model turns
@@ -150,11 +154,15 @@ Useful slash commands:
 - `/switch B <session-path>`
 - `/quit`
 
-The TUI gives the current operator turn most of the workspace, with a history
-rail on wide terminals and a history view at 80 columns. Press Esc in the editor
+The TUI gives the displayed operator request the full body width. Request history
+opens temporarily with Esc then r or F4 at every terminal size. Press Esc in the editor
 to see the controls menu, then h for help, w for the workspace, or r for history.
 Tab cycles panes when browsing; it completes text in the editor. Earlier role
 runs and tools remain individually inspectable across session changes and restart.
+The request body retains both agents' readable responses in order, with consecutive
+tool activity collapsed into totals. Select a run and press Right or Space to
+expand its calls; Enter opens retained details. Model responses remain visible
+when ownership moves between A and B.
 The current-turn border and role labels use cyan for A and amber for B. Prose
 keeps the terminal's default foreground and background, with no colored fill.
 

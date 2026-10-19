@@ -16,8 +16,8 @@ export function fixtureChatResponse(text: string): Response {
   return fixtureChatChunks([{ content: text }, {}], "stop");
 }
 
-export function fixtureChatToolResponse(name: string, args: unknown, callId = "call_fixture"): Response {
-  return fixtureChatChunks([{ tool_calls: [{ index: 0, id: callId, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, {}], "tool_calls");
+export function fixtureChatToolResponse(name: string, args: unknown, callId = "call_fixture", text?: string): Response {
+  return fixtureChatChunks([{ ...(text ? { content: text } : {}), tool_calls: [{ index: 0, id: callId, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, {}], "tool_calls");
 }
 
 function fixtureChatChunks(deltas: unknown[], finishReason: string): Response {

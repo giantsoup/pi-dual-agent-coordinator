@@ -72,7 +72,7 @@ describe("real Pi editor and terminal components", () => {
     app.handleInput("\u001b[B");
     expect(text(app)).toContain("current draft");
     app.handleInput("\x1b"); app.handleInput("w"); expect(text(app)).toContain("[focus]");
-    app.handleInput("\u001b"); app.handleInput("\u0003");
+    app.handleInput("\u001b"); app.handleInput("e"); app.handleInput("\u0003");
     app.handleInput("/sta"); app.handleInput("\t"); await settle(); app.handleInput("\t"); await settle();
     expect(text(app)).toContain("/status");
     await service.dispose();
@@ -230,4 +230,114 @@ describe("real Pi editor and terminal components", () => {
     expect(app.render(80).find((line) => line.includes("> + A - Senior"))).toBe(before);
     app.handleInput("\u001b[F"); expect(text(app)).toContain("New output");
   });
+});
+
+it.each(["\x1bOS", "\x1b[14~", "\x1b[1;1S", "\x1br"])("captures chooser input and preserves the insertion cursor using %j", async (open) => {
+  const { app, terminal, service, coordinator, release } = await setup();
+  try {
+    release(); app.render(80);
+    app.handleInput("\x1b[200~ab\ncd\x1b[201~"); app.handleInput("\x1b[D");
+    app.handleInput(open);
+    expect(text(app)).toContain("Request history");
+    expect(text(app)).toContain("Current conversation · empty");
+    app.handleInput("\x1b[20"); app.handleInput("0~");
+    for (const input of ["h", "l", "\r", "\x1bOR", "\x1bOS", "\x03", "\x1b[201", "~"]) app.handleInput(input);
+    expect(text(app)).toContain("Request history");
+    expect(service.getState().modal.kind).toBe("none");
+    for (const input of ["\t", "\x1b[17~", "\x1b[1;2P", "\x1bOQ", "\x1bOR", "typed text", "\x7f"]) app.handleInput(input);
+    expect(text(app)).toContain("Request history");
+    app.handleInput("h"); expect(service.getState().modal.kind).toBe("help"); app.render(80);
+    terminal.columns = 120; terminal.rows = 40; app.render(120);
+    app.handleInput("\x1b"); expect(text(app, 120)).toContain("Request history");
+    terminal.columns = 80; terminal.rows = 24;
+    app.handleInput("\x03");
+    expect(text(app)).not.toContain("+ Request history"); expect(service.getState().shouldExit).toBe(false);
+    app.handleInput("X"); app.handleInput("\r"); await settle();
+    expect(coordinator.submitUserInput).toHaveBeenCalledExactlyOnceWith("ab\ncXd");
+  } finally { await service.dispose(); }
+});
+
+it("cancels running work from history without clearing the draft or choosing a request", async () => {
+  const { app, service, coordinator } = await setup();
+  try {
+    app.handleInput("task"); app.handleInput("\r"); app.handleInput("ab"); app.handleInput("\x1b[D");
+    app.render(80); app.handleInput("\x1bOS"); app.handleInput("\x1b[99;5u"); await settle();
+    expect(coordinator.cancelActive).toHaveBeenCalledOnce();
+    expect(text(app)).toContain("Request history");
+    app.handleInput("\x1bOS"); app.handleInput("X");
+    expect(text(app)).toContain("aXb");
+    expect(coordinator.submitUserInput).toHaveBeenCalledOnce(); expect(service.getState().shouldExit).toBe(false);
+  } finally { await service.dispose(); }
+});
+
+it("opens history from transcript and activity and respects service modal and inspector precedence", async () => {
+  const { app, service, release } = await setup();
+  try {
+    app.render(80); app.handleInput("\x1b[17~"); app.handleInput("\x1b"); app.handleInput("r");
+    expect(text(app)).toContain("Request history");
+    app.handleInput("\x1b"); expect(text(app)).toContain("CURRENT REQUEST | idle [focus]");
+    app.handleInput("\x1bOQ"); app.handleInput("\t");
+    expect(text(app)).toContain("Activity [focus]");
+    app.handleInput("\x1br"); expect(text(app)).toContain("Request history");
+    app.handleInput("\x1bOS"); expect(text(app)).toContain("Activity [focus]");
+    await service.dispatch({ type: "open_help" }); app.handleInput("\x1bOS");
+    expect(service.getState().modal.kind).toBe("help");
+    app.handleInput("\x1b"); app.handleInput("\x1b"); app.handleInput("e");
+    release(); app.handleInput("task"); app.handleInput("\r"); await settle();
+    const state = service.getState();
+    const timestamp = new Date().toISOString();
+    vi.spyOn(service, "getState").mockReturnValue({ ...state, history: { ...state.history, currentTurnId: "inspect-me", records: [
+      { kind: "turn", id: "inspect-me", title: "Inspectable request", requestIds: [], timestamp, outcome: { kind: "completed", endedAt: timestamp } }
+    ] } });
+    app.render(80); app.handleInput("\x1b[17~"); app.handleInput("\r"); await settle();
+    expect(text(app)).toContain("READ-ONLY INSPECTOR");
+    app.handleInput("\x1bOS"); expect(text(app)).toContain("READ-ONLY INSPECTOR");
+    expect(text(app)).not.toContain("+ Request history");
+  } finally { await service.dispose(); }
+});
+
+it("keeps model loading above the history shortcut", async () => {
+  const { app, service } = await setup();
+  try {
+    const state = service.getState();
+    vi.spyOn(service, "getState").mockReturnValue({ ...state, modal: { kind: "model_loading", title: "Loading model", content: "Loading fixture", format: "text",
+      createdAt: "loading", role: "B", operation: "switch", progress: { phase: "loading", message: "Loading fixture" }, startedAt: Date.now(), cancelling: false } });
+    const dispatch = vi.spyOn(service, "dispatch");
+    app.render(80); app.handleInput("\x1bOS"); app.handleInput("\x1b[14~"); app.handleInput("\x1br");
+    expect(service.getState().modal.kind).toBe("model_loading");
+    expect(text(app)).not.toContain("+ Request history"); expect(dispatch).not.toHaveBeenCalled();
+  } finally { await service.dispose(); }
+});
+
+it("dismisses contextual help before idle history without clearing its hidden draft", async () => {
+  const { app, service } = await setup();
+  try {
+    app.render(80); app.handleInput("saved draft"); app.handleInput("\x1bOS");
+    app.handleInput("h"); app.render(80);
+    expect(service.getState().modal.kind).toBe("help");
+    app.handleInput("\x03");
+    expect(service.getState().modal.kind).toBe("none");
+    expect(text(app)).toContain("Request history");
+    app.handleInput("\x03");
+    expect(text(app)).not.toContain("+ Request history");
+    expect(text(app)).toContain("saved draft"); expect(service.getState().shouldExit).toBe(false);
+  } finally { await service.dispose(); }
+});
+
+it.each([true, false])("keeps the chooser usable with multiline draft and visible/pending completion: %s", async (visible) => {
+  const { app, service } = await setup();
+  try {
+    app.render(80); app.handleInput("\x1bOQ");
+    app.handleInput("\x1b[200~\none\ntwo\nthree\nfour\nfive\nsix\x1b[201~");
+    for (let i = 0; i < 6; i++) app.handleInput("\x1b[A");
+    app.handleInput("\x1b[H"); app.handleInput("/");
+    if (visible) await vi.waitFor(() => expect(text(app)).toContain("Show commands"));
+    app.handleInput("\x1bOS"); await settle();
+    expect(text(app)).toContain("Request history"); expect(text(app)).toContain("> Current conversation");
+    expect(text(app)).toContain("Enter choose");
+    app.handleInput("\x1bOS"); app.handleInput("sta");
+    await vi.waitFor(() => expect(text(app)).toMatch(/status +Show state/));
+    app.handleInput("\t"); expect(text(app)).toContain("/status");
+    expect(text(app)).toContain("six");
+  } finally { await service.dispose(); }
 });

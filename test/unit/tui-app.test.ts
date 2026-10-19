@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { bindingMatches } from "../../src/app/tui/bindings.js";
 import { getNextScrollOffset, selectPanelViewport } from "../../src/app/tui/app.js";
 
 describe("tui activity panel layout", () => {
@@ -64,5 +65,15 @@ describe("tui activity panel layout", () => {
     expect(getNextScrollOffset("\u001b[6~", 4, 10, 4, "bottom")).toBe(0);
     expect(getNextScrollOffset("\u001b[5~", 4, 10, 4, "top")).toBe(0);
     expect(getNextScrollOffset("\u001b[6~", 0, 10, 4, "top")).toBe(4);
+  });
+});
+
+
+describe("history shortcut encodings", () => {
+  it.each(["\x1bOS", "\x1b[14~", "\x1b[S", "\x1b[1S", "\x1b[1;1S", "\x1b[1;1:1S", "\x1b[1;1:2S", "\x1b[14;1~"])("matches unmodified F4 %j", (data) => {
+    expect(bindingMatches(data, "history")).toBe(true);
+  });
+  it.each(["\x1b[1;1:3S", "\x1b[1;2S", "\x1b[14;5~", "\x08"])("ignores release, modified, or Backspace %j", (data) => {
+    expect(bindingMatches(data, "history")).toBe(false);
   });
 });
