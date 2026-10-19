@@ -1,144 +1,96 @@
 # Calculator
 
-A polished, dependency-free calculator built with native browser JavaScript modules. No frameworks, build tools, CDNs, or external assets required.
-
-## Features
-
-- **Pure arithmetic module** (`calculator.mjs`) - DOM-free, testable calculations
-- **Responsive dark UI** with accessible buttons (44px+ touch targets)
-- **Full keyboard support** - digits, operators, Enter/= for equals, Escape/Backspace
-- **Accurate decimal handling** - `0.1 + 0.2 = 0.3` (no floating-point artifacts)
-- **Chain evaluation** - left-to-right operations without PEMDAS
-- **Error recovery** - division by zero displays recoverable error message
+A self-contained, accessible calculator built with **vanilla HTML, CSS, and
+JavaScript**. No frameworks, no dependencies, no build tools, no CDNs, no
+external assets.
 
 ## Files
 
-| File | Description |
-|------|-------------|
-| `index.html` | Main HTML structure with semantic markup |
-| `styles.css` | Responsive dark theme, system fonts, accessibility |
-| `app.js` | UI controller - DOM handling and event wiring |
-| `calculator.mjs` | Core arithmetic module with export functions |
-| `calculator-state.mjs` | DOM-free state management for testing and separation |
-| `calculator.test.mjs` | Node.js test suite for arithmetic operations |
+| File | Purpose |
+|------|---------|
+| `index.html` | Semantic page markup with native buttons and a live display |
+| `styles.css` | Mobile-first dark theme, high contrast, responsive grid, visible focus |
+| `arithmetic.js` | DOM-independent arithmetic engine (ES module, no `eval`/`Function`) |
+| `app.js` | UI controller: wires buttons and keyboard to `calculate()` |
+| `arithmetic.test.js` | Dependency-free `node:test` suite for the arithmetic engine |
 
-## Launch Instructions
+## Launch
 
-### Start the HTTP server
-
-```bash
-python3 -m http.server 8080 --directory calculator-test
-```
-
-### Open in browser
-
-Navigate to: http://localhost:8080
-
-### Run tests
+The app uses an ES module (`app.js` imports `arithmetic.js`), so serve the
+folder over HTTP instead of opening `index.html` directly via `file://`:
 
 ```bash
-node calculator-test/calculator.test.mjs
+cd calculator-test
+python3 -m http.server 8000
 ```
 
-## Manual Checks
+Then open **http://localhost:8000** in a browser.
 
-### Arithmetic Operations
+Stop the server with `Ctrl+C`.
 
-1. Test addition: `2 + 3 =` → should display `5`
-2. Test subtraction: `10 - 4 =` → should display `6`
-3. Test multiplication: `6 * 7 =` → should display `42`
-4. Test division: `20 / 5 =` → should display `4`
+## Tests
 
-### Decimal Accuracy
+Run the dependency-free arithmetic test suite from the repository root:
 
-1. Enter: `0.1 + 0.2 =` → should display `0.3` (not `0.30000000000000004`)
-2. Enter: `1.5 + 2.7 =` → should display `4.2`
+```bash
+node --test calculator-test/arithmetic.test.js
+```
 
-### Chain Evaluation
+All tests use only Node's built-in `node:test` and `node:assert/strict`
+modules — no test framework or packages are required.
 
-1. Enter: `2 + 3 * 4 =` → should display `20` (left-to-right: (2+3)*4)
-   - Note: This is intentional left-to-right chaining, not PEMDas precedence
+## Controls
 
-### Error Recovery
-
-1. Enter: `5 / 0 =` → should display "Division by zero is not allowed"
-2. Press `AC` or Enter a new number → calculator should be usable again
-3. Enter: `10 + 2 =` after error → should display `12`
-
-### Keyboard Controls
+### Keypad
 
 | Key | Action |
 |-----|--------|
-| Digits `0-9` | Enter numbers |
-| `.` | Decimal point |
-| `+`, `-`, `*`, `/` | Select operation |
-| `Enter` or `=` | Calculate result |
-| `Escape`, `c`, `C` | All clear (AC) |
-| `Backspace` | Delete last digit |
+| `0`–`9` | Enter digits |
+| `.` | Decimal point (duplicate points are ignored) |
+| `+` `−` `×` `÷` | Add, subtract, multiply, divide |
+| `=` | Evaluate (left-to-right) |
+| `AC` | Clear everything |
+| `±` | Toggle the sign of the current entry |
+| `⌫` | Delete the last character of the current entry |
 
-### Mobile/Narrow Layout
+### Keyboard
 
-1. Resize browser to ~320px width or use mobile view
-2. Verify buttons are accessible (44px+ height)
-3. Test touch input with tap gestures
-4. Verify display is readable at smaller sizes
+| Key | Action |
+|-----|--------|
+| `0`–`9` | Enter digits |
+| `.` or `,` | Decimal point |
+| `+` `-` `*` `/` | Operators |
+| `Enter` or `=` | Evaluate |
+| `Escape` | Clear all |
+| `Backspace` | Delete last character |
 
-### Negative Numbers
+### Behavior
 
-1. Enter: `5 + (-3) =` → should display `2`
-2. Use sign toggle on displayed number
+- **Left-to-right evaluation** with no operator precedence: `2 + 3 × 4 =` **20**.
+- **Decimal normalization**: `0.1 + 0.2 =` **0.3**.
+- **Division by zero** shows **Error**; press `AC` (or `Escape`) or type any
+digit to recover.
+- **Chained operations**: results carry forward, e.g. `2 + 3 =` **5**, then
+`× 4 =` **20**.
+- **Negative numbers** via `±` or by typing a subtraction that goes negative.
 
-### Backspace and Clear
+## Manual checks
 
-1. Enter a number, press `⌫` → last digit removed
-2. Press `C` → resets to 0 but keeps pending operations
-3. Press `AC` → complete reset
-
-## API Reference (calculator.mjs)
-
-### `formatResult(value)`
-
-Formats a numeric result to avoid floating-point artifacts.
-
-```javascript
-import { formatResult } from './calculator.mjs';
-formatResult(0.1 + 0.2); // "0.3"
-```
-
-### `calculate(left, operator, right)`
-
-Performs a single arithmetic operation.
-
-```javascript
-import { calculate } from './calculator.mjs';
-calculate(2, '+', 3); // "5"
-calculate(10, '/', 0); // Throws: Division by zero is not allowed
-```
-
-### `evaluateChain(numbers, operators)`
-
-Evaluates left-to-right chain of operations.
-
-```javascript
-import { evaluateChain } from './calculator.mjs';
-evaluateChain([2, 3, 4], ['+', '*']); // "20" (computes (2+3)*4)
-```
+1. `0.1 + 0.2 =` → displays **0.3**
+2. `2 + 3 × 4 =` → displays **20** (left-to-right, no precedence)
+3. `5 ÷ 0 =` → displays **Error**; press `AC` or type a digit to recover
+4. Type `1 . . 2` → the second `.` is ignored, display shows **1.2**
+5. `5 − 8 =` → displays **−3**; `±` toggles the sign of the entry
+6. `⌫` / `Backspace` deletes the last character of the current entry
+7. Tab through buttons → a visible focus ring appears on each
+8. Resize the browser to a narrow (mobile) width → the layout stays usable
 
 ## Accessibility
 
-- Semantic HTML with ARIA labels
-- Keyboard navigation support
-- Focus visible indicators
-- High contrast mode support
-- Reduced motion preference support
-
-## Browser Support
-
-- Chrome/Edge (latest)
-- Firefox (latest)
-- Safari (latest)
-- Any browser supporting ES modules
-
-## License
-
-MIT
+- Semantic HTML: `<main>`, `<section>`, native `<button>` elements
+- Live display uses `role="status"` / `aria-live="polite"`
+- Every button has a descriptive `aria-label`
+- Visible keyboard focus (`:focus-visible` with a 3 px outline)
+- High-contrast color palette (WCAG AA)
+- Touch targets ≥ 56 px
+- `prefers-reduced-motion` respected
