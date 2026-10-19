@@ -27,6 +27,8 @@ export function createRoleMcpPolicy(
     const defaultAllowTools =
       role === "A" ? [...(DEFAULT_AGENT_A_ALLOWLIST[server.name as keyof typeof DEFAULT_AGENT_A_ALLOWLIST] ?? [])] : [];
     policyServers[server.name] = {
+      allowAllTools: role === "B" || override?.allowAllTools === true,
+      onlyTools: override?.onlyTools,
       allowReadOnlyTools: role === "A",
       allowTools: uniqueStrings([...defaultAllowTools, ...(override?.allowTools ?? [])]),
       excludeTools: uniqueStrings(override?.excludeTools ?? [])
@@ -56,7 +58,11 @@ export function isMcpToolCallAllowed(
     };
   }
 
-  if (policy.role === "B") {
+  if (serverPolicy.onlyTools && !matchesTool(serverPolicy.onlyTools, serverName, tool.name)) {
+    return { allowed: false, reason: `Tool ${serverName}/${tool.name} is outside the configured tool selection.` };
+  }
+
+  if (serverPolicy.allowAllTools) {
     return { allowed: true };
   }
 

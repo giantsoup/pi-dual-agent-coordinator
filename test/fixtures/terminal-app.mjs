@@ -1,13 +1,13 @@
 import { ProcessTerminal } from '@earendil-works/pi-tui';
 import { randomUUID } from 'node:crypto';
-import { writeFileSync, renameSync } from 'node:fs';
+import { writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { bootstrapRepl } from '../../dist/src/app/bootstrap.js';
 import { Coordinator } from '../../dist/src/coordinator/coordinator.js';
 import { HeadlessInteractiveCoordinatorService } from '../../dist/src/app/interactive/service.js';
 import { createRoleRuntime } from '../../dist/src/runtime/create-role-runtime.js';
 import { LmStudioModels } from '../../dist/src/security/lm-studio.js';
-import { fixtureResponse, fixtureChatResponse, fixtureChatToolResponse } from '../../dist/src/security/fixture-provider.js';
+import { fixtureResponse, fixtureToolResponse, fixtureChatResponse, fixtureChatToolResponse } from '../../dist/src/security/fixture-provider.js';
 
 const [workspace, stateRoot, mode] = process.argv.slice(2);
 if (!workspace || !stateRoot) throw new Error('Supply isolated workspace and state paths.');
@@ -15,6 +15,10 @@ const block = (name, data) => `\`\`\`${name}\n${JSON.stringify(data)}\n\`\`\``;
 const field = (text, name) => { const value = text.match(new RegExp(`${name}: ([^\\n]+)`))?.[1]; if (!value) throw new Error(`Missing ${name}`); return value; };
 const toolResponse = fixtureChatToolResponse;
 const options = {command:'repl',cwd:workspace,sessionRoot:stateRoot,sessionMode:'persistent',mcpEnabled:false,jsonLogs:false,verbose:false,maxReviewRounds:2,timeoutMs:15000,plainUi:mode === 'plain' || mode === 'plain-repair'};
+const skillDir = join(stateRoot, 'agent', 'skills', 'terminal-fixture');
+mkdirSync(skillDir, {recursive:true});
+writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: terminal-fixture\ndescription: Terminal skill fixture\n---\nTERMINAL_SKILL_INSTRUCTIONS_OK\n');
+options.agentDir = join(stateRoot, 'agent');
 const executed = new Set();
 const stressCalls = new Map();
 let repairScenario;
@@ -36,6 +40,15 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
   const body = JSON.parse(String(init.body));
   const promptContent = (body.input ?? body.messages).filter(item => item.role === 'user').at(-1)?.content;
   const prompt = typeof promptContent === 'string' ? promptContent : promptContent?.map(item => item.text ?? '').join('\n') ?? '';
+  if (input.role === 'A' && (prompt.includes('List the installed Pi skills using the skills tool') || prompt.includes('Use the installed Pi skill terminal-fixture'))) {
+    const latestUser = body.input.findLastIndex(item => item.role === 'user');
+    const result = body.input.slice(latestUser).find(item => item.type === 'function_call_output');
+    if (result) {
+      const marker = prompt.includes('Use the installed Pi skill') ? 'TERMINAL_SKILL_INSTRUCTIONS_OK' : 'terminal-fixture';
+      return fixtureResponse(JSON.stringify(result.output).includes(marker) ? `TERMINAL_SKILL_OK ${marker}` : 'TERMINAL_SKILL_FAILURE');
+    }
+    return fixtureToolResponse('skills', prompt.includes('Use the installed Pi skill') ? {name:'terminal-fixture'} : {});
+  }
   if (input.role === 'A' && prompt.includes('Coordinator process check-in')) {
     await new Promise(resolve => setTimeout(resolve, 800));
     return fixtureResponse(block('pi-check-in', {

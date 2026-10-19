@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,7 +48,7 @@ export class ToolIsolation {
   public readonly env: Record<string, string>;
   public readonly profile: string;
 
-  public constructor(cwd: string, role: Role) {
+  public constructor(cwd: string, role: Role, skillsDir?: string) {
     if (process.platform !== "darwin") throw new Error("Secure tool isolation requires macOS Seatbelt. No unrestricted fallback is available.");
     this.cwd = assertWorkspaceBoundary(cwd);
     this.scratch = realpathSync(mkdtempSync(join(tmpdir(), "pi-dual-tools-")));
@@ -62,14 +62,19 @@ export class ToolIsolation {
       LANG: "en_US.UTF-8",
       TERM: "dumb"
     };
-    const roots = ["/usr", "/System", "/bin", "/sbin", "/opt/homebrew", nodePrefix, installationRoot, this.cwd, this.scratch];
+    if (skillsDir && existsSync(skillsDir) && lstatSync(skillsDir).isSymbolicLink()) {
+      this.dispose();
+      throw new Error("The global skills directory must be a real directory, not a symlink.");
+    }
+    const skillsRoot = skillsDir && existsSync(skillsDir) ? realpathSync(skillsDir) : undefined;
+    const roots = ["/usr", "/System", "/bin", "/sbin", "/opt/homebrew", nodePrefix, installationRoot, this.cwd, this.scratch, ...(skillsRoot ? [skillsRoot] : [])];
     const filters = roots.map((path) => `(subpath ${JSON.stringify(path)})`).join(" ");
     this.profile = `(version 1)
 (deny default)
 (import "system.sb")
 (allow process-exec process-fork)
 (allow file-read* file-map-executable ${filters})
-(allow file-read-metadata (path-ancestors ${JSON.stringify(this.cwd)}) (path-ancestors ${JSON.stringify(installationRoot)}))
+(allow file-read-metadata (path-ancestors ${JSON.stringify(this.cwd)}) (path-ancestors ${JSON.stringify(installationRoot)}) ${skillsRoot ? `(path-ancestors ${JSON.stringify(skillsRoot)})` : ""})
 (allow file-write* (subpath ${JSON.stringify(this.scratch)}) ${role === "B" ? `(subpath ${JSON.stringify(this.cwd)})` : ""})
 (allow sysctl-read)
 (deny sysctl-read (sysctl-name-regex #"^kern.proc"))
@@ -107,6 +112,7 @@ export async function runIsolatedTool(options: {
   role: Role;
   name: string;
   args: unknown;
+  skillsDir?: string | undefined;
   signal?: AbortSignal | undefined;
   onUpdate?: ((result: unknown) => void) | undefined;
 }): Promise<unknown> {
@@ -153,6 +159,6 @@ export async function runIsolatedTool(options: {
       else reject(new Error(options.signal?.aborted ? "Tool cancelled." : "Isolated tool failed or access was denied."));
     });
     child.stdin.on("error", () => undefined);
-    child.stdin.end(JSON.stringify({ name: options.name, args: options.args }));
+    child.stdin.end(JSON.stringify({ name: options.name, args: options.args, skillsDir: options.skillsDir }));
   });
 }

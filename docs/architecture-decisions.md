@@ -6,7 +6,7 @@ The coordinator is the only component allowed to observe both Pi runtimes, persi
 
 ## Role Separation
 
-- Agent A is planning-only and receives read-only Pi tools.
+- Agent A is planning-only and receives read-only workspace tools. Global Pi MCP tools are available to both roles, with explicit role restrictions supported.
 - Agent B is execution-authoritative and receives coding tools.
 - V1 safety depends primarily on this tool separation, not on trusting model intent.
 
@@ -26,7 +26,7 @@ The coordinator is the only component allowed to observe both Pi runtimes, persi
 ## Workflow Boundary
 
 - Workflow machine blocks are recognized only at stable Pi boundaries, specifically `turn_end`.
-- Agent A may emit either `pi-handoff` or `pi-final`.
+- Agent A emits `pi-plan` during planning and `pi-handoff` or `pi-final` during execution review. Legacy `pi-execute` is accepted as a pending plan; only operator `/approve` authorizes B.
 - Agent B may emit only `pi-completion`.
 - Raw model text is never forwarded directly between runtimes. The coordinator renders deterministic handoff, review, repair, and cap-control prompts.
 
@@ -68,3 +68,61 @@ Other provider authentication is disabled. Refresh remains offline after creatio
 SessionManager supplies the canonical system, tool, and conversation projection.
 The event bridge awaits the whole managed prompt before accepting the terminal
 turn result, preserving typed supervision and formatting failures.
+
+## Pi-native MCP and skills
+
+Global services are configured in `<agentDir>/mcp.json`. Configuration from other
+agent applications is not imported. Both roles can use the full global tool
+catalog, while project-only servers retain A's read-only policy. A shared
+readiness check reports unsupported servers before invocation. Anonymous public
+HTTPS uses the MCP SDK behind an endpoint-bound fetch adapter; stdio continues
+to use Seatbelt. See the security model for destination and authentication limits.
+
+Agent Skills are installed separately in `<agentDir>/skills`. Both roles read
+metadata, instructions, and references through the isolated `skills` tool.
+`/skill:NAME` becomes an operator request to A. Skills do not add executable
+extensions or bypass approval, model selection, workspace, or response-format
+boundaries. Native resource discovery stays disabled.
+
+Session construction obtains a bounded, validated metadata catalog through the
+same isolated tool and adds names, short descriptions, and user-only flags to
+the prompt. Skill bodies remain on demand. Each new session reloads metadata.
+The application-owned pstack adapter accompanies pstack reads and maps supported
+host operations to declared Pi tools and coordinator handoffs. Unsupported
+delegation and host services remain explicit capability gaps, not simulated
+independent workers or new permissions. Upstream files are unchanged.
+
+## Tool discovery
+
+Both roles receive a trusted metadata-only `list_tools` extension that reports
+active native names and parameter schemas from Pi's public registry APIs,
+sandboxed session-start skill metadata, and MCP metadata with per-server connection errors.
+Combined discovery shares the proxy's connection and role-policy path and passes
+through cancellation; it never invokes an MCP action tool. Global
+MCP servers default to native tools with optional startup discovery; explicit
+proxy-only and required settings remain supported. The MCP proxy accepts
+`list_tools` as well as `search_tools`, connects on discovery, and distinguishes
+an idle connection from a recorded failure. A's workspace tools remain read-only.
+Plans and handoffs allow empty `relevantPaths` for file-free tool tasks.
+
+
+## Local project browser
+
+One native `browser` extension owns one disposable browser per role and Pi session.
+It maps a fixed action set to the existing pinned Playwright MCP runtime through a
+private transport. A navigates and observes; B adds input under the normal approval
+gate. Generic MCP calls and workspace configuration cannot access this backend.
+
+A project-bound private operator policy replaces the archived global origin list.
+The browser tree receives a separate mandatory Seatbelt profile and can reach only
+its authenticated proxy. The coordinator resolves exact grants to loopback once.
+For HTTPS it terminates TLS and validates decrypted Host/origin instead of tunnelling
+opaque traffic. This supports local development certificates without general web
+access. The system-managed Chrome executable is fixed; the copied MCP bundle is
+covered by the trusted installation manifest.
+
+Chrome's nested sandbox fails under the verified outer profile. The fixed
+`--no-sandbox` flag is confined to this mandatory single kernel boundary, with no
+unrestricted fallback. Proxy revocation precedes process drain. Runtime replacement
+explicitly awaits browser teardown because Pi extension shutdown diagnostics alone
+cannot carry a security failure. See the security model for limits and verification.

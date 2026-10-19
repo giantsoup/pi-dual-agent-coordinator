@@ -193,7 +193,10 @@ Plan draft below.
     expect(second.userResponse).toContain("Still planning");
     expect(runtimes.get("B")?.session.prompts).toHaveLength(0);
 
-    const execution = await coordinator.submitUserInput("Start execution now.");
+    const planned = await coordinator.submitUserInput("Start execution now.");
+    expect(planned.pendingPlan).toBeDefined();
+    expect(runtimes.get("B")?.session.prompts).toHaveLength(0);
+    const execution = await coordinator.approvePendingPlan();
 
     expect(execution.workflow?.status).toBe("completed");
     expect(execution.userResponse).toContain("Implemented the feature.");
@@ -285,7 +288,9 @@ Plan draft below.
     });
 
     await coordinator.start();
-    const result = await coordinator.submitUserInput("Start execution now.");
+    const planned = await coordinator.submitUserInput("Start execution now.");
+    expect(planned.pendingPlan).toBeDefined();
+    const result = await coordinator.approvePendingPlan();
 
     expect(result.workflow?.status).toBe("completed");
     expect(runtimes.get("A")?.session.prompts[1]).toContain("Planning repair prompt");
@@ -367,7 +372,8 @@ Plan draft below.
       return append.call(this, record);
     });
     try {
-      const pending = coordinator.submitUserInput("Start execution now.");
+      await coordinator.submitUserInput("Start execution now.");
+      const pending = coordinator.approvePendingPlan();
       void pending.catch(() => undefined);
       await preparedReady.promise;
       expect(coordinator.getStatus().phase).toBe("planning");
@@ -459,7 +465,8 @@ Plan draft below.
 
     await coordinator.start();
 
-    const pending = coordinator.submitUserInput("Start execution now.");
+    await coordinator.submitUserInput("Start execution now.");
+    const pending = coordinator.approvePendingPlan();
     await waitFor(
       () => coordinator.getStatus().phase === "repair" && coordinator.getStatus().repairCount === 1
     );

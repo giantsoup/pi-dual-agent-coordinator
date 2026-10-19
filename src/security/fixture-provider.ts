@@ -28,3 +28,16 @@ function fixtureChatChunks(deltas: unknown[], finishReason: string): Response {
   }));
   return new Response(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "Content-Type": "text/event-stream" } });
 }
+
+export function fixtureToolResponse(name: string, args: unknown): Response {
+  const item = { type: "function_call", id: "fc_fixture", call_id: "call_fixture", name, arguments: JSON.stringify(args) };
+  const events = [
+    { type: "response.created", response: { id: "resp_fixture" } },
+    { type: "response.output_item.added", output_index: 0, item: { ...item, arguments: "" } },
+    { type: "response.function_call_arguments.delta", output_index: 0, delta: item.arguments },
+    { type: "response.function_call_arguments.done", output_index: 0, arguments: item.arguments },
+    { type: "response.output_item.done", output_index: 0, item },
+    { type: "response.completed", response: { id: "resp_fixture", status: "completed", usage: { input_tokens: 10, output_tokens: 4, total_tokens: 14 } } }
+  ];
+  return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
+}

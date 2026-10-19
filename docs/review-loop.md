@@ -6,8 +6,8 @@ Each execution start becomes a workflow with a stable `workflowId`. Successful p
 
 1. The coordinator begins in planning mode and prompts Agent A with the operator’s input.
 2. Agent A may reply with plain prose and no machine block for as many planning turns as needed.
-3. A concrete plan ends with one `pi-plan` block and waits for `/approve`. An explicit request to start immediately may emit one `pi-execute` block at `turn_end`.
-4. The coordinator creates the workflow, persists `prepared`, and submits a deterministic B handoff prompt. It records delivery after the runtime returns.
+3. A concrete plan ends with one `pi-plan` block and waits for `/approve`. A legacy `pi-execute` block also becomes a pending plan. Model text or natural-language requests cannot replace `/approve`.
+4. After operator `/approve`, the coordinator creates the workflow, persists `prepared`, and submits a deterministic B handoff prompt. It records delivery after the runtime returns.
 5. Agent B must emit exactly one `pi-completion` block at `turn_end`.
 6. The coordinator persists `completed`, renders a deterministic review prompt for Agent A, and repeats until A emits `pi-final`, a repair fails, or the round cap is reached.
 7. If the cap is reached and A still wants more execution work, the coordinator sends a control prompt requiring a terminal blocked `pi-final`.
@@ -30,10 +30,10 @@ Recovery replays the append-only JSONL ledger in order and reconstructs the late
 
 ## Machine blocks
 
-Agent A execution start:
+Agent A pending plan (operator `/approve` starts execution):
 
 ````text
-```pi-execute
+```pi-plan
 {
   "schemaVersion": 1,
   "objective": "Implement the requested change.",
@@ -45,6 +45,9 @@ Agent A execution start:
 }
 ```
 ````
+
+For file-free tasks, such as tool inventories, `relevantPaths` may be `[]`.
+Acceptance criteria and execution steps must still be nonempty.
 
 Agent A handoff:
 
@@ -108,7 +111,7 @@ See [terminal controls](terminal-experience.md) for cancellation and deadline li
 ## Troubleshooting
 
 - A emits `pi-handoff`, `pi-final`, or `pi-completion` during planning mode: the coordinator sends a planning repair prompt requiring prose-only output, one valid `pi-plan` block, or one valid `pi-execute` block.
-- Missing or malformed machine block: the coordinator sends one deterministic repair prompt for the expected block type. If the repair still fails, the workflow is blocked.
+- Missing or malformed machine block: the coordinator allows ten total response attempts, including the original. Format-only repairs disable tools and do not replay completed execution. Exhausted planning fails without starting B; exhausted workflow responses block the workflow.
 - A keeps asking for more work after the cap: the coordinator sends a control prompt requiring `pi-final` with `decision: "blocked"`.
 - B cannot follow tool protocol: expect malformed or missing `pi-completion` blocks, repair prompts, and eventually a blocked workflow.
 - Restart after interruption: recovery replays the ledger and supersedes unfinished workflows with fresh sessions.

@@ -70,6 +70,11 @@ describe("mcp proxy tool", () => {
       getDirectToolName: () => undefined
     });
 
+    const statusResult = await proxy.execute("idle-status", { action: "status" }, undefined, undefined, {} as never);
+    expect(readFirstText(statusResult)).toContain('"connected": false');
+    expect(JSON.stringify(statusResult.content)).toContain("idle, not unavailable");
+    expect(pool.getStatusSnapshot().servers[0]?.connected).toBe(false);
+
     const searchResult = await proxy.execute(
       "call-1",
       { action: "search_tools", query: "echo" },

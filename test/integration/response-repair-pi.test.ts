@@ -69,7 +69,8 @@ async function scenario(options: { completionAt?: number; misuse?: boolean; revi
   });
   try {
     await coordinator.start(); coordinator.subscribeEvents((event) => events.push(event));
-    const result = await coordinator.submitUserInput("Execute the approved write now.");
+    await coordinator.submitUserInput("Execute the approved write now.");
+      const result = await coordinator.approvePendingPlan();
     return { result, events, requests, completionAttempts, reviewAttempts, writes, content: await readFile(join(cwd, "progress.txt"), "utf8"), status: coordinator.getStatus(), restoredTools: managed.map((session) => session.piSession.getActiveToolNames()), root };
   } finally { await coordinator.dispose(); }
 }

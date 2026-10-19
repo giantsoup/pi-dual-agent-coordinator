@@ -400,6 +400,9 @@ export function parseReplCommand(input: string): ParsedReplCommand {
   if (!trimmed.startsWith("/")) {
     return { type: "user_turn", text: trimmed };
   }
+  if (trimmed === "/skills") return { type: "user_turn", text: "List the installed Pi skills using the skills tool. Do not start execution." };
+  const skill = /^\/skill:([a-z0-9-]+(?:\/[a-z0-9-]+)*)(?:\s+([\s\S]*))?$/.exec(trimmed);
+  if (skill?.[1]) return { type: "user_turn", text: `Use the installed Pi skill ${skill[1]}. Read its instructions with the skills tool and follow the coordinator role and approval requirements.\n\n${skill[2] ?? ""}`.trim() };
   if (trimmed === "/status") {
     return { type: "status" };
   }

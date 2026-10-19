@@ -7,11 +7,12 @@ import {
   type DirectToolMetadataSet
 } from "./direct-tools.js";
 import { createRoleMcpPolicy } from "./policy.js";
-import { createMcpProxyTool } from "./proxy-tool.js";
+import { createMcpProxyTool, discoverMcpTools } from "./proxy-tool.js";
 import type {
   ResolvedMcpConfig,
   RoleMcpPolicy,
-  RoleMcpStatusSnapshot
+  RoleMcpStatusSnapshot,
+  McpSearchToolResult
 } from "./types.js";
 import type { Role } from "../types/role.js";
 
@@ -19,6 +20,7 @@ export interface McpExtensionRuntime {
   extensionFactory: ExtensionFactory;
   getStatus(): RoleMcpStatusSnapshot;
   getToolNames(): string[];
+  getInventory(signal?: AbortSignal): Promise<{ status: RoleMcpStatusSnapshot; tools: McpSearchToolResult[] }>;
   dispose(): Promise<void>;
 }
 
@@ -35,6 +37,7 @@ export function createMcpExtension(options: {
     extensionFactory: (pi) => controller.bind(pi),
     getStatus: () => controller.getStatus(),
     getToolNames: () => controller.getToolNames(),
+    getInventory: signal => controller.getInventory(signal),
     dispose: () => controller.dispose()
   };
 }
@@ -92,6 +95,14 @@ class McpExtensionController {
     return this.clientPool.getStatusSnapshot();
   }
 
+  public async getInventory(signal?: AbortSignal): Promise<{ status: RoleMcpStatusSnapshot; tools: McpSearchToolResult[] }> {
+    const tools = await discoverMcpTools({
+      role: this.role, clientPool: this.clientPool, policy: this.policy,
+      getDirectToolName: (server, tool) => this.directToolNames.get(server)?.get(tool)
+    }, { query: "", includeSchema: true }, signal);
+    return { status: this.getStatus(), tools };
+  }
+
   public async dispose(): Promise<void> {
     await this.clientPool.closeAll();
   }
@@ -132,8 +143,6 @@ class McpExtensionController {
 
     for (const set of toolSets) {
       const toolNames = namePlan.get(set.serverName) ?? new Map<string, string>();
-      this.directToolNames.set(set.serverName, toolNames);
-      this.clientPool.setDirectToolNames(set.serverName, [...toolNames.values()]);
       const definitions = buildDirectToolDefinitions({
         role: this.role,
         serverName: set.serverName,
@@ -142,6 +151,10 @@ class McpExtensionController {
         clientPool: this.clientPool,
         namePlan: toolNames
       });
+      const activeNames = new Set(definitions.map(definition => definition.name));
+      const activePlan = new Map([...toolNames].filter(([, name]) => activeNames.has(name)));
+      this.directToolNames.set(set.serverName, activePlan);
+      this.clientPool.setDirectToolNames(set.serverName, [...activePlan.values()]);
       for (const definition of definitions) {
         this.registeredToolNames.add(definition.name);
         pi.registerTool(definition);
@@ -155,7 +168,13 @@ class McpExtensionController {
     }
 
     const lines = ["MCP Servers:"];
+    const status = this.clientPool.getStatusSnapshot();
     for (const server of this.config.servers) {
+      const issue = status.servers.find(candidate => candidate.name === server.name)?.lastError;
+      if (issue) {
+        lines.push(`- ${server.name}: initial discovery failed. Retry with mcp({action:'list_tools',server:'${server.name}'}). ${issue}`);
+        continue;
+      }
       const directToolNames = [...(this.directToolNames.get(server.name)?.values() ?? [])];
       const directSummary =
         directToolNames.length > 0

@@ -19,22 +19,35 @@ interface CreateMcpProxyToolOptions {
   getDirectToolName(serverName: string, toolName: string): string | undefined;
 }
 
+export async function discoverMcpTools(
+  options: CreateMcpProxyToolOptions,
+  params: { server?: string; query: string; includeSchema: boolean },
+  signal?: AbortSignal
+): Promise<McpSearchToolResult[]> {
+  if (params.server) await options.clientPool.ensureMetadata(params.server, signal);
+  else await Promise.all(Object.keys(options.policy.servers).map(server =>
+    options.clientPool.ensureMetadata(server, signal).catch(() => undefined)));
+  signal?.throwIfAborted();
+  return searchTools(params.query, options.clientPool.getKnownTools(params.server), options.policy, options.getDirectToolName, params.includeSchema);
+}
+
 export function createMcpProxyTool(
   options: CreateMcpProxyToolOptions
 ): ToolDefinition {
   return defineTool({
     name: "mcp",
     label: "MCP",
-    description: "Search, inspect, connect to, and invoke MCP tools, resources, and prompts by server.",
+    description: "Discover and invoke MCP tools. list_tools or search_tools connects automatically. A disconnected idle server is not an access failure. Call a tool with {action:'call_tool',tool:'server/tool',arguments:{...}}.",
     promptSnippet: "Search, inspect, connect to, and invoke MCP tools/resources/prompts by server.",
     promptGuidelines: [
       "Use direct MCP tools when they are available by name.",
-      "Otherwise use `mcp` with `search_tools`, then `describe_tool` or `call_tool`.",
+      "Otherwise use `mcp` with `list_tools` or `search_tools`, then `describe_tool` or `call_tool`.",
       "Use canonical proxy identifiers in the form `server/tool`."
     ],
     parameters: Type.Object({
       action: Type.Union([
         Type.Literal("status"),
+        Type.Literal("list_tools"),
         Type.Literal("search_tools"),
         Type.Literal("describe_tool"),
         Type.Literal("call_tool"),
@@ -66,38 +79,31 @@ export function createMcpProxyTool(
                   null,
                   2
                 )
-              }
+              },
+              { type: "text", text: "A server with connected:false and no lastError is idle, not unavailable. Use mcp({action:'list_tools'}) to discover tools and connect automatically; direct tools also reconnect when called." }
             ],
             details: {
               action: "status"
             }
           };
+        case "list_tools":
         case "search_tools": {
-          const query = params.query?.trim() ?? "";
-          let candidates = options.clientPool.getKnownTools(params.server);
-          if (candidates.length === 0) {
-            if (params.server) {
-              await options.clientPool.ensureMetadata(params.server, signal);
-            } else {
-              await Promise.all(
-                Object.keys(options.policy.servers).map((serverName) =>
-                  options.clientPool.ensureMetadata(serverName, signal).catch(() => undefined)
-                )
-              );
-            }
-            candidates = options.clientPool.getKnownTools(params.server);
-          }
-          signal?.throwIfAborted();
-          const results = searchTools(query, candidates, options.policy, options.getDirectToolName);
+          const results = await discoverMcpTools(options, {
+            ...(params.server === undefined ? {} : { server: params.server }),
+            query: params.query?.trim() ?? "", includeSchema: params.action === "list_tools"
+          }, signal);
           return {
             content: [
               {
                 type: "text",
                 text: JSON.stringify(results, null, 2)
-              }
+              },
+              ...options.clientPool.getStatusSnapshot().servers
+                .filter(server => (!params.server || params.server === server.name) && server.lastError)
+                .map(server => ({ type: "text" as const, text: `MCP ${server.name} unavailable: ${server.lastError}` }))
             ],
             details: {
-              action: "search_tools",
+              action: params.action,
               results
             }
           };
@@ -277,7 +283,8 @@ function searchTools(
   query: string,
   candidates: Array<{ serverName: string; tool: Tool }>,
   policy: RoleMcpPolicy,
-  getDirectToolName: (serverName: string, toolName: string) => string | undefined
+  getDirectToolName: (serverName: string, toolName: string) => string | undefined,
+  includeSchema: boolean
 ): McpSearchToolResult[] {
   const lowered = query.toLowerCase();
   return candidates
@@ -300,6 +307,7 @@ function searchTools(
           name: tool.name,
           canonicalName: `${serverName}/${tool.name}`,
           description: tool.description,
+          ...(includeSchema ? { inputSchema: tool.inputSchema } : {}),
           readOnlyHint: tool.annotations?.readOnlyHint === true,
           destructiveHint: tool.annotations?.destructiveHint === true,
           directToolName: getDirectToolName(serverName, tool.name),

@@ -33,10 +33,10 @@ text checks are regression guards, not a substitute for semantic API review.
 | Dependency and application callers | Current integration and review outcome |
 | --- | --- |
 | Pi ai: `security/models`, `model-runtime`, `lm-studio`, fixture provider, runtime/model display, coordinator and handoff types | Bundled model metadata stays separate from authentication. Public `ModelRuntime`, `InMemoryCredentialStore`, provider factories and lazy API modules own the role's broker capability. Stream callback failures now return a completed assistant error stream, as required by `StreamFn`, instead of rejecting outside that protocol. |
-| Pi coding-agent: runtime construction, managed session, history, coordinator, setup/doctor, interactive history/service, MCP extension, isolation and smoke | Public direct `AgentSession`, in-memory settings, `SessionManager` projections, resource loader, registry and extension APIs remain current. Awaited low-level supervision, idle/compaction settlement and abort/drain remain necessary for the application's lifecycle. No private SDK fields or compatibility imports were added. |
+| Pi coding-agent: runtime construction, managed session, history, coordinator, setup/doctor, interactive history/service, MCP extension, isolation and smoke | Public direct `AgentSession`, in-memory settings, `SessionManager` projections, resource loader, registry and extension APIs remain current. The metadata-only inventory extension uses public `ExtensionAPI.getAllTools()` and `getActiveTools()` to report active native schemas. Awaited low-level supervision, idle/compaction settlement and abort/drain remain necessary for the application's lifecycle. No private SDK fields or compatibility imports were added. |
 | Pi agent-core: runtime, event bridge, response repair, handoff, isolated tools | Native `AgentToolResult.isError` and `structuredContent` now survive the MCP bridge. Structured output is available on execution events; Pi intentionally does not put that field directly on transcript messages. Worker JSON is parsed at the IPC boundary, preserving text signatures, images, usage and termination fields. Model display and tool adapters use SDK generics instead of `any` and unchecked result casts. |
 | Pi TUI: bootstrap, app, workspace, model picker, key bindings and test terminals | Public `TuiMainScreen`, `ProcessTerminal`, `Editor`, `Key`, width/wrapping helpers and terminal status methods remain appropriate. `TUI` is imported as a type. Existing application-owned alternate-screen behavior is retained and tested in a real PTY. |
-| MCP SDK: pool, cache, direct/proxy tools, policies, extension and security probe | Public client callbacks preserve SDK transport ownership. Closing rejects pending requests and waits for connection startup; close failures remain visible. Only sandboxed stdio is instantiated. Metadata reads honor capabilities and collect every page, with repeated-cursor and 100-page bounds. Request cancellation reaches tools, metadata, resources and prompts. Explicit `CallToolResultSchema` replaces legacy result-shape adaptation. Cache entries use SDK schemas. |
+| MCP SDK: pool, cache, direct/proxy tools, policies, extension and security probe | Public client callbacks preserve SDK transport ownership. Closing rejects pending requests and waits for connection startup; close failures remain visible. Sandboxed stdio remains supported; anonymous public Streamable HTTP now uses a destination-bound fetch adapter. A public transport wrapper forwards the SDK callbacks because its optional sessionId getter does not satisfy exactOptionalPropertyTypes. Metadata reads honor capabilities and collect every page, with repeated-cursor and 100-page bounds. Request cancellation reaches tools, metadata, resources and prompts. Explicit `CallToolResultSchema` replaces legacy result-shape adaptation. Cache entries use SDK schemas. |
 | TypeBox and AJV: tool definitions, role tool adapters, MCP schemas and isolation fixtures | Canonical TypeBox schemas declare tools. External schemas compile through public AJV Draft 7 or 2020-12 validators. Arguments and successful structured results are validated on both MCP paths, including tools from earlier metadata pages and cache hydration. Per-schema validator instances avoid collisions between unrelated server `$id` values; a WeakMap reuses compiled validators. Task-only tools fail closed because experimental task execution is outside this application's policy. |
 | Zod: workflow/progress, MCP config/cache/results, history and LM Studio boundaries | Uses `z.url`, `z.strictObject`, literal issue codes, the `error` refinement option, `z.iso`, `z.json`, and native JSON Schema generation. Config types derive from their schemas. Removed the permissive `unrepresentable: "any"` schema fallback. `superRefine` remains a supported public API in installed 4.6.7. |
 | Node and Node types: process, filesystem, streams, HTTP broker, native helper and verification scripts | Existing `node:` imports, abort signals, process ownership, isolated environments and ESM module paths remain supported on Node 24. No global runtime change or new process dependency is needed. |
@@ -100,3 +100,25 @@ sequence includes the last type annotations and Zod error-option modernization.
 
 This proves the source candidate's dummy gates. Installed and live gates are
 separate and are recorded in the follow-up section of `pi-upgrade-verification.md`.
+
+
+## Skill metadata worker
+
+Skill discovery uses Pi's public `loadSkillsFromDir` export. The build uses the
+already-pinned Vite library API to bundle the skill reader and its YAML/ignore
+parsers, removing unrelated SDK session/provider imports from the sandboxed
+metadata path. Other role tools retain the public SDK factories. There are no
+new dependencies, private SDK imports, compiler relaxations, or shared writable
+code caches. Runtime skill files are still read only inside Seatbelt. Real Pi
+tests cover catalog contents, packaged references, and denied skill-file access.
+
+## Local browser adapter
+
+The local browser uses public Pi extension registration and `session_shutdown`,
+plus MCP SDK `Client`, `Transport`, `JSONRPCMessageSchema`, `CallToolResultSchema`,
+and stdio serialization. It does not import Playwright internals into the coordinator.
+The separate pinned MCP runtime owns browser actions and accessibility refs. The
+adapter handles 0.0.83's file-backed snapshots/screenshots and `target` input field,
+then returns bounded Pi text/image content. Its sandbox wrapper remains application
+owned because the SDK stdio convenience transport does not enforce this OS boundary
+or own Chrome's detached process groups.

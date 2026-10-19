@@ -1,3 +1,4 @@
+import { loadBrowserConfiguration, type BrowserConfiguration } from "../browser/policy.js";
 import { responseProgressSchema, type ResponseProgress } from "./response-progress.js";
 import { repairResponse, ResponseRepairExhaustedError } from "./response-repair.js";
 import { responseShape, planProposalEnvelopeSchema, executionPlanEnvelopeSchema } from "../workflow/workflow-schema.js";
@@ -90,6 +91,7 @@ export interface CoordinatorOptions {
   maxReviewRounds?: number;
   mcpEnabled?: boolean;
   mcpConfigPaths?: string[];
+  browser?: BrowserConfiguration | false;
   supersedeRecoveredWorkflowOnStart?: boolean;
   timeoutMs?: number;
   createRoleRuntime?: typeof createRoleRuntime;
@@ -108,6 +110,7 @@ export class Coordinator {
   private readonly workflowOrchestrator: WorkflowOrchestrator;
   private readonly runtimeFactory: typeof createRoleRuntime;
   private readonly eventBridge: RuntimeEventBridge;
+  private browserConfiguration: BrowserConfiguration | undefined;
   private resolvedMcpConfig: ResolvedMcpConfig = {
     enabled: false,
     projectRoot: "",
@@ -186,6 +189,7 @@ export class Coordinator {
         enabled: this.options.mcpEnabled ?? false,
         explicitConfigPaths: this.options.mcpConfigPaths
       });
+      this.browserConfiguration = this.options.browser === false ? undefined : this.options.browser ?? (this.options.createRoleRuntime ? undefined : loadBrowserConfiguration(this.options.cwd));
       const bindingA = await this.runtimeFactory({
         role: "A",
         cwd: this.options.cwd,
@@ -194,7 +198,7 @@ export class Coordinator {
         modelOverride: this.options.modelA,
         thinkingOverride: this.options.thinkingA,
         sessionMode: this.options.sessionMode,
-        mcp: this.resolvedMcpConfig
+        mcp: this.resolvedMcpConfig, browser: this.browserConfiguration
       });
       this.registry.set(bindingA);
       let prepared: PreparedLocalModel | undefined;
@@ -214,7 +218,7 @@ export class Coordinator {
           localModel: prepared?.model,
           thinkingOverride: this.options.thinkingB,
           sessionMode: this.options.sessionMode,
-          mcp: this.resolvedMcpConfig
+          mcp: this.resolvedMcpConfig, browser: this.browserConfiguration
         });
         this.registry.set(bindingB);
         controller.signal.throwIfAborted();
@@ -246,7 +250,6 @@ export class Coordinator {
     }
 
     const bindingA = this.requireBinding("A");
-    const bindingB = this.requireBinding("B");
     const requestId = createRequestId();
     if (this.operatorTurnId) this.requestTurns.set(requestId, this.operatorTurnId);
     this.eventBridge.setRequestId("A", requestId);
@@ -271,56 +274,25 @@ export class Coordinator {
         };
       }
 
-      if (planningOutcome.kind === "plan") {
-        this.pendingPlan = createPendingExecutionPlanSnapshot(
-          planningOutcome.plan,
-          requestId
-        );
-        this.logPlanningLifecycleEvent("planning.plan_ready", bindingA, requestId, {
-          objective: this.pendingPlan.objective,
-          summary: this.pendingPlan.summary,
-          relevantPaths: this.pendingPlan.relevantPaths,
-          acceptanceCriteria: this.pendingPlan.acceptanceCriteria,
-          executionPlan: this.pendingPlan.executionPlan,
-          constraints: this.pendingPlan.constraints,
-          proposedAt: this.pendingPlan.proposedAt
-        });
-        await this.eventBridge.waitForIdle();
-        this.setUiState("planning", "A");
-        return {
-          mode: "planning",
-          userResponse: planningOutcome.userResponse,
-          pendingPlan: this.pendingPlan,
-          nextActionHint: buildPendingPlanHint()
-        };
-      }
-
-      try {
-        const { result } = await this.executeApprovedPlan({
-          bindingA,
-          bindingB,
-          requestId,
-          executionPlan: planningOutcome.executionPlan
-        });
-        this.workflowState = await this.recoveryLoader.load();
-        this.lastSummary = result.finalSummary;
-        await this.eventBridge.waitForIdle();
-        this.setUiState("planning", "A");
-        return {
-          mode: "planning",
-          userResponse: result.userResponse,
-          workflow: {
-            workflowId: result.workflowId,
-            status: result.status,
-            iterations: result.iterations,
-            finalSummary: result.finalSummary,
-            changedPaths: result.changedPaths,
-            requestId: result.requestId
-          }
-        };
-      } finally {
-        this.setUiState("planning", "A");
-      }
+      const plan = planningOutcome.kind === "plan" ? planningOutcome.plan : planningOutcome.executionPlan;
+      this.pendingPlan = createPendingExecutionPlanSnapshot(plan, requestId);
+      this.logPlanningLifecycleEvent("planning.plan_ready", bindingA, requestId, {
+        objective: this.pendingPlan.objective,
+        summary: this.pendingPlan.summary,
+        relevantPaths: this.pendingPlan.relevantPaths,
+        acceptanceCriteria: this.pendingPlan.acceptanceCriteria,
+        executionPlan: this.pendingPlan.executionPlan,
+        constraints: this.pendingPlan.constraints,
+        proposedAt: this.pendingPlan.proposedAt
+      });
+      await this.eventBridge.waitForIdle();
+      this.setUiState("planning", "A");
+      return {
+        mode: "planning",
+        userResponse: planningOutcome.kind === "plan" ? planningOutcome.userResponse : "Agent A prepared an execution plan. Operator approval is required.",
+        pendingPlan: this.pendingPlan,
+        nextActionHint: buildPendingPlanHint()
+      };
     } finally {
       this.eventBridge.setRequestId("A", undefined);
       this.eventBridge.setRequestId("B", undefined);
@@ -581,9 +553,10 @@ export class Coordinator {
       onProgress?.({ phase: "applying", message: `Preparing Agent ${role}'s conversation and ${thinking} reasoning…` });
       replacement = await this.runtimeFactory({ role, cwd: this.options.cwd, agentDir: this.options.agentDir,
         sessionRoot: this.sessionRoot, sessionMode: this.options.sessionMode,
-        modelOverride: model, localModel: prepared?.model, thinkingOverride: thinking, mcp: this.resolvedMcpConfig,
+        modelOverride: model, localModel: prepared?.model, thinkingOverride: thinking, mcp: this.resolvedMcpConfig, browser: this.browserConfiguration,
         initialSessionManager: previous.session.sessionManager instanceof SessionManager ? previous.session.sessionManager : undefined });
       signal.throwIfAborted();
+      await previous.resetBrowser?.();
       bindingAttempted = true;
       await this.eventBridge.bind(replacement);
       signal.throwIfAborted();
@@ -850,7 +823,7 @@ export class Coordinator {
     let originalBlock: "pi-plan" | "pi-execute" | undefined;
     return repairResponse({ bridge: this.eventBridge, binding: options.bindingA, kind: "planning",
       identifiers: { requestId: options.requestId },
-      shape: "Nonempty planning prose, or exactly one fenced pi-plan or pi-execute JSON block. pi-plan requires operator approval; never convert it to pi-execute. " + responseShape(planProposalEnvelopeSchema, executionPlanEnvelopeSchema),
+      shape: "Nonempty planning prose, or exactly one fenced pi-plan or pi-execute JSON block. Both plan labels require operator /approve; never convert pi-plan to pi-execute. " + responseShape(planProposalEnvelopeSchema, executionPlanEnvelopeSchema),
       submit: (responseId) => this.eventBridge.promptAndWaitForTurnEnd(options.bindingA,
         withPromptProvenance("planning_user", renderPlanningTurnMessage(options.userInput), { requestId: options.requestId, sessionRole: "A" }), { responseId }),
       onFormatFailure: (error, attempt) => {
@@ -1079,11 +1052,11 @@ function renderPlanningTurnMessage(userInput: string): string {
     "Planning prompt for Agent A.",
     "You are in planning mode.",
     "Converse normally with the operator.",
-    "Agent B is unavailable until the operator explicitly approves execution or asks to start now.",
+    "Agent B is unavailable until the operator runs /approve for a pending plan.",
     "If the operator only wants discussion or brainstorming, reply with plain prose and no machine block.",
     "If the operator wants a concrete implementation plan but has not approved execution yet, end the turn with exactly one `pi-plan` JSON block.",
-    "If the operator explicitly wants execution to start now, end the turn with exactly one `pi-execute` JSON block.",
-    "`pi-plan` and `pi-execute` are mutually exclusive.",
+    "If asked to involve Agent B, prepare a pi-plan for operator approval, including read-only tool-inventory tasks. A legacy pi-execute also waits for /approve.",
+    "`pi-plan` and `pi-execute` are mutually exclusive. Use relevantPaths: [] when no workspace files are needed.",
     ...PLANNING_GUIDANCE,
     "",
     "Operator turn:",

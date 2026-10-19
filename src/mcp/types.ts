@@ -13,6 +13,7 @@ export type McpTransportType = "stdio" | "streamable-http" | "sse";
 export type McpLifecycleMode = "lazy" | "eager";
 export type McpProxyAction =
   | "status"
+  | "list_tools"
   | "search_tools"
   | "describe_tool"
   | "call_tool"
@@ -68,6 +69,8 @@ export interface McpMetadataCacheEntry extends McpMetadataSnapshot {
 }
 
 export interface McpRolePolicyServer {
+  allowAllTools: boolean;
+  onlyTools?: string[] | undefined;
   allowReadOnlyTools: boolean;
   allowTools: string[];
   excludeTools: string[];
@@ -101,6 +104,7 @@ export interface CoordinatorMcpStatusSnapshot {
 }
 
 export interface McpSearchToolResult {
+  inputSchema?: Tool["inputSchema"];
   server: string;
   name: string;
   canonicalName: string;

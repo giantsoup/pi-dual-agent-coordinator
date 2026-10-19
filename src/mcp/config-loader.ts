@@ -38,7 +38,21 @@ export async function loadResolvedMcpConfig(
   }
 
   const discoveredPaths = await discoverConfigPaths(options);
-  const loadedSources = await Promise.all(discoveredPaths.map((path) => loadConfigSource(path)));
+  const loadedSources = await Promise.all(discoveredPaths.map(async (path) => {
+    const source = await loadConfigSource(path);
+    if (path === resolve(options.agentDir, "mcp.json")) {
+      for (const config of Object.values(source.config.mcpServers)) {
+        config.cwd ??= resolve(options.cwd);
+        config["x-pi-dual"] = {
+          directTools: true,
+          required: false,
+          ...config["x-pi-dual"],
+          roles: { ...config["x-pi-dual"]?.roles, A: { allowAllTools: true, ...config["x-pi-dual"]?.roles?.A } }
+        };
+      }
+    }
+    return source;
+  }));
   const mergedServers = new Map<
     string,
     { config: McpServerConfig; sourcePaths: string[] }
@@ -92,7 +106,9 @@ async function discoverConfigPaths(
 
 async function loadConfigSource(path: string): Promise<LoadedConfigSource> {
   const raw = await readFile(path, "utf8");
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); }
+  catch { throw new Error(`Invalid MCP JSON config in ${path}.`); }
   const result = mcpConfigFileSchema.safeParse(parsed);
   if (!result.success) {
     throw new Error(`Invalid MCP config in ${path}: ${result.error.issues[0]?.message ?? "unknown error"}`);
@@ -107,6 +123,8 @@ function mergeServerConfigs(base: McpServerConfig, override: McpServerConfig): M
   return {
     ...base,
     ...override,
+    command: override.url ? undefined : override.command ?? base.command,
+    url: override.command ? undefined : override.url ?? base.url,
     args: override.args ?? base.args,
     env: {
       ...(base.env ?? {}),
@@ -132,6 +150,8 @@ function mergeRoleConfig(
     return undefined;
   }
   return {
+    allowAllTools: override?.allowAllTools ?? base?.allowAllTools,
+    onlyTools: override?.onlyTools ?? base?.onlyTools,
     allowTools: override?.allowTools ?? base?.allowTools,
     excludeTools: override?.excludeTools ?? base?.excludeTools
   };

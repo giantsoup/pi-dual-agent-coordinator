@@ -68,11 +68,20 @@ No OpenAI key is supplied in tool environments, arguments, input, or results.
 Workspace tools cannot access network services, including local automation
 servers that could act as an unsandboxed deputy. Network-dependent test commands
 and stdio MCP servers that require networking will fail under this policy.
-HTTP and SSE MCP peers are rejected because this app cannot verify their local
-execution boundary. Sandboxed stdio MCP discovery, direct tools, proxy tools,
-resources, prompts, caching, and role policy remain supported. A server's
-`readOnlyHint` cannot bypass Agent A's filesystem restrictions. Read-only hints
-are still assertions by the server about external side effects, not proofs.
+Anonymous remote Streamable HTTP uses a separate coordinator-owned HTTPS
+transport. It accepts only the configured endpoint on port 443, resolves and
+validates every DNS answer, and connects to a validated public IP with the
+original TLS identity. It rejects redirects, private/reserved addresses, query
+credentials, custom headers, and legacy SSE. Requests carry no provider
+capability, cookies, or inherited authentication. Request/response bodies are
+bounded to 8 MiB with a 60-second deadline and abort support. This does not grant
+network access to local tools or stdio servers. A remote service remains trusted
+for its own external behavior. MCP discovery, direct tools, proxy tools, resources,
+prompts, caching, and role policy remain supported. Global Pi MCP definitions
+expose all tools to both roles unless role selection or exclusions restrict them.
+Project-only definitions keep A's read-only policy.
+A server's annotations never bypass filesystem restrictions. Full global MCP
+access can perform external actions; it does not make those actions read-only.
 
 ## Trusted code and runtime replacement
 
@@ -83,13 +92,30 @@ uses that snapshot, and agents cannot modify it through their sandbox. The Node
 runtime and system toolchain are part of the trusted installation assumptions.
 Do not manually run agent-modified app code with credentials afterward.
 
-Global and project Pi extensions, packages, skills, prompt templates, themes,
+Global and project Pi extensions, packages, prompt templates, themes,
 workspace/global custom model definitions, executable auth references, and shell startup files
 are not loaded in the trusted runtime. Resource discovery occurs in a fresh
 empty trusted directory. Workspace `AGENTS.md` is read as text through the
 isolated read tool, so a symlink to a protected credential cannot turn the
 resource loader into a credential reader. Coordinator-authored role prompts and
-the built-in MCP extension are the only executable extensions.
+the built-in MCP and metadata-only tool-inventory extensions are the only executable extensions.
+
+Global `<agentDir>/skills` instructions are available through the isolated
+`skills` tool. Only that directory gains an additional read grant. A symlink
+for the skills root is rejected; references must resolve inside the installed
+skills directory. Sibling Pi files, credentials, and writes to the skills directory remain
+denied. Metadata access to ancestor directories supports canonical path checks
+without granting their contents. Skill discovery and reads run in the sandbox;
+the trusted resource loader still does not discover global/project resources.
+User-invoked skills remain requests to A and cannot authorize B.
+Startup skill summaries use that same sandboxed reader, and the combined inventory
+reports the session's validated catalog. Direct `skills({})` refreshes use the reader.
+The trusted process validates catalog JSON and bounds prompt size; metadata is
+identified as untrusted data, and full skill instructions stay on demand. pstack
+reads include an application-owned Pi adapter without changing upstream files,
+tool grants, model selection, or approval. Unsupported host capabilities are
+reported as gaps. Combined tool inventory shares MCP proxy discovery and role
+policy; it can connect peers for metadata but cannot execute their action tools.
 The trusted metadata catalog filters Pi 1.3.0's bundled OpenAI descriptors by the
 original approved IDs, including GPT-6.1 Sol, GPT-5.6 Terra, and GPT-6 Luna.
 Picker enumeration constructs no auth runtime and makes no catalog requests. B's downloaded LLM keys
@@ -105,8 +131,8 @@ cap that includes reasoning.
 Pi 1.3.0's high-level session factory uses `tools` for name selection. Supplying
 executable tools there does not isolate execution.
 This app uses Pi's public `AgentSession` constructor with `baseToolsOverride`.
-The entire tool registry contains only sandboxed role tools and the trusted MCP
-adapter. Explicit allowlists, `usesDefaultTools:false`, and exclusions for native
+The entire tool registry contains only sandboxed role tools, the trusted MCP
+adapter, and the metadata-only `list_tools` tool. Explicit allowlists, `usesDefaultTools:false`, and exclusions for native
 `mcp__*`, `codemode`, and `tool_search` prevent persisted tool activation from
 expanding permissions. External MCP schemas and arguments are validated before
 execution, including proxy calls. The same construction runs on each coordinator-owned replacement.
@@ -114,7 +140,9 @@ Session switching is limited to that role's private session directory and cannot
 change its workspace. Coordinator state must remain outside the workspace.
 
 Agent A plans and reviews. Agent B executes. The coordinator alone can deliver
-validated handoffs, replace runtimes, and persist workflow decisions. Machine
+validated handoffs, replace runtimes, and persist workflow decisions. Both planning
+block labels (`pi-plan` and legacy `pi-execute`) wait for explicit operator
+`/approve`; model output cannot authorize Agent B. Machine
 blocks affect workflow state only at stable `turn_end` boundaries. Rendering
 never triggers transitions. Persistence and session subscriptions remain
 coordinator-owned.
@@ -206,3 +234,56 @@ separate runtime instances and broker capabilities.
 The awaited prompt and `waitForIdle()` cover outer `agent_settled`, compaction, and
 recovery. Disposal aborts and drains the managed session before releasing the
 broker. Low-level awaited turn listeners still pause B before its next request.
+
+
+## Local project browser automation
+
+The coordinator registers one native `browser` tool per role/session when the
+operator's private version-2 policy grants origins to that canonical workspace.
+Workspace files cannot configure it. Generic MCP discovery cannot reach its private
+Playwright server. No-tools sessions omit it, and runtime/session replacement closes
+the prior browser. Agent A has navigation and observation actions. Agent B adds UI
+input through the existing operator-approved workflow. Navigation and page scripts
+can themselves affect an application; A's read-only filesystem role does not make
+local website GET requests side-effect-free.
+
+The fixed MCP command and all Chrome descendants inherit a mandatory deny-default
+macOS Seatbelt profile. Chrome's inner sandbox crashes under this profile on the
+verified platform, so the command uses fixed `--no-sandbox` inside Seatbelt. There
+is no unrestricted fallback. This is one kernel boundary for the whole browser
+tree, with no separate renderer boundary. The profile permits scratch-only writes,
+reviewed runtime/system reads, narrow Chrome platform Mach services, private scratch
+Unix sockets, and one exact TCP proxy peer. It denies workspace/home credential
+reads, Keychain access, process inspection, direct project/inference/public sockets,
+and UDP. Ordinary role tools and generic MCP retain their existing stricter profiles.
+
+Each browser gets a fresh scratch HOME/profile and a random proxy capability.
+The coordinator proxy resolves approved names once, rejects any non-loopback answer,
+and connects only to pinned numeric addresses. HTTP requests require an exact origin.
+HTTPS CONNECT requires authentication and an exact HTTPS grant, then terminates TLS
+using an ephemeral certificate. Decrypted Host/origin are checked before forwarding;
+it never opens a raw tunnel. Local development certificates are accepted on this
+explicit capability. Upgrades and WebSockets are rejected. Redirects and subresources
+must pass the same destination checks. Public browsing and arbitrary evaluation,
+CDP, persistent profiles, filesystem URLs, uploads, and downloads are unavailable.
+
+The adapter maps a fixed action set to private MCP calls, bounds protocol/evidence
+sizes, unlinks returned artifacts, and caps each generation's actions and scratch
+inventory. Input actions require the current snapshot identifier. Uncertain outcomes
+are reported without replay. Proxy requests are revoked before worker teardown;
+process groups are frozen, discovered under a matching root identity, killed, and
+polled before scratch is removed. Unexpected worker loss revokes the proxy and
+blocks browser access until restart; sampled ownership cannot prove that every
+detached orphan has stopped, so that failure retains scratch instead of reporting
+a successful drain.
+Failed cleanup blocks a new generation. Abrupt coordinator death removes the proxy
+listener and therefore browser network access, but graceful cleanup verification
+does not prove process reaping after an external SIGKILL.
+
+Trusted installation includes the reviewed browser runtime in its hash manifest;
+startup checks that bundle and uses the fixed Chrome executable. Chrome itself is
+system-managed and must be reverified after updates. `verify:browser` proves real
+HTTP/HTTPS page actions with fixture inference and separately probes the production
+profile with dummy Keychain/filesystem/network targets. It does not prove live model
+vision or live provider behavior. Re-run these gates when macOS, Chrome, Playwright,
+the proxy, or the profile changes.

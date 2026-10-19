@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "enabled": true,
+  "projects": [
+    {
+      "workspace": "/absolute/path/to/project",
+      "allowedOrigins": ["http://localhost:5173", "https://project.test"]
+    }
+  ]
+}

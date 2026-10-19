@@ -33,7 +33,7 @@ export const handoffEnvelopeSchema = z.object({
   objective: z.string().trim().min(1),
   summary: z.string().trim().min(1),
   acceptanceCriteria: z.array(z.string().trim().min(1)).min(1),
-  relevantPaths: z.array(z.string().trim().min(1)).min(1),
+  relevantPaths: z.array(z.string().trim().min(1)),
   executionPlan: z.array(z.string().trim().min(1)).optional(),
   reviewNotes: z.array(z.string().trim().min(1)).optional(),
   constraints: z.array(z.string().trim().min(1)).optional(),
@@ -46,7 +46,7 @@ export const executionPlanEnvelopeSchema = z.object({
   objective: z.string().trim().min(1),
   summary: z.string().trim().min(1),
   acceptanceCriteria: z.array(z.string().trim().min(1)).min(1),
-  relevantPaths: z.array(z.string().trim().min(1)).min(1),
+  relevantPaths: z.array(z.string().trim().min(1)),
   executionPlan: z.array(z.string().trim().min(1)).min(1),
   constraints: z.array(z.string().trim().min(1)).optional()
 });

@@ -9,6 +9,7 @@ import {
   StdioClientTransport,
   type StdioServerParameters
 } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { createRemoteMcpTransport, validateRemoteMcpUrl } from "./remote-transport.js";
 import {
   CallToolResultSchema,
   ErrorCode,
@@ -64,7 +65,8 @@ export class McpClientPool {
           name: server.name,
           connected: false,
           transport: server.transport,
-          directTools: []
+          directTools: [],
+          lastError: getMcpServerReadinessIssue(server, resolvedConfig.projectRoot)
         },
         stderrChunks: []
       });
@@ -125,7 +127,7 @@ export class McpClientPool {
   public async syncMetadata(serverName: string, signal?: AbortSignal): Promise<McpMetadataSnapshot> {
     signal?.throwIfAborted();
     const entry = this.requireEntry(serverName);
-    const client = await this.ensureConnected(entry);
+    const client = await this.ensureConnected(entry, signal);
     signal?.throwIfAborted();
     try {
       const capabilities = client.getServerCapabilities();
@@ -185,7 +187,7 @@ export class McpClientPool {
     if (tool.execution?.taskSupport === "required") throw new Error("Task-only MCP tools are not enabled.");
     assertMcpArguments(tool, args);
     signal?.throwIfAborted();
-    const client = await this.ensureConnected(this.requireEntry(serverName));
+    const client = await this.ensureConnected(this.requireEntry(serverName), signal);
     signal?.throwIfAborted();
     const result = await client.callTool({
       name: toolName,
@@ -199,7 +201,7 @@ export class McpClientPool {
 
   public async listResources(serverName: string, cursor?: string | undefined, signal?: AbortSignal) {
     signal?.throwIfAborted();
-    const client = await this.ensureConnected(this.requireEntry(serverName));
+    const client = await this.ensureConnected(this.requireEntry(serverName), signal);
     signal?.throwIfAborted();
     const result = await client.listResources(cursor === undefined ? undefined : { cursor }, signal ? { signal } : undefined);
     const templates =
@@ -216,7 +218,7 @@ export class McpClientPool {
 
   public async readResource(serverName: string, uri: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
-    const client = await this.ensureConnected(this.requireEntry(serverName));
+    const client = await this.ensureConnected(this.requireEntry(serverName), signal);
     signal?.throwIfAborted();
     const result = await client.readResource({ uri }, signal ? { signal } : undefined);
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
@@ -225,7 +227,7 @@ export class McpClientPool {
 
   public async listPrompts(serverName: string, cursor?: string | undefined, signal?: AbortSignal) {
     signal?.throwIfAborted();
-    const client = await this.ensureConnected(this.requireEntry(serverName));
+    const client = await this.ensureConnected(this.requireEntry(serverName), signal);
     signal?.throwIfAborted();
     const result = await client.listPrompts(cursor === undefined ? undefined : { cursor }, signal ? { signal } : undefined);
     this.scheduleIdleDisconnect(this.requireEntry(serverName));
@@ -239,7 +241,7 @@ export class McpClientPool {
     signal?: AbortSignal
   ) {
     signal?.throwIfAborted();
-    const client = await this.ensureConnected(this.requireEntry(serverName));
+    const client = await this.ensureConnected(this.requireEntry(serverName), signal);
     signal?.throwIfAborted();
     const result = await client.getPrompt({
       name,
@@ -272,7 +274,8 @@ export class McpClientPool {
     };
   }
 
-  private async ensureConnected(entry: PoolEntry): Promise<Client> {
+  private async ensureConnected(entry: PoolEntry, signal?: AbortSignal): Promise<Client> {
+    signal?.throwIfAborted();
     if (this.closing) throw new Error("MCP connections are closing.");
     if (entry.client) {
       this.scheduleIdleDisconnect(entry);
@@ -282,7 +285,7 @@ export class McpClientPool {
       return entry.connectionPromise;
     }
 
-    entry.connectionPromise = this.openClient(entry)
+    entry.connectionPromise = this.openClient(entry, signal)
       .then((client) => {
         entry.client = client;
         entry.state.connected = true;
@@ -301,7 +304,9 @@ export class McpClientPool {
     return entry.connectionPromise;
   }
 
-  private async openClient(entry: PoolEntry): Promise<Client> {
+  private async openClient(entry: PoolEntry, signal?: AbortSignal): Promise<Client> {
+    const issue = getMcpServerReadinessIssue(entry.config, this.resolvedConfig.projectRoot);
+    if (issue) throw new Error(issue);
     const client = new Client(CLIENT_INFO, {
       capabilities: {
         roots: {
@@ -319,11 +324,10 @@ export class McpClientPool {
       ]
     }));
 
-    if (entry.config.transport !== "stdio") {
-      throw new Error("Secure MCP currently supports sandboxed stdio servers only. HTTP/SSE peers cannot be verified as isolated; no unsandboxed fallback is available.");
-    }
-    const transport = new StdioClientTransport(this.buildStdioParams(entry.config));
-    this.attachStdioStderr(entry, transport);
+    const transport = entry.config.transport === "stdio"
+      ? new StdioClientTransport(this.buildStdioParams(entry.config))
+      : createRemoteMcpTransport(entry.config.url ?? "");
+    if (transport instanceof StdioClientTransport) this.attachStdioStderr(entry, transport);
     client.onclose = () => {
       if (entry.client && entry.client !== client) return;
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
@@ -332,13 +336,17 @@ export class McpClientPool {
       entry.client = undefined;
     };
     client.onerror = error => this.recordError(entry, error);
+    const abort = () => { void client.close().catch(() => undefined); };
+    signal?.addEventListener("abort", abort, { once: true });
     try {
+      signal?.throwIfAborted();
       await client.connect(transport);
+      signal?.throwIfAborted();
       return client;
     } catch (error) {
       await client.close().catch(() => undefined);
       throw error;
-    }
+    } finally { signal?.removeEventListener("abort", abort); }
   }
 
   private buildStdioParams(config: ResolvedMcpServerConfig): StdioServerParameters {
@@ -464,4 +472,19 @@ async function collectPages<T>(read: (cursor?: string) => Promise<{ items: T[]; 
     seen.add(cursor);
   }
   throw new Error("MCP metadata exceeded 100 pages.");
+}
+
+export function getMcpServerReadinessIssue(config: ResolvedMcpServerConfig, projectRoot: string): string | undefined {
+  if (config.transport === "sse") return "Legacy SSE MCP is unsupported. Configure a Streamable HTTP endpoint.";
+  if (config.transport === "streamable-http") {
+    if (Object.keys(config.headers ?? {}).length > 0 || Object.keys(config.env ?? {}).length > 0) return "Remote MCP authentication and custom headers are not supported; host credentials are not imported.";
+    try { validateRemoteMcpUrl(config.url ?? ""); }
+    catch (error) { return error instanceof Error ? error.message : "Invalid remote MCP endpoint."; }
+    return undefined;
+  }
+  if (Object.keys(config.env ?? {}).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key))) return "MCP environment contains a non-allowlisted variable. Secure mode accepts PATH, LANG, LC_ALL, and TZ only.";
+  try {
+    if (config.cwd && realpathSync(config.cwd) !== realpathSync(projectRoot)) return "Secure MCP launch must use the project workspace as cwd.";
+  } catch { return "MCP working directory is unavailable."; }
+  return undefined;
 }

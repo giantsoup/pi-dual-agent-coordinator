@@ -105,7 +105,8 @@ async function scenario(options: {
     await coordinator.start();
     const unsubscribe = coordinator.subscribeEvents((event) => events.push(event));
     try {
-      const result = await coordinator.submitUserInput("Execute the approved file change now.");
+      await coordinator.submitUserInput("Execute the approved file change now.");
+      const result = await coordinator.approvePendingPlan();
       return { result, workerRequests, plannerRequests, checkIns, events, order, workerBodies, status: coordinator.getStatus() };
     } finally { unsubscribe(); }
   } finally { await coordinator.dispose(); }

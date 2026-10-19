@@ -17,6 +17,7 @@
 ## Rules
 
 - Records are append-only and replayed in order.
+- Planning `pi-plan` and legacy `pi-execute` blocks create pending plans only. An explicit operator `/approve` is required before creating and delivering the first execution handoff. Tasks without workspace files may use `relevantPaths: []`.
 - Stable-boundary parsing happens only on `turn_end`.
 - Each workflow has a stable `workflowId`; each execution round has its own `iteration`.
 - `prepared` must exist before `delivered`.

@@ -5,7 +5,7 @@ Coordinator-driven dual-agent workflow engine built on the Pi SDK.
 This project runs two isolated Pi runtimes under one coordinator:
 
 - Agent A is the planner, reviewer, and final sign-off model.
-- Agent B is the execution model and the only agent allowed to make changes.
+- Agent B is the execution model and the only agent allowed to change workspace files.
 - The coordinator handles the handoff loop, review cap, and workflow persistence.
 
 Agent A uses OpenAI project API-key authentication. Agent B runs locally through
@@ -102,7 +102,7 @@ and makes local inference requests without loading or downloading models.
 Inside the REPL:
 
 - Plain text talks to Agent A in planning mode.
-- If Agent A proposes a pending plan, run `/approve` to start execution.
+- Run `/approve` on Agent A's pending plan to start B, including read-only inventory tasks. Model-generated `pi-execute` blocks also wait for this command.
 - Agent B performs the execution work automatically.
 - Agent A reviews the result and either finalizes or sends another handoff.
 
@@ -178,9 +178,11 @@ entries in `auth.json`.
 
 ## MCP support
 
-MCP is enabled by default. Secure mode supports sandboxed stdio servers. HTTP
-and SSE peers fail closed. Stdio servers run without network access, with a
-disposable HOME and an allowlisted environment. See [the supported boundary](docs/security-model.md).
+MCP is enabled by default. Configure servers directly for Pi; another coding
+agent or editor is not required. Stdio servers run in the role sandbox without
+network access. Remote servers use anonymous Streamable HTTP over public HTTPS
+on port 443. Private addresses, redirects, custom headers, authentication, and
+legacy SSE transports are rejected. See [the supported boundary](docs/security-model.md).
 
 Discovery order:
 
@@ -188,7 +190,43 @@ Discovery order:
 2. `<cwd>/.mcp.json`
 3. each `--mcp-config PATH` in the order provided
 
-Later sources override earlier ones by server name.
+Later sources override earlier ones by server name. Global stdio servers default
+to the current workspace as their working directory. Explicit `cwd` values are
+resolved relative to their configuration file and must match the workspace.
+
+To enable the public OpenAI documentation server, create `~/.pi/agent/mcp.json`
+with the contents of [the global example](examples/pi-agent/mcp.json.example).
+No package installation or API key is needed for this server. With `--agent-dir`,
+use that directory instead of `~/.pi/agent`. Existing files must be merged rather
+than overwritten. Restart Pi after changing configuration.
+
+Both roles have access to every tool from a global Pi MCP server by default.
+`x-pi-dual.roles.A.allowAllTools: false` restores A's read-only/allowlist policy
+for that server. `onlyTools` restricts a role to named tools, and `excludeTools`
+always takes precedence. Project-only servers retain A's existing read-only
+policy. A's workspace tools remain read-only, and MCP configuration does not
+authorize Agent B execution. Codex/Cursor registries and host `node_repl` are not
+imported.
+
+Global servers expose native tools at startup by default. Set
+`x-pi-dual.directTools: false` to use proxy-only discovery. Global servers are
+optional by default; set `x-pi-dual.required: true` to fail startup if discovery
+fails. Optional failures leave the proxy available for a later retry.
+
+Call `list_tools({})` for the session's active native names and parameter schemas,
+MCP tools and server status, and installed skill catalog. Its `tools` entries have
+`kind: "native"` or `"mcp"`; the `mcp` section also covers proxy-only tools and their
+role permissions. The `skills` section reports discovery status and instruction
+workflows separately. A failed discovery is reported rather than treated as an
+empty installation. Asking for MCP tools also prompts the agent to explain which
+installed capabilities are skills.
+For MCP proxy discovery, call `mcp({action: "list_tools"})`; it connects
+and includes input schemas. `search_tools` provides a compact searchable catalog,
+and `describe_tool` returns the full schema for a selected tool. A status of
+`connected: false` without an error means idle, rather than failed access.
+Discovery and direct calls open the connection as needed. Failed servers appear
+in status and discovery diagnostics. Doctor validates configuration without
+claiming connectivity; an unavailable optional server produces a warning.
 
 Standard `.mcp.json` files work directly. App-specific coordinator settings belong under `x-pi-dual`.
 
@@ -215,6 +253,121 @@ Example project config:
 }
 ```
 
+## Install and use skills
+
+Install Agent Skills into `<agentDir>/skills`, normally `~/.pi/agent/skills`.
+Matt Pocock's [upstream repository](https://github.com/mattpocock/skills) supports
+Pi directly through its skills installer:
+
+```sh
+npx skills@latest add mattpocock/skills --agent pi --global --copy
+```
+
+Select the stable skills listed in the upstream plugin manifest, including
+`setup-matt-pocock-skills`. Another editor or coding agent is not required.
+Use `--copy` so references remain inside Pi's isolated skills directory.
+The installer copies instruction files; MCP servers are configured separately.
+
+In the coordinator, use `/skills` to ask Agent A for the installed catalog.
+Use `/skill:tdd <request>` or `/skill:setup-matt-pocock-skills` to request a skill.
+The [pstack package](https://github.com/cursor/plugins/tree/main/pstack) can be
+installed alongside Matt Pocock's skills under `<agentDir>/skills/pstack/skills`.
+Its skills appear as `pstack/NAME`, so `tdd` and `pstack/tdd` remain distinct.
+Use `/skill:pstack/poteto-mode <request>` to request pstack's main workflow.
+Package reference files can stay alongside its `skills` directory.
+
+You can also ask for a skill by name in ordinary conversation. The `skills`
+tool lists installed skills, reads their instructions, and reads reference files
+relative to the selected skill, within the global skills directory. Both roles
+use the same read-only installation.
+Skills marked user-only require an explicit operator request.
+
+Both roles receive names, short descriptions, and user-only flags at session
+startup. Full instructions are read on demand. New sessions reload the catalog;
+`list_tools({})` includes that session's catalog, while `skills({})` refreshes
+skill discovery immediately. Large startup
+catalogs show an explicit truncation notice and retain the full catalog through
+these tools. Matt Pocock and pstack skills do not add MCP servers.
+If the global skills directory was created after Pi started, restart Pi so the
+role sandbox can grant access to that directory.
+
+Reading a `pstack/NAME` skill or bundled reference also supplies Pi's host adapter.
+It maps skill references to `skills`, workspace inspection to declared role tools,
+questions to conversation, and execution to normal approval-gated A/B handoffs.
+Model setup uses the operator's `/model` and `/thinking` controls. It does not
+write Cursor settings. Workflows requiring arbitrary subagents, independent
+multi-model panels, cloud environments, or unavailable services report a
+capability gap. Sequential A/B work is used only when it preserves the requested
+method; it is not presented as independent parallel review.
+
+Skill files are read in the OS sandbox. The runtime does not load third-party
+extensions, hooks, or executable plugins. Skill instructions do not grant
+workspace writes to A, approve B, or replace coordinator response formats.
+Workflows that require unavailable host tools or independent subagents must
+report that limitation rather than claim to have run them.
+
+After building, `npm run verify:global-mcp` exercises the configured public
+`openaiDeveloperDocs` service through both real Pi roles: native inventory, direct
+calls, and proxy calls, using fixture inference.
+`npm run verify:global-skills` verifies both roles can list the 27 installed Matt
+Pocock plugin skills plus 56 pstack skills and read instructions from both
+packages. Neither verifier retrieves an inference key.
+
+## Verify local projects in a browser
+
+Both roles can use a native `browser` tool for explicitly configured local projects.
+Agent A navigates and inspects snapshots, screenshots, and console warnings. Agent B
+also clicks, types, selects, and presses keys after normal `/approve` authorization.
+Each role and Pi session gets its own disposable browser. Start your project server
+before requesting browser verification.
+
+Configure exact project origins from the built checkout with the scoped toolchain:
+
+```bash
+npm run browser:allow -- /absolute/path/to/project http://localhost:5173 https://project.test
+```
+
+The command writes a private project-bound policy at
+`~/.pi/dual-agent-coordinator/browser.json`. See the
+[policy example](examples/browser.json.example). It backs up legacy version-1 global
+origins before migration. Restart Pi to load new grants. Origins are matched to the
+canonical project directory; a grant for one project does not enable another.
+Only loopback hosts and `.test` names that resolve exclusively to loopback are
+accepted. Public sites, inference/control ports, ephemeral broker ports, WebSockets,
+file URLs, uploads, downloads, personal profiles, and arbitrary browser scripts
+are unavailable. Local HTTPS uses a private TLS-terminating proxy and permits local
+development certificates. External assets are blocked unless separately granted as
+local project origins.
+
+The integration uses the existing `@playwright/mcp@0.0.83` installation at
+`~/.local/share/pi-dual/browser-runtime` and `/Applications/Google Chrome.app`.
+Trusted installation copies and hashes the browser runtime. Browser startup checks
+that bundle against its installation manifest. Set the browser policy's `enabled`
+to `false` to disable it. `--no-mcp` controls globally configured MCP servers;
+the local browser has its separate project policy. No-tools smoke runtimes omit it.
+Doctor checks configuration and installation, but does not claim browser connectivity.
+
+```bash
+npm run verify:browser
+```
+
+This builds the candidate, probes its browser OS boundary using dummy credentials,
+and opens a disposable HTTP/HTTPS project through real Pi sessions and Chrome.
+Inference uses fixture providers. Run the compiled scripts directly in a verified
+trusted installation to check the installed artifact without rebuilding it:
+
+```bash
+bin/node scripts/verify-browser-boundary.mjs
+bin/node scripts/verify-local-browser.mjs
+```
+
+Cancelled or failed interactions can already have changed the local app. Inspect
+fresh application state before repeating them. Cancellation closes the proxy,
+drains the browser process groups, and discards the browser session. An unexpected
+worker exit disables the browser until Pi restarts because complete orphan cleanup
+cannot be proved. General web
+browsing remains outside this integration.
+
 ## Troubleshooting
 
 Run doctor from the trusted installation. Missing or locked Keychain storage,
@@ -225,7 +378,8 @@ prints credential values and never substitutes environment-key authentication.
 Startup replays saved outcomes and supersedes unfinished workflows with fresh
 sessions. Session switching restores conversation context without resuming work.
 Cancellation and timeout preserve completed file changes. Inspect those changes
-before submitting another request.
+before submitting another request. Project `AGENTS.md` instructions load when a
+role runtime is created. Use `/new` or restart Pi after adding or editing them.
 
 ## Development
 
@@ -239,9 +393,10 @@ npm run verify:terminal
 
 ## Project scope
 
-The main branch contains the terminal UI and plain terminal fallback. The browser interface,
-including its in-progress changes, is preserved on `feature/browser-experience`.
-See [TERMINAL_EXPERIENCE_PLAN.md](./TERMINAL_EXPERIENCE_PLAN.md) for the terminal work plan.
+The main branch contains the terminal UI, plain terminal fallback, and local-project
+browser automation. The separate browser-based coordinator interface remains
+archived on `feature/browser-experience`.
+See [terminal controls](docs/terminal-experience.md) for the terminal work plan.
 
 ## Additional docs
 

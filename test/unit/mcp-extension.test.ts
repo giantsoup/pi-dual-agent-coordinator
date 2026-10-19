@@ -100,6 +100,7 @@ describe("mcp extension", () => {
     expect(registeredTools).toContain("mcp");
     expect(registeredTools).toContain("echo");
     expect(registeredTools).not.toContain("destroy");
+    expect(extension?.getStatus().servers[0]?.directTools).toEqual(registeredTools.filter(name => name !== "mcp"));
 
     await extension?.dispose();
   });

@@ -353,3 +353,10 @@ See [current workspace verification](current-workspace-verification.md) for
 this implementation's results and real PTY evidence. The earlier
 [terminal verification](terminal-verification.md) retains its separate live API
 workflow and historical evidence.
+
+## Installed skills
+
+Use `/skills` to ask A for the installed catalog, or `/skill:NAME [request]` to
+request one skill. Both commands create ordinary operator turns. They do not
+approve execution or change the active workflow. Both roles can read installed
+Pi skill instructions through the sandboxed `skills` tool.

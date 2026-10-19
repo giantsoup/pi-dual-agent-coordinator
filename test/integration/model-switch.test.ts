@@ -185,3 +185,15 @@ it("saves Qwen3.8 xhigh and changes reasoning without reloading the model", asyn
     expect(local.calls.filter(call => call.body)).toHaveLength(0);
   } finally { await service.dispose(); }
 });
+
+it("keeps the prior model binding when its browser cannot drain", async () => {
+  const { coordinator, service, bindings } = await setup();
+  const previous = bindings.get("A"); if (!previous) throw new Error("Expected Agent A");
+  const drain = previous.resetBrowser;
+  previous.resetBrowser = async () => { throw new Error("Browser requires restart"); };
+  try {
+    await expect(coordinator.configureRole("A", { model: "openai/gpt-6.1-sol", save: true })).rejects.toThrow("Browser requires restart");
+    expect(coordinator.getStatus().runtimes.find(runtime => runtime.role === "A")?.sessionId).toBe(previous.sessionId);
+    expect((await loadCoordinatorConfig()).exists).toBe(false);
+  } finally { previous.resetBrowser = drain; await service.dispose(); }
+});

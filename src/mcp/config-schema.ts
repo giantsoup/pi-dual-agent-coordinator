@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 const roleConfigSchema = z.object({
+  allowAllTools: z.boolean().optional(),
+  onlyTools: z.array(z.string()).optional(),
   allowTools: z.array(z.string()).optional(),
   excludeTools: z.array(z.string()).optional()
 });

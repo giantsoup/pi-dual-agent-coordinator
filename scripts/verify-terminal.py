@@ -90,6 +90,7 @@ class Terminal:
         if hasattr(self,'process'): self.process.send_signal(signal.SIGWINCH)
     def snapshot(self,label,role=None):
         time.sleep(.08);self.read()
+        if self.screen and role: self.wait(lambda:any('CURRENT REQUEST' in row for row in self.screen.display),'current request heading rendered before role capture')
         if self.screen:
             rows = self.screen.display
             check(len(rows)==self.screen.lines,'captured screen row budget')
@@ -146,6 +147,15 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
         try:
             fresh_b = next(runtime for runtime in terminal.state()['status']['runtimes'] if runtime['role']=='B')
             check(not Path(fresh_b['sessionFile']).exists(),'unused B session has not been flushed to disk')
+            terminal.command('/skills')
+            terminal.wait(lambda:b'TERMINAL_SKILL_OK' in terminal.output and terminal.state().get('operation',{}).get('kind')=='completed','skill catalog through terminal')
+            catalog_turn = terminal.state()['history']['currentTurnId']
+            terminal.command('/skill:terminal-fixture')
+            terminal.wait(lambda:terminal.state()['history']['currentTurnId'] != catalog_turn and terminal.state().get('operation',{}).get('kind')=='completed','skill invocation through terminal')
+            terminal.wait(lambda:any('TERMINAL_SKILL_INSTRUCTIONS_OK' in entry.get('text','') for entry in terminal.state()['conversation']),'actual skill instructions received by Pi and rendered')
+            check(any('TERMINAL_SKILL_INSTRUCTIONS_OK' in entry.get('text','') for entry in terminal.state()['conversation']),'actual skill instructions retained')
+            check(not (terminal.workspace/'result.txt').exists(),'skill request does not approve B')
+            if mode == 'tui': terminal.snapshot('installed-skill-tui')
             terminal.command('/model B lm-studio/qwen3-coder-next save')
             terminal.wait(lambda:any(runtime['role']=='B' and runtime.get('modelCanonical')=='lm-studio/qwen3-coder-next' for runtime in terminal.state().get('status',{}).get('runtimes',[])),'change unused B model through terminal command')
             check(next(runtime for runtime in terminal.state()['status']['runtimes'] if runtime['role']=='B')['sessionId']==fresh_b['sessionId'],'model change retains the unflushed B session')
@@ -157,7 +167,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             terminal.command('plan revised')
             terminal.wait(lambda:bool(terminal.state().get('pendingPlan')),'revised plan')
             terminal.command('/approve')
-            terminal.wait(lambda:terminal.state().get('status',{}).get('workflowStatus') == 'completed' and terminal.state().get('operation',{}).get('kind')=='completed','workflow')
+            terminal.wait(lambda:terminal.state().get('status',{}).get('workflowStatus') == 'completed' and terminal.state().get('operation',{}).get('kind')=='completed' and any('TERMINAL_WORKFLOW_OK' in entry.get('text','') for entry in terminal.state().get('conversation',[])),'workflow and final response hydrated')
             check((terminal.workspace/'result.txt').read_text() == 'TERMINAL_EXECUTION_OK\n','actual isolated write')
             entries = terminal.state()['conversation']
             check(sum(entry['text']=='Execution detail retained.' for entry in entries)==1,'execution prose once')
@@ -479,6 +489,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             check([(r['role'],r['sessionId']) for r in chooser.state()['status']['runtimes']]==running_sessions,'running chooser never rebinds sessions')
             chooser.send('\x1bOS');chooser.send('\x03');chooser.command('/new')
             chooser.wait(lambda:not chooser.state()['history'].get('currentTurnId') and chooser.state().get('operation',{}).get('kind')=='idle','empty current conversation')
+            if CAPTURE: chooser.wait(lambda:any('New conversation' in row for row in chooser.screen.display),'new conversation rendered before opening history')
             chooser.send('\x1bOS');empty = chooser.snapshot(f'chooser-{cols}-empty')
             if CAPTURE: check('> Current conversation' in empty and 'empty' in empty,'blank Current target remains selectable')
             chooser.send('\r');time.sleep(.1)

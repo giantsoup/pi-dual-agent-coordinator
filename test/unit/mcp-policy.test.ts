@@ -106,3 +106,11 @@ describe("mcp policy", () => {
     expect(plan.get("beta")?.get("shared")).toBe("beta__shared");
   });
 });
+
+it("keeps native skill and inventory names reserved for both roles", () => {
+  for (const role of ["A", "B"] as const) {
+    const plan = createDirectToolNamePlan({ role, toolSets: [{ serverName: "fixture", tools: ["skills", "list_tools"].map(name => ({ name, inputSchema: { type: "object" as const } })) }] });
+    expect(plan.get("fixture")?.get("skills")).toBe("fixture__skills");
+    expect(plan.get("fixture")?.get("list_tools")).toBe("fixture__list_tools");
+  }
+});

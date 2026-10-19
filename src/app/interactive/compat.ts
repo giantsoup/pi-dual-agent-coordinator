@@ -1,5 +1,5 @@
 export const INTERACTIVE_COMMAND_HINT =
-  "/help /status /approve /discard /sessions /handoff /cancel /new [A|B] /switch A|B /quit | /history | /inspect ID [section] [line-offset] | /model A|B [MODEL] [save] | /thinking A|B [LEVEL] [save] | /config review-rounds|timeout-ms N [save]";
+  "/help /status /approve /discard /sessions /handoff /cancel /new [A|B] /switch A|B /quit | /skills /skill:NAME [request] | /history | /inspect ID [section] [line-offset] | /model A|B [MODEL] [save] | /thinking A|B [LEVEL] [save] | /config review-rounds|timeout-ms N [save]";
 
 export const INTERACTIVE_RUNTIME_HINT =
   "/new starts a fresh conversation for both agents; /new A or /new B resets only that role. Previous work stays in History. /switch restores a role's session file.";

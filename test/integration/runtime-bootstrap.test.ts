@@ -68,6 +68,7 @@ describe("runtime bootstrap", () => {
       sessionMode: "memory",
       jsonLogs: false,
       verbose: false,
+      agentDir: join(root, "agent"),
       mcpEnabled: true,
       mcpConfigPaths: [],
       createRoleRuntime: async (options: CreateRoleRuntimeOptions) => {

@@ -275,7 +275,7 @@ Proposed approach below.
     await coordinator.dispose();
   });
 
-  it("repairs a malformed pi-execute once before starting execution", async () => {
+  it("repairs a malformed pi-execute and waits for explicit approval", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-dual-planning-repair-unit-"));
     const runtimes = new Map<string, FakeRuntime>();
 
@@ -347,7 +347,9 @@ Proposed approach below.
     });
 
     await coordinator.start();
-    const result = await coordinator.submitUserInput("Start execution now.");
+    const planned = await coordinator.submitUserInput("Start execution now.");
+    expect(planned.pendingPlan).toBeDefined();
+    const result = await coordinator.approvePendingPlan();
 
     expect(result.workflow?.status).toBe("completed");
     expect(runtimes.get("A")?.session.prompts[1]).toContain("Planning repair prompt");
@@ -806,7 +808,8 @@ Proposed approach below.
     });
 
     await coordinator.start();
-    const pending = coordinator.submitUserInput("Start execution now.");
+    await coordinator.submitUserInput("Start execution now.");
+    const pending = coordinator.approvePendingPlan();
 
     await waitFor(() => coordinator.getStatus().currentActivity === "reading src/app/repl-progress.ts");
     const inProgress = coordinator.getStatus();
@@ -886,7 +889,9 @@ Proposed approach below.
 
     await coordinator.start();
 
-    const result = await coordinator.submitUserInput("Start execution now.");
+    const planned = await coordinator.submitUserInput("Start execution now.");
+    expect(planned.pendingPlan).toBeDefined();
+    const result = await coordinator.approvePendingPlan();
 
     expect(result.workflow?.status).toBe("blocked");
     expect(result.userResponse).toContain(

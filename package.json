@@ -37,7 +37,7 @@
   },
   "scripts": {
     "auth": "node ./dist/src/index.js auth",
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node scripts/build-native.mjs",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node scripts/build-skill-worker.mjs && node scripts/build-native.mjs",
     "check": "tsc --noEmit -p tsconfig.check.json",
     "doctor": "node ./dist/src/index.js doctor",
     "repl": "node ./dist/src/index.js repl",
@@ -51,7 +51,11 @@
     "smoke:api": "node dist/src/security/smoke.js",
     "verify:terminal": "npm run build && python3 scripts/verify-terminal.py",
     "verify:local": "npm run build && node scripts/verify-local-executor.mjs",
-    "verify:dependencies": "node scripts/verify-dependencies.mjs"
+    "verify:global-skills": "node scripts/verify-global-skills.mjs",
+    "verify:global-mcp": "node scripts/verify-global-mcp.mjs",
+    "verify:dependencies": "node scripts/verify-dependencies.mjs",
+    "browser:allow": "node scripts/configure-local-browser.mjs",
+    "verify:browser": "npm run build && node scripts/verify-browser-boundary.mjs && node scripts/verify-local-browser.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

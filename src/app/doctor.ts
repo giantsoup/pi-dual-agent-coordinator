@@ -1,9 +1,11 @@
+import { loadBrowserConfiguration, resolveBrowserInstallation } from "../browser/policy.js";
 import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { DoctorCliOptions, ReplCliOptions } from "./cli.js";
 import { loadCoordinatorConfig, resolveEffectiveModelA, resolveEffectiveModelB } from "./coordinator-config.js";
 import { loadResolvedMcpConfig } from "../mcp/config-loader.js";
+import { getMcpServerReadinessIssue } from "../mcp/client-pool.js";
 import { createSecureModelCatalog, isRoleModel, LM_STUDIO_BASE_URL, SMART_MODEL, EXECUTION_MODEL } from "../security/models.js";
 import { ToolIsolation } from "../security/isolation.js";
 import { credentialAccount, credentialHelper, credentialStatus } from "../security/credentials.js";
@@ -62,11 +64,16 @@ export async function inspectRuntimeSetup(options: RuntimeSetupOptions): Promise
   await test("MCP configuration", async () => {
     const config = await loadResolvedMcpConfig({ cwd, agentDir, enabled: options.mcpEnabled ?? true, explicitConfigPaths: options.mcpConfigPaths });
     for (const server of config.servers) {
-      if (server.transport !== "stdio") throw new Error("Secure mode supports sandboxed stdio MCP only. HTTP/SSE isolation cannot be verified.");
-      if (Object.keys(server.env ?? {}).some((key) => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key))) throw new Error("MCP env overrides must be allowlisted: PATH, LANG, LC_ALL, TZ.");
-      if (server.cwd && resolve(server.cwd) !== cwd) throw new Error("MCP cwd must match the workspace.");
+      const issue = getMcpServerReadinessIssue(server, cwd);
+      if (issue) checks.push({ name: `MCP ${server.name}`, status: server.required ? "fail" : "warn", detail: issue });
     }
-    return config.enabled ? `${config.servers.length} stdio server(s) validated; each launch is sandboxed for its role.` : "Disabled.";
+    return config.enabled ? `${config.servers.length} server(s) discovered from ${config.configSources.length} source(s). Stdio uses role isolation; remote MCP uses destination-bound public HTTPS. Connectivity has not been tested.` : "Disabled.";
+  });
+  await test("Local project browser", () => {
+    const browser = loadBrowserConfiguration(cwd);
+    if (!browser) return "Disabled for this project. Use npm run browser:allow to configure exact local HTTP(S) origins.";
+    resolveBrowserInstallation(cwd);
+    return `Configured for ${browser.allowedOrigins.join(", ")}. Separate role sessions, mandatory browser OS isolation; browser connectivity has not been tested. Public browsing is disabled.`;
   });
   checks.push({ name: "Executable Pi resources", status: "pass", detail: "Global/project extensions, packages, custom models and executable auth references disabled. Workspace AGENTS.md is read through isolated tools." });
   checks.push({ name: "Full isolation and live proof", status: "warn", detail: "Run verify:isolation for the complete dummy suite, then smoke:api for bounded Pi-backed connectivity. Doctor alone does not complete Step 0." });

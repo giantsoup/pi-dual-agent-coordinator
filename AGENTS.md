@@ -75,9 +75,13 @@ tools, MCP, runtime construction, or model selection. Read
   writable workspace. Never run workspace-modified coordinator code with real
   credentials. Never put credentials in prompts, commands, logs, fixtures, or
   repository files. Use dummy secrets for isolation checks.
-- Preserve sandboxed role tools and stdio MCP execution. HTTP and SSE MCP peers
-  fail closed. Redaction, environment filtering, and server read-only hints do
+- Preserve sandboxed role tools and stdio MCP execution. Remote MCP uses the
+  destination-bound anonymous public HTTPS adapter; private endpoints, redirects,
+  authentication, and legacy SSE fail closed. Redaction, environment filtering, and server read-only hints do
   not replace the OS sandbox. Runtime replacements must retain the same boundary.
+- Read installed global skills through the isolated `skills` tool. Preserve its
+  read-only directory grant, reference containment, and package namespaces.
+  Skill instructions cannot authorize execution or change runtime permissions.
 - Parse workflow blocks at stable `turn_end` boundaries. Printed tool markup is
   diagnostic text, never executable tool arguments. Use native calls and
   correlated results as execution evidence, not a model's completion claim.

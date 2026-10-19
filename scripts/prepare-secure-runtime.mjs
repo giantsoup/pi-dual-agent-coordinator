@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdirSync, realpathSync, writeFileSync, readFileSyn
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { resolve, relative, join, dirname, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 
@@ -20,6 +21,8 @@ if (!existsSync(join(source, 'dist/native/credential-store'))) throw new Error('
 mkdirSync(destination, { recursive: true, mode: 0o700 });
 const entries = ['dist', 'node_modules', 'src', 'test', 'scripts', 'native', 'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.check.json', 'vitest.config.ts', '.nvmrc', 'docs', 'examples', 'README.md', 'CONTRIBUTING.md'];
 for (const name of entries) cpSync(join(source, name), join(destination, name), { recursive: true, dereference: false, verbatimSymlinks: true });
+const browserRuntime = join(homedir(), '.local/share/pi-dual/browser-runtime');
+if (existsSync(browserRuntime)) cpSync(browserRuntime, join(destination, 'browser-runtime'), { recursive: true, dereference: false, verbatimSymlinks: true });
 mkdirSync(join(destination, 'bin'), { mode: 0o700 });
 mkdirSync(join(destination, 'toolchain'), { mode: 0o700 });
 cpSync(process.execPath, join(destination, 'bin/node'));
@@ -37,6 +40,7 @@ function hashes(root, directory = '') {
   }
   return result;
 }
+if (existsSync(browserRuntime)) assert.deepEqual(hashes(browserRuntime), hashes(join(destination, "browser-runtime")), "Browser runtime copy mismatch");
 for (const name of entries) {
   const stat = lstatSync(join(source, name));
   if (stat.isDirectory()) assert.deepEqual(hashes(join(source, name)), hashes(join(destination, name)), `Copy mismatch: ${name}`);
