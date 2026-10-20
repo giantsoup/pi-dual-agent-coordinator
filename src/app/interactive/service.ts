@@ -1,3 +1,4 @@
+import { CurrentActivityReducer } from "./current-activity.js";
 import { HistoryIndex, type loadHistoryEvents } from "./history.js";
 import { projectHistoryDetail } from "./history-detail.js";
 import { RequestTranscript } from "./transcript.js";
@@ -105,6 +106,7 @@ export class HeadlessInteractiveCoordinatorService
   private operationTexts = new Set<string>();
   private modelQuery: AbortController | undefined;
   private quitting = false;
+  private readonly currentActivity = new CurrentActivityReducer();
 
   public constructor(private readonly coordinator: InteractiveCoordinatorLike) {
     this.state = createInitialInteractiveUiState(coordinator.getStatus());
@@ -595,7 +597,7 @@ export class HeadlessInteractiveCoordinatorService
       return;
     }
     const historyChanged = this.historyIndex.observe(event);
-    this.transcript.observeTool(event, this.historyIndex.eventSequence);
+    if (historyChanged) this.transcript.observeTool(event, this.historyIndex.eventSequence);
     if (historyChanged) this.updateState({ type: "set_history", history: this.historyIndex.snapshot() });
     event = { ...event, details: safeDisplayFields(event.details) };
     const status = this.coordinator.getStatus();
@@ -606,6 +608,7 @@ export class HeadlessInteractiveCoordinatorService
       this.updateState({ type: "reset_conversation", status });
     }
     if (status.operation) this.updateState({ type: "set_operation", operation: status.operation });
+    this.state = { ...this.state, status, currentActivity: this.currentActivity.update({ ...this.state, status }, event) };
     const update = deriveActivityUpdate(event, status);
     this.updateState({
       type: "replace_status",
@@ -700,7 +703,7 @@ export class HeadlessInteractiveCoordinatorService
   }
 
   public getTranscript(turnId: string): TranscriptBlock[] {
-    return this.transcript.blocks(this.state.history.records, turnId);
+    return this.transcript.blocks(this.state.history.records, turnId, this.state.history.milestones);
   }
 
   public async loadTranscript(turnId: string): Promise<void> {
@@ -881,6 +884,7 @@ export class HeadlessInteractiveCoordinatorService
         ...(action.modal.choices ? { choices: action.modal.choices.map((choice) => ({ ...choice, label: safeDisplayText(choice.label) })) } : {}) } };
     }
     this.state = interactiveUiReducer(this.state, action);
+    this.state = { ...this.state, currentActivity: this.currentActivity.update(this.state) };
     this.emitStateChanged();
   }
 

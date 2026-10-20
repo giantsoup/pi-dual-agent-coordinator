@@ -58,7 +58,7 @@ describe("real Pi editor and terminal components", () => {
       const lines = app.render(columns);
       expect(lines).toHaveLength(rows);
       expect(lines.every((line) => visibleWidth(line) <= columns)).toBe(true);
-      expect(lines.join("\n")).toContain(columns < 80 ? "Compact terminal" : "Enter submit");
+      expect(lines.join("\n")).toContain(columns < 80 ? "Current activity" : "Enter submit");
     }
     expect(text(app,120)).toContain("seventh");
     await service.dispose();
@@ -275,7 +275,7 @@ it("opens history from transcript and activity and respects service modal and in
   try {
     app.render(80); app.handleInput("\x1b[17~"); app.handleInput("\x1b"); app.handleInput("r");
     expect(text(app)).toContain("Request history");
-    app.handleInput("\x1b"); expect(text(app)).toContain("CURRENT REQUEST | idle [focus]");
+    app.handleInput("\x1b"); expect(text(app)).toContain("CURRENT REQUEST | Planning [focus]");
     app.handleInput("\x1bOQ"); app.handleInput("\t");
     expect(text(app)).toContain("Activity [focus]");
     app.handleInput("\x1br"); expect(text(app)).toContain("Request history");

@@ -11,7 +11,7 @@ export class ManagedSession implements SessionLike {
   private readonly autoCompactionEnabled: boolean;
   private readonly unsubscribe: () => void;
 
-  public constructor(public readonly piSession: AgentSession) {
+  public constructor(public readonly piSession: AgentSession, private readonly onAbort?: (() => Promise<void>) | undefined) {
     const session = this.piSession;
     this.autoCompactionEnabled = session.autoCompactionEnabled;
     session.setAutoCompactionEnabled(false);
@@ -103,6 +103,7 @@ export class ManagedSession implements SessionLike {
     await this.piSession.abort();
     await this.pending?.catch(() => undefined);
     await this.compactionDone;
+    await this.onAbort?.();
   }
 
   public dispose(): void {

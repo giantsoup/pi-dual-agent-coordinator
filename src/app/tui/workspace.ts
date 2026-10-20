@@ -23,15 +23,10 @@ export function paintRole(text: string, role?: "A" | "B"): string {
   // Standard cyan/amber accents use the terminal's background, as does the prose.
   return `\x1b[${role === "A" ? "36" : "33"};49m${text}\x1b[0m`;
 }
-export function liveIdentity(state: InteractiveUiState): { text: string; role?: "A" | "B"; phase: string } {
-  if (state.operation.kind === "cancelling") return { text: "Cancelling", phase: "Waiting for runtime cleanup" };
-  if (state.operation.kind !== "running") {
-    const current = state.history.records.find((record) => record.id === state.history.currentTurnId);
-    return { text: state.pendingPlan ? "Waiting for approval" : "Idle", phase: (state.pendingPlan ? "Plan ready" : state.operation.kind === "idle" ? current?.outcome.kind ?? "idle" : state.operation.kind).replaceAll("_", " ") };
-  }
-  const currentRun = [...state.history.records].reverse().find((record) => record.kind === "run" && record.outcome.kind === "running" && record.parentId === state.history.currentTurnId);
-  if (currentRun?.kind === "run") return { text: `Active: ${roleLabel(currentRun.role)}`, role: currentRun.role, phase: currentRun.phase };
-  return { text: "Working", phase: state.status.phaseLabel };
+export function liveIdentity(state: InteractiveUiState): { text: string; role?: "A" | "B" | undefined; phase: string } {
+  const activity = state.currentActivity;
+  return { text: activity.owner.kind === "runtime" ? `Active: ${roleLabel(activity.owner.role)}` : activity.action.kind === "cancelling" ? "Cancelling" : "Idle",
+    role: activity.owner.kind === "runtime" ? activity.owner.role : undefined, phase: activity.phase };
 }
 function children(records: HistoryRecord[], id: string): HistoryRecord[] { return records.filter((record) => record.kind !== "turn" && record.parentId === id); }
 export function recordSummary(record: HistoryRecord, records: HistoryRecord[]): string {
@@ -295,7 +290,7 @@ export class CurrentWorkspace {
     if (!view) return false;
     const tab = inspectorTabs.find((tab) => tab.key === data)?.section;
     if (tab) { view.section = tab; view.offset = 0; view.visualOffset = 0; view.detail = undefined; void this.loadDetail(); return true; }
-    const page = Math.max(1, this.height - 9);
+    const page = this.inspectorOutputHeight();
     const wrapped = view.detail?.lines.flatMap((line) => wrap(line, this.width - 2)) ?? [];
     let next = view.visualOffset;
     if (matchesKey(data, Key.up)) next--;
@@ -313,6 +308,7 @@ export class CurrentWorkspace {
     return true;
   }
   private duration(record: HistoryRecord): string {
+    if (!Number.isFinite(Date.parse(record.timestamp)) || record.outcome.kind !== "running" && record.outcome.endedAt !== null && !Number.isFinite(Date.parse(record.outcome.endedAt))) return "duration unknown";
     if (record.outcome.kind === "interrupted" && record.outcome.endedAt === null) return "duration unknown";
     if (record.outcome.kind !== "running") return `${Math.max(0, Math.round((Date.parse(record.outcome.endedAt ?? record.timestamp) - Date.parse(record.timestamp)) / 1000))}s`;
     let clock = this.clocks.get(record.id);
@@ -329,11 +325,7 @@ export class CurrentWorkspace {
   public render(state: InteractiveUiState, width: number, height: number): string[] {
     this.height = height; this.width = width;
     this.syncState(state);
-    if (!this.following || this.historyVisible || this.inspector || state.modal.kind !== "none") {
-      const stream = state.liveStream;
-      const newProse = stream && (this.streamAtRead?.key !== `${stream.role}:${stream.sessionId}:${stream.startedAt}` || stream.text.length > this.streamAtRead.length) ? 1 : 0;
-      this.unread = Math.max(this.unread, state.history.revision - this.readRevision + newProse);
-    } else { this.captureRead(state); this.unread = 0; }
+    this.viewStatus(state, height < 6 ? "compact" : false);
     if (this.inspector) return this.renderInspector(state, width, height);
     if (this.historyVisible) return this.renderHistoryPane(state, width, height);
     const turns = state.history.records.filter((record) => record.kind === "turn");
@@ -346,19 +338,7 @@ export class CurrentWorkspace {
     const rows = this.rows(state);
     if (this.following) this.workspaceSelection = rows.at(-1)?.id ?? current?.id;
     const selected = this.workspaceSelection === current?.id ? current : this.select(rows, this.workspaceSelection);
-    const progress = current?.kind === "turn" ? current.execution : undefined;
-    const checkIn = progress?.checkIn;
-    const checkStopped = current?.outcome.kind !== "running" && (checkIn?.kind === "scheduled" || checkIn?.kind === "checking");
-    const checkLabel = checkStopped ? "checks stopped" : checkIn?.kind === "scheduled" ? `A check at ${checkIn.afterTurn}`
-      : checkIn?.kind === "checking" ? `A checking turn ${checkIn.afterTurn}`
-      : checkIn?.kind === "final_review" ? "final review" : "check stopped";
-    const progressLine = progress ? `B turns: ${progress.completedTurns} successful / ${checkLabel}` : undefined;
-    const response = current?.kind === "turn" ? current.responseProgress : undefined;
-    const statusLines = [
-      ...(response && response.attempt > 1 ? [response.label, ...(response.state !== "succeeded" && response.reason ? [response.reason] : [])] : []),
-      ...(progressLine ? [progressLine] : []),
-      `\x1b[1;4m>> ${viewingCurrent ? live.phase.toUpperCase() : selected?.title ?? "Retained records"} / ${viewingCurrent ? state.pendingPlan ? "waiting approval" : state.operation.kind === "running" || state.operation.kind === "cancelling" ? state.operation.kind : current?.outcome.kind ?? state.operation.kind : current?.outcome.kind}\x1b[0m`
-    ];
+    const statusLines: string[] = [];
     const heading = [current && this.workspaceSelection === current.id ? `> Operator turn: ${current.title} / ${recordSummary(current, state.history.records)}` : current?.title ?? (state.history.resetId ? "New conversation. Send a request to Agent A." : "Send a request to Agent A, or use /help."), ""];
     const contentBudget = Math.max(0, height - 3 - statusLines.length - heading.length);
     const body: (string | HistoryRecord)[] = [];
@@ -373,7 +353,7 @@ export class CurrentWorkspace {
       }).catch(() => {});
     }
     let blocks = current ? this.service.getTranscript?.(current.id) ?? [] : [];
-    if (viewingCurrent && state.liveStream && latestRun?.kind === "run" && !blocks.some((block) => block.runId === latestRun.id && block.kind === "response")) {
+    if (viewingCurrent && state.liveStream && latestRun?.kind === "run" && !blocks.some((block) => block.kind === "response" && block.runId === latestRun.id)) {
       const text = visibleProse(state.liveStream.text);
       if (text) blocks = [...blocks, { kind: "response", id: `${latestRun.id}:stream`, runId: latestRun.id, timestamp: "~", sequence: Number.MAX_SAFE_INTEGER, text }];
     }
@@ -393,11 +373,17 @@ export class CurrentWorkspace {
     };
     let previousRunId: string | undefined;
     if (!current || !this.collapsedTurns.has(current.id)) for (const block of timeline) {
+      if (block.kind === "milestone") {
+        const start = body.length;
+        body.push("", ...wrap(`${block.label} / ${retainedTime(block.timestamp)}`, bodyWidth), "");
+        recordSpans.push({ id: block.id, start, end: body.length });
+        continue;
+      }
       const run = turnRuns.find((record) => record.id === block.runId);
       if (!run) continue;
       if (block.kind === "heading") { addRecord(run); previousRunId = run.id; continue; }
       const start = body.length;
-      if (previousRunId !== run.id) body.push("", paintRole(`${roleLabel(run.role)} | ${run.phase} continued`, run.role));
+      if (previousRunId !== run.id) body.push("", paintRole(`${roleLabel(run.role)} | ${run.phase} continued / ${run.outcome.kind} / ${retainedTime(block.timestamp)}`, run.role));
       previousRunId = run.id;
       if (block.kind === "response") {
         const bounded = block.text.slice(-24000);
@@ -428,7 +414,7 @@ export class CurrentWorkspace {
     }
     const visible = body.slice(this.viewportStart, this.viewportStart + contentBudget).map((row) => {
       if (typeof row === "string") return row;
-      const label = `${selected?.id === row.id ? ">" : " "} ${(row.kind === "run" ? this.expandedRuns.has(row.id) : this.expanded.has(row.id)) ? "-" : "+"} ${row.kind === "tool" ? "  " : ""}${row.kind === "turn" ? "" : roleLabel(row.role)} [${row.outcome.kind}] ${row.title} / ${this.duration(row)} ${recordSummary(row, state.history.records)}`;
+      const label = `${selected?.id === row.id ? ">" : " "} ${(row.kind === "run" ? this.expandedRuns.has(row.id) : this.expanded.has(row.id)) ? "-" : "+"} ${row.kind === "tool" ? "  " : ""}${row.kind === "turn" ? "" : roleLabel(row.role)} [${row.outcome.kind}] ${row.kind === "run" ? row.phase : row.title}${row.kind === "run" && row.reviewDisposition ? ` / ${row.reviewDisposition.replaceAll("_", " ")}` : ""} / ${this.duration(row)}${row.kind === "run" ? ` / ${retainedTime(row.timestamp)}${row.outcome.kind !== "running" && row.outcome.endedAt ? ` - ${retainedTime(row.outcome.endedAt)}` : ""}` : ""} ${recordSummary(row, state.history.records)}`;
       return paintRole(pad(label, bodyWidth), row.kind === "turn" ? undefined : row.role);
     });
     while (visible.length < contentBudget) visible.push("");
@@ -438,14 +424,15 @@ export class CurrentWorkspace {
     const frameRole = live.role ?? (latestRun?.kind === "run" ? latestRun.role : undefined);
     return frame(title, [...heading, ...visible], width, height, viewingCurrent ? frameRole : undefined);
   }
-  public pointer(state: InteractiveUiState): string {
-    const live = liveIdentity(state);
-    const run = [...state.history.records].reverse().find((record) => record.kind === "run" && record.outcome.kind === "running");
-    const tool = run ? children(state.history.records, run.id).find((record) => record.outcome.kind === "running") : undefined;
-    const activity = state.operation.kind === "running" ? tool ? `${tool.title} / running, no final exit status` : run ? "No tool currently running" : "Preparing next role run" : state.pendingPlan ? "/approve to execute" : `Last result: ${live.phase}`;
-    const returnHint = state.modal.kind !== "none" || this.inspector ? "Esc back" : this.historyVisible ? "l current" : "Esc then l current";
-    const unread = this.unread ? ` | ${this.unread} unread, ${returnHint}` : "";
-    return `${live.text} / ${live.phase}${unread}${run && state.operation.kind === "running" ? ` / ${this.duration(run)}` : ""} / ${activity}`;
+  public viewStatus(state: InteractiveUiState, covered: false | "controls" | "compact" = false): import("./current-activity.js").WorkspaceViewStatus {
+    const hidden = covered !== false || this.historyVisible || Boolean(this.inspector) || state.modal.kind !== "none";
+    if (!this.following || hidden) {
+      const stream = state.liveStream;
+      const newProse = stream && (this.streamAtRead?.key !== `${stream.role}:${stream.sessionId}:${stream.startedAt}` || stream.text.length > this.streamAtRead.length) ? 1 : 0;
+      this.unread = Math.max(this.unread, state.history.revision - this.readRevision + newProse);
+    } else { this.captureRead(state); this.unread = 0; }
+    return { unread: this.unread, following: this.following, hidden,
+      returnHint: state.modal.kind !== "none" || this.inspector || covered === "controls" ? "Esc back, then Esc l current" : this.historyVisible ? "l current" : covered === "compact" ? "Resize to read narrative" : "Esc then l current" };
   }
   private renderHistoryPane(state: InteractiveUiState, width: number, height: number): string[] {
     const pane = this.history;
@@ -470,6 +457,11 @@ export class CurrentWorkspace {
     rows.push(index < 0 || pane.unavailable ? "Request unavailable. Choose again; Enter confirms Current." : state.history.warnings[0] ?? "Selection changes the display only.",
       `${selected + 1}/${turns.length + 1} | Arrows/u/d/g/End highlight | Enter choose | l current`);
     return frame("Request history | Esc/F4 back | h help", rows, width, height);
+  }
+  private inspectorOutputHeight(): number {
+    const reason = this.inspector?.detail?.reason;
+    const reasonRows = reason ? Math.min(3, wrap(reason, this.width - 2).length) : 0;
+    return Math.max(1, this.height - 6 - reasonRows);
   }
   private renderInspector(state: InteractiveUiState, width: number, height: number): string[] {
     const view = this.inspector;
@@ -498,7 +490,7 @@ export class CurrentWorkspace {
     }
     view.wrapWidth = innerWidth;
     const wrapped = detail?.lines.flatMap((line) => wrap(line, width - 2)) ?? [];
-    if (detail) view.visualOffset = Math.min(view.visualOffset, Math.max(0, wrapped.length - Math.max(1, height - 9)));
+    if (detail) view.visualOffset = Math.min(view.visualOffset, Math.max(0, wrapped.length - this.inspectorOutputHeight()));
     let sourceLine = view.offset;
     let remainingRows = view.visualOffset;
     for (const line of detail?.lines ?? []) {
@@ -509,7 +501,7 @@ export class CurrentWorkspace {
     const body = [pad(breadcrumb, width - 2), pad(inspectorTabs.map((tab) => `${tab.key} ${tab.label}`).join(" | "), width - 2),
       pad(`${view.section} / ${record?.outcome.kind ?? "unknown"} / line ${sourceLine + 1} of ${detail?.totalLines ?? "?"}`, width - 2),
       ...(detail?.reason ? wrap(detail.reason, width - 2).slice(0, 3) : []),
-      ...(view.loading && !detail ? ["Loading retained detail…"] : wrapped.slice(view.visualOffset, view.visualOffset + Math.max(1, height - 9)) ?? ["Output unavailable"]),
+      ...(view.loading && !detail ? ["Loading retained detail…"] : wrapped.slice(view.visualOffset, view.visualOffset + this.inspectorOutputHeight()) ?? ["Output unavailable"]),
       "Esc back | h help | Up/Down scroll | u/d page | g/l edges"];
     return frame(`READ-ONLY INSPECTOR${this.focus === "inspector" ? " [focus]" : ""}`, body, width, height, role);
   }
@@ -518,9 +510,15 @@ export function frame(title: string, body: string[], width: number, height: numb
   const inner = Math.max(0, width - 2);
   const border = paintRole("|", role);
   const bodyLine = (line: string) => `${border}${paintDefault(pad(line, inner))}${border}`;
-  const lines = [paintRole(`+\x1b[1m${pad(` ${title} `, inner)}\x1b[22m+`, role),
+  const heading = pad(` ${title} `, inner);
+  const lines = [paintRole(`+${process.env.TERM === "dumb" ? heading : `\x1b[1m${heading}\x1b[22m`}+`, role),
     ...body.slice(0, Math.max(0, height - 2)).map(bodyLine)];
   while (lines.length < height - 1) lines.push(bodyLine(""));
   lines.push(paintRole(`+${"-".repeat(inner)}+`, role));
   return lines.slice(0, height).map((line) => visibleWidth(line) > width ? pad(line, width) : line);
+}
+
+function retainedTime(timestamp: string): string {
+  const time = Date.parse(timestamp);
+  return Number.isFinite(time) ? new Date(time).toLocaleTimeString("en-GB", { hour12: false }) : "time unknown";
 }

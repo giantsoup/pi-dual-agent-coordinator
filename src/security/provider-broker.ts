@@ -1,9 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
 import { protectSecret, redactText } from "./redact.js";
 import { loadCredential } from "./credentials.js";
 import { LM_STUDIO_BASE_URL, QWEN38_MODEL_ID } from "./models.js";
+import { providerBrokerPorts } from "./local-network.js";
 
 export const trustedProviderEndpoint = "https://api.openai.com/v1/responses";
 export function assertProviderEndpoint(value: string): void {
@@ -118,10 +119,23 @@ export async function createProviderBroker(options: {
   server.headersTimeout = 10_000;
   server.on("clientError", (_error, socket) => socket.destroy());
   try {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", resolve);
-    });
+    const offset = randomInt(providerBrokerPorts.length);
+    for (let index = 0; index < providerBrokerPorts.length; index++) {
+      const port = providerBrokerPorts[(offset + index) % providerBrokerPorts.length];
+      if (port === undefined) throw new Error("Provider broker port unavailable");
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const onError = (error: Error) => { server.off("listening", onListening); reject(error); };
+          const onListening = () => { server.off("error", onError); resolve(); };
+          server.once("error", onError);
+          server.once("listening", onListening);
+          server.listen(port, "127.0.0.1");
+        });
+        break;
+      } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "EADDRINUSE" || index === providerBrokerPorts.length - 1) throw error;
+      }
+    }
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Broker startup failed");
     return {

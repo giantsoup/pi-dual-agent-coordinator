@@ -1,19 +1,13 @@
-import {
-  deriveActivityUpdate,
-  renderActivityText,
-  renderReasonText,
-  type ActivitySnapshot
-} from "./activity-summary.js";
+import { safeDisplayText } from "../security/display-text.js";
+import { currentActionText } from "./interactive/current-activity.js";
 import {
   INTERACTIVE_COMMAND_HINT,
   INTERACTIVE_PLAIN_KEY_HINT,
   INTERACTIVE_RUNTIME_HINT
 } from "./interactive/compat.js";
-import type { NormalizedTelemetryEvent } from "../types/telemetry.js";
 import type { UiEvent } from "../types/ui.js";
 import type {
   CoordinatorStatusSnapshot,
-  CoordinatorUiPhase,
   RuntimeStatusSnapshot
 } from "../types/status.js";
 import type { Role } from "../types/role.js";
@@ -26,13 +20,8 @@ export interface ReplProgressRendererOptions {
 }
 
 export class ReplProgressRenderer {
-  private readonly runtimeActivity = new Map<Role, ActivitySnapshot>();
-  private coordinatorActivity: ActivitySnapshot | undefined;
-  private lastContextKey: string | undefined;
-  private lastContextLine: string | undefined;
-  private lastActivityLine: string | undefined;
-  private lastReasonLine: string | undefined;
   private progressSinceLastResponse = false;
+  private sharedActivityKey: string | undefined;
 
   public constructor(private readonly options: ReplProgressRendererOptions) {}
 
@@ -48,205 +37,25 @@ export class ReplProgressRenderer {
     return buildPromptLabel(this.options.getStatus());
   }
 
-  public handleEvent(event: NormalizedTelemetryEvent): void {
-    const lines = this.renderEvent(event);
-    if (lines.length === 0) {
-      return;
-    }
-    this.progressSinceLastResponse = true;
-    for (const line of lines) {
-      this.options.stderr.write(`${line}\n`);
-    }
-  }
-
   public handleUiEvent(event: UiEvent): void {
-    if (event.type !== "activity_changed") {
-      return;
-    }
-
-    const lines = this.renderActivitySnapshot(event.state.status, event.activity.active);
-    if (lines.length === 0) {
-      return;
-    }
-
+    if (event.type !== "state_changed") return;
+    const activity = event.state.currentActivity;
+    const owner = activity.owner.kind === "runtime" ? `Agent ${activity.owner.role}${activity.model ? ` / ${activity.model}` : ""}` : "Coordinator";
+    const line = `${owner} / ${activity.phase}: ${currentActionText(activity.action)}${activity.action.kind === "tool_execution" && activity.action.target ? ` ${activity.action.target}` : ""}${activity.progress ? ` / ${activity.progress}` : ""}`;
+    const key = JSON.stringify([activity.owner, activity.action.kind === "tool_execution" ? activity.action.callId : "", line]);
+    if (key === this.sharedActivityKey) return;
+    this.sharedActivityKey = key;
     this.progressSinceLastResponse = true;
-    for (const line of lines) {
-      this.options.stderr.write(`${line}\n`);
-    }
+    this.options.stderr.write(`${safeDisplayText(line)}\n`);
   }
 
   public beforeTextOutput(): void {
     if (this.progressSinceLastResponse) {
       this.options.stdout.write("\n");
     }
-    this.resetProgressBurst();
     this.progressSinceLastResponse = false;
   }
 
-  private renderEvent(event: NormalizedTelemetryEvent): string[] {
-    const status = this.getStatusWithLocalActivity();
-    const update = deriveActivityUpdate(event, status);
-    if (!update) {
-      return [];
-    }
-
-    if (update.clear) {
-      if (update.role === "coordinator") {
-        this.coordinatorActivity = undefined;
-      } else {
-        this.runtimeActivity.delete(update.role);
-      }
-      if (this.isActiveContextRole(update.role)) {
-        this.resetProgressBurst();
-      }
-      return [];
-    }
-
-    const snapshot = update.snapshot;
-    if (!snapshot) {
-      return [];
-    }
-
-    if (update.role === "coordinator") {
-      this.coordinatorActivity = snapshot;
-    } else {
-      this.runtimeActivity.set(update.role, snapshot);
-    }
-
-    const lines: string[] = [];
-    const context = this.getContext(event, snapshot);
-    if (context.key !== this.lastContextKey) {
-      this.lastContextKey = context.key;
-      this.lastContextLine = context.line;
-      this.lastActivityLine = undefined;
-      this.lastReasonLine = undefined;
-      lines.push(this.lastContextLine);
-    }
-
-    const activityLine = this.renderSnapshotLine(snapshot);
-    if (activityLine !== this.lastActivityLine) {
-      this.lastActivityLine = activityLine;
-      lines.push(activityLine);
-    }
-
-    const reasonText = renderReasonText(snapshot);
-    if (reasonText) {
-      const reasonLine = `  reason: ${reasonText}`;
-      if (reasonLine !== this.lastReasonLine) {
-        this.lastReasonLine = reasonLine;
-        lines.push(reasonLine);
-      }
-    }
-
-    return lines;
-  }
-
-  private renderActivitySnapshot(
-    status: CoordinatorStatusSnapshot,
-    snapshot?: ActivitySnapshot | undefined
-  ): string[] {
-    if (!snapshot) {
-      this.resetProgressBurst();
-      return [];
-    }
-
-    const role = snapshot.role === "coordinator" ? status.activeRole : snapshot.role;
-    const modelDisplay = resolveModelDisplayFromStatus(status, role);
-    const contextKey = `${labelPhase(snapshot.phase)}\u0000${role}\u0000${modelDisplay}`;
-    const contextLine = `${labelPhase(snapshot.phase)} · Agent ${role} · ${modelDisplay}`;
-    const lines: string[] = [];
-
-    if (contextKey !== this.lastContextKey) {
-      this.lastContextKey = contextKey;
-      this.lastContextLine = contextLine;
-      this.lastActivityLine = undefined;
-      this.lastReasonLine = undefined;
-      lines.push(contextLine);
-    }
-
-    const activityLine = this.renderSnapshotLine(snapshot);
-    if (activityLine !== this.lastActivityLine) {
-      this.lastActivityLine = activityLine;
-      lines.push(activityLine);
-    }
-
-    const reasonText = renderReasonText(snapshot);
-    if (reasonText) {
-      const reasonLine = `  reason: ${reasonText}`;
-      if (reasonLine !== this.lastReasonLine) {
-        this.lastReasonLine = reasonLine;
-        lines.push(reasonLine);
-      }
-    }
-
-    return lines;
-  }
-
-  private renderSnapshotLine(
-    snapshot: ActivitySnapshot
-  ): string {
-    return `  ${renderActivityText(snapshot)}`;
-  }
-
-  private getContext(
-    event: NormalizedTelemetryEvent,
-    snapshot: ActivitySnapshot
-  ): { key: string; line: string } {
-    const role = snapshot.role === "coordinator" ? event.role : snapshot.role;
-    const phaseLabel = labelPhase(snapshot.phase);
-    const modelDisplay = resolveModelDisplay(event, role, this.getStatusWithLocalActivity());
-    return {
-      key: `${phaseLabel}\u0000${role}\u0000${modelDisplay}`,
-      line: `${phaseLabel} · Agent ${role} · ${modelDisplay}`
-    };
-  }
-
-  private isActiveContextRole(role: Role | "coordinator"): boolean {
-    if (role === "coordinator") {
-      return false;
-    }
-    return this.lastContextKey?.split("\u0000")[1] === role;
-  }
-
-  private resetProgressBurst(): void {
-    this.lastContextKey = undefined;
-    this.lastContextLine = undefined;
-    this.lastActivityLine = undefined;
-    this.lastReasonLine = undefined;
-  }
-
-  private getStatusWithLocalActivity(): CoordinatorStatusSnapshot {
-    const status = this.options.getStatus();
-    return {
-      ...status,
-      currentActivity:
-        this.runtimeActivity.get(status.activeRole)
-          ? renderActivityText(this.runtimeActivity.get(status.activeRole)!)
-          : status.currentActivity,
-      currentReason:
-        this.runtimeActivity.get(status.activeRole)
-          ? renderReasonText(this.runtimeActivity.get(status.activeRole)!)
-          : status.currentReason,
-      currentTarget: this.runtimeActivity.get(status.activeRole)?.target ?? status.currentTarget,
-      coordinatorActivity: this.coordinatorActivity
-        ? renderActivityText(this.coordinatorActivity)
-        : status.coordinatorActivity,
-      coordinatorReason: this.coordinatorActivity
-        ? renderReasonText(this.coordinatorActivity)
-        : status.coordinatorReason,
-      runtimes: status.runtimes.map((runtime) => {
-        const snapshot = this.runtimeActivity.get(runtime.role);
-        return snapshot
-          ? {
-              ...runtime,
-              currentActivity: renderActivityText(snapshot),
-              currentReason: renderReasonText(snapshot),
-              currentTarget: snapshot.target
-            }
-          : runtime;
-      })
-    };
-  }
 }
 
 export function buildStartupBanner(status: CoordinatorStatusSnapshot, isTTY: boolean): string {
@@ -298,49 +107,11 @@ export function buildHelpText(isTTY: boolean): string {
   ].join("\n");
 }
 
-function resolveModelDisplay(
-  event: NormalizedTelemetryEvent,
-  role: Role,
-  status: CoordinatorStatusSnapshot
-): string {
-  const detailKey = role === "A" ? "modelDisplayA" : role === "B" ? "modelDisplayB" : "modelDisplay";
-  const detailValue = event.details[detailKey];
-  if (typeof detailValue === "string" && detailValue) {
-    return detailValue;
-  }
-
-  if (typeof event.details.modelDisplay === "string" && role === event.role) {
-    return event.details.modelDisplay;
-  }
-
-  return findRuntime(status, role)?.modelDisplay ?? status.activeModelDisplay;
-}
-
-function resolveModelDisplayFromStatus(
-  status: CoordinatorStatusSnapshot,
-  role: Role
-): string {
-  return findRuntime(status, role)?.modelDisplay ?? status.activeModelDisplay;
-}
-
 function findRuntime(
   status: CoordinatorStatusSnapshot,
   role: Role
 ): RuntimeStatusSnapshot | undefined {
   return status.runtimes.find((runtime) => runtime.role === role);
-}
-
-function labelPhase(phase: CoordinatorUiPhase): string {
-  switch (phase) {
-    case "planning":
-      return "Planning";
-    case "execution":
-      return "Execution";
-    case "review":
-      return "Review";
-    case "repair":
-      return "Repair";
-  }
 }
 
 function style(isTTY: boolean, kind: "bold", text: string): string {

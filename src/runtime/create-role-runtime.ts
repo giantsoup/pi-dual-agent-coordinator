@@ -38,6 +38,7 @@ import type { BrowserConfiguration } from "../browser/policy.js";
 import { createToolInventoryExtension } from "../tools/tool-inventory.js";
 import { buildSkillCatalogPrompt, readSkillCatalog, type SkillCatalog } from "../tools/skill-catalog.js";
 import { createRoleTools } from "../tools/create-role-tools.js";
+import { LocalServers } from "../tools/local-servers.js";
 import type { Role } from "../types/role.js";
 
 export type SupportedThinkingLevel = ThinkingLevel;
@@ -169,10 +170,11 @@ export async function createRoleRuntime(
   const agentDir = options.agentDir ?? getAgentDir();
   const skillsDir = join(agentDir, "skills");
   const browsers = new Set<ProjectBrowser>();
+  const localServers = new Set<LocalServers>();
   const loadProjectResources =
     options.loadProjectResources ?? LOAD_PROJECT_RESOURCES_BY_DEFAULT;
 
-  const isolation = new ToolIsolation(cwd, options.role, options.noTools ? undefined : skillsDir);
+  const isolation = new ToolIsolation(cwd, options.role, options.noTools ? undefined : skillsDir, options.noTools ? "none" : "project");
   const resourceRoot = mkdtempSync(join(tmpdir(), "pi-dual-resources-"));
   let broker: Awaited<ReturnType<typeof createProviderBroker>> | undefined;
   let runtime: AgentSessionRuntime | undefined;
@@ -211,10 +213,13 @@ export async function createRoleRuntime(
 
     const sessions = new WeakMap<AgentSession, ManagedSession>();
     const sessionBrowsers = new WeakMap<AgentSession, ProjectBrowser>();
+    const sessionServers = new WeakMap<AgentSession, LocalServers>();
     const factory: CreateAgentSessionRuntimeFactory = async ({ cwd: runtimeCwd, sessionManager, sessionStartEvent }) => {
       if (realpathSync(runtimeCwd) !== isolation.cwd) throw new Error("Session cwd changes require a new isolated runtime.");
       const browser = !options.noTools && options.browser ? new ProjectBrowser(options.role, options.browser) : undefined;
       if (browser) browsers.add(browser);
+      const servers = !options.noTools && options.role === "B" ? new LocalServers(isolation) : undefined;
+      if (servers) localServers.add(servers);
       const tools = options.noTools ? [] : createRoleTools({ role: options.role, cwd: runtimeCwd,
         isolation, skillsDir, onMutation: options.onMutation });
       const skillsTool = tools.find(tool => tool.name === "skills");
@@ -251,7 +256,7 @@ export async function createRoleRuntime(
         noContextFiles: true, systemPrompt: "You are a coding assistant in a coordinator-controlled workspace.",
         appendSystemPrompt: [...buildRolePromptAppendix(options.role), ...(options.noTools ? [] : [buildSkillCatalogPrompt(await skillCatalog)])],
         agentsFilesOverride: () => ({ agentsFiles }),
-        extensionFactories: options.noTools ? [] : [createToolInventoryExtension({ readSkills, mcp: mcpRuntime }), ...(browser ? [browser.extensionFactory] : []), ...(mcpRuntime ? [mcpRuntime.extensionFactory] : [])]
+        extensionFactories: options.noTools ? [] : [createToolInventoryExtension({ readSkills, mcp: mcpRuntime }), ...(browser ? [browser.extensionFactory] : []), ...(servers ? [servers.extensionFactory] : []), ...(mcpRuntime ? [mcpRuntime.extensionFactory] : [])]
       });
       await resourceLoader.reload();
       const extensionErrors = resourceLoader.getExtensions().errors;
@@ -286,15 +291,16 @@ export async function createRoleRuntime(
       }
       const session = new AgentSession({ agent, sessionManager, settingsManager, cwd: runtimeCwd,
         resourceLoader, modelRuntime, usesDefaultTools: false,
-        allowedToolNames: [...tools.map((tool) => tool.name), ...(options.noTools ? [] : ["list_tools"]), ...(browser ? ["browser"] : []), ...(mcpRuntime?.getToolNames() ?? [])],
+        allowedToolNames: [...tools.map((tool) => tool.name), ...(options.noTools ? [] : ["list_tools"]), ...(browser ? ["browser"] : []), ...(servers ? ["local_server"] : []), ...(mcpRuntime?.getToolNames() ?? [])],
         excludedToolNames: ["codemode", "tool_search", "mcp__*"], baseToolsOverride: Object.fromEntries(tools.map((tool) => [tool.name, tool])),
         initialActiveToolNames: tools.map((tool) => tool.name),
         ...(sessionStartEvent ? { sessionStartEvent } : {}) });
       session.refreshContext();
-      const managed = new ManagedSession(session);
+      const managed = new ManagedSession(session, servers ? () => servers.reset() : undefined);
       assertPromptActive = () => managed.assertActive();
       sessions.set(session, managed);
       if (browser) sessionBrowsers.set(session, browser);
+      if (servers) sessionServers.set(session, servers);
       return { session, extensionsResult: resourceLoader.getExtensions(), services, diagnostics: [] };
 
     };
@@ -311,7 +317,7 @@ export async function createRoleRuntime(
       try { await next.session.bindExtensions({}); }
       catch (error) { await next.session.abort(); next.session.dispose(); await next.dispose(); throw error; }
       const previous = ownedRuntime;
-      try { await managedSession().abort(); await sessionBrowsers.get(ownedRuntime.session)?.dispose(); }
+      try { await managedSession().abort(); await sessionBrowsers.get(ownedRuntime.session)?.dispose(); await sessionServers.get(ownedRuntime.session)?.dispose(); }
       catch (error) { await next.session.abort(); next.session.dispose(); await next.dispose(); throw error; }
       managedSession().dispose();
       ownedRuntime = next;
@@ -339,14 +345,14 @@ export async function createRoleRuntime(
       dispose: () => ownedRuntime.dispose()
     };
     const binding = new RoleRuntimeBindingImpl(options.role, guardedRuntime, cwd, mcpRuntime?.getStatus, async () => {
-      await cleanupAll([...Array.from(browsers, browser => () => browser.dispose()), async () => mcpRuntime?.dispose(), () => ownedBroker.close(),
+      await cleanupAll([...Array.from(localServers, servers => () => servers.dispose()), ...Array.from(browsers, browser => () => browser.dispose()), async () => mcpRuntime?.dispose(), () => ownedBroker.close(),
         () => isolation.dispose(), () => rmSync(resourceRoot, { recursive: true, force: true })]);
     }, async () => { for (const browser of browsers) await browser.reset(); });
     await binding.rebind();
     return binding;
   } catch (error) {
     await cleanupAll([async () => runtime?.session.abort(), () => runtime?.session.dispose(), async () => runtime?.dispose(), async () => mcpRuntime?.dispose(),
-      ...Array.from(browsers, browser => () => browser.dispose()), async () => broker?.close(), () => isolation.dispose(), () => rmSync(resourceRoot, { recursive: true, force: true })]).catch(() => undefined);
+      ...Array.from(localServers, servers => () => servers.dispose()), ...Array.from(browsers, browser => () => browser.dispose()), async () => broker?.close(), () => isolation.dispose(), () => rmSync(resourceRoot, { recursive: true, force: true })]).catch(() => undefined);
     throw new Error(redactText(error instanceof Error ? error.message : "Secure runtime initialization failed."));
   }
 }

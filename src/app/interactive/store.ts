@@ -1,3 +1,4 @@
+import { initialCurrentActivity } from "./current-activity.js";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -72,6 +73,7 @@ export function createInitialInteractiveUiState(
   return {
     status,
     conversation: [],
+    currentActivity: initialCurrentActivity(),
     history: { records: [], revision: 0, warnings: [] },
     activity: {
       runtimes: {},

@@ -31,7 +31,7 @@ async function runWizard(options: SetupCliOptions | AuthCliOptions, dependencies
   const errors = dependencies.stderr ?? process.stderr;
   try {
     assertSafeProviderEnvironment();
-    const isolation = new ToolIsolation(options.cwd, "B");
+    const isolation = new ToolIsolation(options.cwd, "B", undefined, "project");
     try { isolation.verify(); } finally { isolation.dispose(); }
     const legacy = await hasLegacyOpenAiAuth(options.agentDir ?? getAgentDir());
     if (legacy) {

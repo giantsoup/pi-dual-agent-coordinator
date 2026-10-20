@@ -10,14 +10,14 @@ import { CurrentWorkspace, liveIdentity } from "../../src/app/tui/workspace.js";
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 5));
 async function setup() {
   let listener: (event: NormalizedTelemetryEvent) => void = () => {};
-  const status: CoordinatorStatusSnapshot = { operation: { kind: "running" }, cwd: "/fixture/界/é/😀", conversationMode: "planning", phase: "execution", phaseLabel: "Execution", activeRole: "B", activeRoleLabel: "Agent B", activeModelDisplay: "fixture", sessionRoot: "memory", repairCount: 0, maxReviewRounds: 3, runtimes: [], metrics: {} };
+  const status: CoordinatorStatusSnapshot = { operation: { kind: "running" }, cwd: "/fixture/界/é/😀", conversationMode: "planning", phase: "execution", phaseLabel: "Execution", activeRole: "B", activeRoleLabel: "Agent B", activeModelDisplay: "fixture", sessionRoot: "memory", repairCount: 0, maxReviewRounds: 3, runtimes: ["A", "B"].map((role) => ({ role: role === "A" ? "A" : "B", sessionId: "s", cwd: "/fixture", modelDisplay: "fixture", thinking: "off", healthy: true })), metrics: {} };
   const mutation = vi.fn(async () => {});
   const coordinator = { start: async () => {}, dispose: async () => {}, getStatus: () => status, submitUserInput: vi.fn(async () => ({ mode: "planning" as const, userResponse: "answer" })),
     approvePendingPlan: async () => ({ mode: "planning" as const, userResponse: "answer" }), discardPendingPlan: vi.fn(), getSessions: () => [], getLastHandoff: async () => ({}),
     subscribeEvents: (fn: typeof listener) => { listener = fn; return () => {}; }, subscribeRuntimeUiEvents: () => () => {}, replaceRuntime: mutation,
     getRunArchive: async () => [{ type: "message", id: "result", timestamp: "now", parentId: null, message: { role: "toolResult", toolCallId: "call-0", content: [{ type: "text", text: Array.from({ length: 400 }, (_, i) => `retained line ${i} 界 é 😀`).join("\n") }] } }] };
   const service = new HeadlessInteractiveCoordinatorService(coordinator); await service.start();
-  const emit = (type: string, details: Record<string, unknown>, extra: Partial<NormalizedTelemetryEvent> = {}) => listener({ eventType: type, details, operatorTurnId: "turn", runId: "run", role: "B", sessionId: "s", requestId: "r", timestamp: "2026-10-16T12:00:00Z", ...extra });
+  const emit = (type: string, details: Record<string, unknown>, extra: Partial<NormalizedTelemetryEvent> = {}) => { if (type === "runtime.run_started") status.activeRole = extra.role ?? "B"; listener({ eventType: type, details, operatorTurnId: "turn", runId: "run", role: "B", sessionId: "s", requestId: "r", timestamp: "2026-10-16T12:00:00Z", ...extra }); };
   emit("ui.turn_started", { objective: "Inspect tools" }); emit("runtime.run_started", { provenance: "coordinator_handoff" });
   for (let i = 0; i < 12; i++) { emit("pi.tool_execution_start", { toolName: "read", toolCallId: `call-${i}`, toolArgs: { path: `file-${i}` } }); emit("pi.tool_execution_end", { toolName: "read", toolCallId: `call-${i}`, isError: i === 4 }); }
   const terminal = new MemoryTerminal(); const tui = new TuiMainScreen(terminal);
@@ -199,11 +199,12 @@ describe("selected workspace through shared history service", () => {
     } finally { await service.dispose(); }
   });
   it.each([[80, 24], [120, 40]])("keeps check-ins before resumed tools and activity last at %sx%s", async (width, height) => {
-    const { app, service, terminal, emit } = await setup();
+    const { app, service, terminal, emit, status } = await setup();
     try {
       terminal.columns = width; terminal.rows = height;
       emit("runtime.run_started", { provenance: "coordinator_check_in" }, { runId: "check", role: "A" });
       emit("runtime.run_finished", { outcome: "completed" }, { runId: "check", role: "A" });
+      status.activeRole = "B";
       emit("pi.tool_execution_start", { toolName: "read", toolCallId: "resumed", toolArgs: { path: "after-check.txt" } });
       emit("workflow.execution_progress", { workflowId: "workflow", handoffId: "handoff", iteration: 1,
         completedTurns: 10, checkIn: { kind: "scheduled", afterTurn: 20 } });
@@ -219,8 +220,8 @@ describe("selected workspace through shared history service", () => {
       app.handleInput("\x1bOQ"); // F2 opens the optional activity panel.
       const activity = strip(app.render(width).join("\n")).split("\n");
       expect(activity.findIndex((line) => line.includes("Active: B - Junior"))).toBeGreaterThan(activity.findIndex((line) => line.includes("Activity")));
-      expect(activity.some((line) => line.includes("Now:"))).toBe(true);
-      expect(activity.slice(activity.findIndex((line) => line.includes("Now:")) + 1).join("\n")).not.toContain("[completed]");
+      expect(activity.some((line) => line.includes("Now:"))).toBe(false);
+      expect(activity.slice(activity.findIndex((line) => line.includes("Active: B - Junior")) + 1).join("\n")).not.toContain("[completed]");
       expect(activity.join("\n")).toContain("B turns: 10 successful / A check at 20");
     } finally { await service.dispose(); }
   });
@@ -265,7 +266,7 @@ describe("selected workspace through shared history service", () => {
   it.each(["idle", "completed", "failed", "cancelled", "timed_out", "cancelling"] as const)("never calls cached activeRole running in %s", async (kind) => {
     const { service } = await setup();
     const state = { ...service.getState(), operation: { kind } };
-    expect(liveIdentity(state).text).toBe(kind === "cancelling" ? "Cancelling" : "Idle");
+    expect(liveIdentity({ ...state, currentActivity: { ...state.currentActivity, owner: { kind: "coordinator" }, action: kind === "cancelling" ? { kind: "cancelling" } : { kind: "idle" } } }).text).toBe(kind === "cancelling" ? "Cancelling" : "Idle");
     await service.dispose();
   });
   it("loads further output ranges and keeps printable shortcuts scoped to inspection", async () => {
@@ -348,9 +349,9 @@ it("shows unread prose while following is paused before a role run completes", a
   const state = service.getState(); workspace.render(state, 80, 17);
   workspace.handleInput("\x1b[H", state);
   workspace.render({ ...state, liveStream: { role: "B", sessionId: "s", startedAt: new Date().toISOString(), text: "New prose while the run is still active" } }, 80, 17);
-  expect(workspace.pointer(state)).toContain("1 unread");
+  expect(workspace.viewStatus(state).unread).toBe(1);
   workspace.handleInput("\x1b[F", state);
-  expect(workspace.pointer(state)).not.toContain("unread");
+  expect(workspace.viewStatus(state).unread).toBe(0);
   await service.dispose();
 });
 
@@ -450,14 +451,14 @@ it("preserves paused anchors and folds on dismissal and never reads covered outp
     workspace.handleInput(" ", state);
     workspace.followLatest(state); screen(); workspace.openHistory(state);
     const updated = { ...state, history: { ...state.history, revision: state.history.revision + 2 }, liveStream: { ...state.liveStream, text: state.liveStream.text + "\nhidden" } };
-    screen(updated); expect(workspace.pointer(updated)).toContain("3 unread");
+    screen(updated); expect(workspace.viewStatus(updated).unread).toBe(3);
     workspace.handleInput("g", updated); workspace.handleInput("\x1b[F", updated);
-    screen(updated); expect(workspace.pointer(updated)).toContain("3 unread");
-    workspace.close(); screen(updated); expect(workspace.pointer(updated)).not.toContain("unread");
+    screen(updated); expect(workspace.viewStatus(updated).unread).toBe(3);
+    workspace.close(); screen(updated); expect(workspace.viewStatus(updated).unread).toBe(0);
     workspace.scroll(-1, updated); workspace.openHistory(updated);
     const later = { ...updated, history: { ...updated.history, revision: updated.history.revision + 1 } };
     screen(later); workspace.close(); screen(later);
-    expect(workspace.pointer(later)).toContain("1 unread");
+    expect(workspace.viewStatus(later).unread).toBe(1);
   } finally { await service.dispose(); }
 });
 
@@ -538,11 +539,11 @@ it("does not acknowledge live output covered by contextual help", async () => {
     const state = service.getState(); workspace.render(state, 80, 17);
     await service.dispatch({ type: "open_help" });
     const covered = { ...service.getState(), history: { ...state.history, revision: state.history.revision + 1 } };
-    workspace.render(covered, 80, 17); expect(workspace.pointer(covered)).toContain("1 unread");
-    workspace.render(covered, 120, 30); expect(workspace.pointer(covered)).toContain("1 unread");
+    workspace.render(covered, 80, 17); expect(workspace.viewStatus(covered).unread).toBe(1);
+    workspace.render(covered, 120, 30); expect(workspace.viewStatus(covered).unread).toBe(1);
     await service.dispatch({ type: "close_modal" });
     const visible = { ...service.getState(), history: covered.history };
-    workspace.render(visible, 80, 17); expect(workspace.pointer(visible)).not.toContain("unread");
+    workspace.render(visible, 80, 17); expect(workspace.viewStatus(visible).unread).toBe(0);
   } finally { await service.dispose(); }
 });
 
@@ -566,12 +567,12 @@ it("keeps the visible read baseline when history opens after hidden modal activi
     const original = service.getState(); workspace.render(original, 80, 17);
     await service.dispatch({ type: "open_help" });
     const covered = { ...service.getState(), history: { ...original.history, revision: original.history.revision + 2 } };
-    workspace.render(covered, 80, 17); expect(workspace.pointer(covered)).toContain("2 unread");
+    workspace.render(covered, 80, 17); expect(workspace.viewStatus(covered).unread).toBe(2);
     await service.dispatch({ type: "close_modal" });
     const beforeRender = { ...service.getState(), history: covered.history };
     workspace.openHistory(beforeRender);
     const updated = { ...beforeRender, history: { ...beforeRender.history, revision: original.history.revision + 5 } };
-    workspace.render(updated, 80, 17); expect(workspace.pointer(updated)).toContain("5 unread");
+    workspace.render(updated, 80, 17); expect(workspace.viewStatus(updated).unread).toBe(5);
   } finally { await service.dispose(); }
 });
 
@@ -581,10 +582,26 @@ it("keeps unread activity readable at 80 columns while long tool activity is liv
     app.render(80); app.handleInput("ab"); app.handleInput("\x1b[D"); app.handleInput("\x1bOS");
     emit("pi.tool_execution_start", { toolName: "read", toolCallId: "long-live-call", toolArgs: { path: "long-active-path/".repeat(20) } });
     const lines = strip(app.render(80).join("\n")).split("\n");
-    const live = lines.find((line) => line.startsWith("Active: B - Junior"));
-    expect(live).toContain("unread, l current"); expect(live).not.toContain("Esc then l");
+    const live = lines.find((line) => line.includes("unread / l current"));
+    expect(live).toBeDefined(); expect(live).not.toContain("Esc then l");
     app.handleInput("l"); expect(strip(app.render(80).join("\n"))).toContain("Following");
     app.handleInput("\x1be"); app.handleInput("X");
     expect(stripTerminalSequences(app.render(80).join("\n"))).toContain("aXb");
+  } finally { await service.dispose(); }
+});
+
+it("does not acknowledge narrative hidden by a compact viewport or controls", async () => {
+  const { service } = await setup();
+  try {
+    const workspace = new CurrentWorkspace(service, () => {});
+    const original = service.getState();
+    workspace.render(original, 80, 12);
+    const updated = { ...original, history: { ...original.history, revision: original.history.revision + 2 } };
+    workspace.render(updated, 40, 2);
+    expect(workspace.viewStatus(updated, "controls").unread).toBe(2);
+    workspace.viewStatus(updated, "controls");
+    expect(workspace.viewStatus(updated, "controls").unread).toBe(2);
+    workspace.render(updated, 80, 12);
+    expect(workspace.viewStatus(updated).unread).toBe(0);
   } finally { await service.dispose(); }
 });

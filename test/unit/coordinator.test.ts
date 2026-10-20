@@ -816,9 +816,9 @@ Proposed approach below.
     const runtimeB = inProgress.runtimes.find((runtime) => runtime.role === "B");
     expect(inProgress.phase).toBe("execution");
     expect(inProgress.currentActivity).toBe("reading src/app/repl-progress.ts");
-    expect(inProgress.currentReason).toBe("verifying the target area before editing");
+    expect(inProgress.currentReason).toBeUndefined();
     expect(runtimeB?.currentActivity).toBe("reading src/app/repl-progress.ts");
-    expect(runtimeB?.currentReason).toBe("verifying the target area before editing");
+    expect(runtimeB?.currentReason).toBeUndefined();
     expect(runtimeB?.lastToolName).toBe("read");
 
     releaseExecution?.();

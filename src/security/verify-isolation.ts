@@ -104,7 +104,7 @@ export async function verifyCredentialIsolation(): Promise<IsolationReport> {
         ];
         for (const command of commands) await invoke("bash", { command });
       }
-      const isolation = new ToolIsolation(workspace, role);
+      const isolation = new ToolIsolation(workspace, role, undefined, "project");
       try {
         isolation.verify(); check(true, "startup", `${role} sandbox starts`);
         // Actual process inspection must fail, beyond merely removing the secret environment.
@@ -127,6 +127,7 @@ export async function verifyCredentialIsolation(): Promise<IsolationReport> {
         check(text.includes("MCP_WORKSPACE_OK") === false, "mcp", "MCP reports capabilities through structured output");
         check(text.includes('\\"file\\":\\"denied\\"'), "mcp", `${role} MCP protected file denied`);
         check(text.includes('\\"keychain\\":\\"denied\\"'), "mcp", `${role} MCP Keychain denied`);
+        check(text.includes('\\"network\\":\\"denied\\"'), "mcp", `${role} MCP network remains denied`);
         check(text.includes(`\\"write\\":\\"${role === "A" ? "denied" : "allowed"}\\"`), "roles", `${role} MCP workspace mutation policy`);
         check(!text.includes("PI_DUAL_ISOLATION_DUMMY"), "environment", `${role} MCP allowlisted env`);
         inspect(pool.getStatusSnapshot(), `${role} MCP status`);
@@ -210,7 +211,7 @@ export async function verifyCredentialIsolation(): Promise<IsolationReport> {
         const probeSession = async () => {
           if (!(binding.session instanceof ManagedSession) || !(binding.session.piSession instanceof AgentSession)) throw new Error("Actual Pi session required");
           const piSession = binding.session.piSession;
-          const expected = role === "A" ? ["read", "grep", "find", "ls", "skills", "list_tools", "mcp", "probe"] : ["read", "bash", "edit", "write", "skills", "list_tools", "mcp", "probe"];
+          const expected = role === "A" ? ["read", "grep", "find", "ls", "skills", "list_tools", "mcp", "probe"] : ["read", "bash", "edit", "write", "skills", "list_tools", "local_server", "mcp", "probe"];
           const assertLoadout = () => {
             check(JSON.stringify(piSession.getAllTools().map((tool) => tool.name).sort()) === JSON.stringify([...expected].sort()), "registry", `${role} exact complete registry`);
             check(JSON.stringify(piSession.getActiveToolNames().sort()) === JSON.stringify([...expected].sort()), "registry", `${role} exact active registry`);

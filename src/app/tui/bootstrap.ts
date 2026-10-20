@@ -51,7 +51,7 @@ async function runTerminal(service: InteractiveCoordinatorService, dependencies:
   const shutdown = () => { void service.dispatch({ type: "quit" }).finally(() => resolveExit?.()); };
   const signals = ["SIGTERM", "SIGHUP", "SIGINT"] as const;
   for (const signal of signals) process.on(signal, shutdown);
-  const elapsedTimer = setInterval(() => { if (service.getState().operation.kind === "running" || service.getState().modal.kind === "model_loading") tui.requestRender(); }, 500);
+  const elapsedTimer = setInterval(() => { if (["running", "cancelling"].includes(service.getState().operation.kind) || service.getState().modal.kind === "model_loading") tui.requestRender(); }, 500);
   terminal.write("\u001B[?1049h");
   try {
     tui.start();

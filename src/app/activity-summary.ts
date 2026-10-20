@@ -8,7 +8,7 @@ import type { NormalizedTelemetryEvent } from "../types/telemetry.js";
 export interface ActivitySnapshot {
   role: Role | "coordinator";
   phase: CoordinatorUiPhase;
-  kind: "thinking" | "tool" | "workflow" | "repair" | "planning" | "idle";
+  kind: "thinking" | "writing" | "tool_preparation" | "waiting" | "tool" | "workflow" | "repair" | "planning" | "idle";
   label: string;
   target?: string | undefined;
   reason?: string | undefined;
@@ -182,18 +182,15 @@ function deriveMessageUpdate(
   event: NormalizedTelemetryEvent,
   status: CoordinatorStatusSnapshot
 ): ActivityUpdate | undefined {
-  const assistantEventType = event.details.assistantEventType;
-  if (assistantEventType !== "text_delta" && assistantEventType !== "thinking_delta") {
-    return undefined;
-  }
-
-  const snapshot = createReasoningSnapshot(event.role, status.phase, {
-    timestamp: event.timestamp,
-    workflowId: stringValue(event.details.workflowId),
-    iteration: numberValue(event.details.iteration) ?? status.currentIteration
-  });
-
-  return snapshot ? { role: event.role, snapshot } : undefined;
+  const type = event.details.assistantEventType;
+  const kind = type === "thinking_start" || type === "thinking_delta" ? "thinking"
+    : type === "text_start" || type === "text_delta" ? "writing"
+    : type === "toolcall_start" || type === "toolcall_delta" ? "tool_preparation"
+    : type === "thinking_end" || type === "text_end" || type === "toolcall_end" ? "waiting" : undefined;
+  if (!kind) return undefined;
+  const labels = { thinking: "thinking", writing: "writing a response", tool_preparation: "preparing a tool call", waiting: "waiting for the next model event" };
+  return { role: event.role, snapshot: { role: event.role, phase: status.phase, kind, label: labels[kind],
+    workflowId: stringValue(event.details.workflowId), iteration: numberValue(event.details.iteration) ?? status.currentIteration, startedAt: event.timestamp } };
 }
 
 function buildToolUpdate(
@@ -209,12 +206,8 @@ function buildToolUpdate(
   const runtimeStatus = findRuntimeStatus(status, event.role);
   const mcpSummary = summarizeMcpToolActivity(toolName, event.details.toolArgs, status, event.role);
   const summary = mcpSummary ?? summarizeToolActivity(toolName, event.details.toolArgs, status.cwd);
-  const sanitizedArgs = sanitizeToolArgs(toolName, event.details.toolArgs, status.cwd);
-  const reason = selectToolReason({
-    phase: status.phase,
-    toolName,
-    command: stringValue(sanitizedArgs.command) ?? runtimeStatus?.currentTarget
-  });
+  const reason = isMachineBlockPseudoTool(toolName)
+    ? "machine blocks must be emitted as fenced assistant text, not invoked as tools" : undefined;
   const target =
     summary.target && !summary.target.startsWith("(")
       ? summary.target
@@ -446,114 +439,6 @@ function derivePlanningUpdate(
     default:
       return undefined;
   }
-}
-
-function createReasoningSnapshot(
-  role: Role,
-  phase: CoordinatorUiPhase,
-  options: {
-    timestamp: string;
-    workflowId?: string | undefined;
-    iteration?: number | undefined;
-  }
-): ActivitySnapshot | undefined {
-  switch (phase) {
-    case "planning":
-      return {
-        role,
-        phase,
-        kind: "thinking",
-        label: "inspecting the codebase",
-        reason: "inspecting the codebase before deciding whether execution is necessary",
-        workflowId: options.workflowId,
-        iteration: options.iteration,
-        startedAt: options.timestamp
-      };
-    case "execution":
-      return {
-        role,
-        phase,
-        kind: "thinking",
-        label: "gathering local context",
-        reason: "gathering local context before making changes",
-        workflowId: options.workflowId,
-        iteration: options.iteration,
-        startedAt: options.timestamp
-      };
-    case "review":
-      return {
-        role,
-        phase,
-        kind: "thinking",
-        label: `reviewing iteration ${options.iteration ?? 1}`,
-        reason:
-          "reviewing Agent B's completed iteration before deciding whether to finalize or hand off another revision",
-        workflowId: options.workflowId,
-        iteration: options.iteration,
-        startedAt: options.timestamp
-      };
-    case "repair":
-      return {
-        role,
-        phase,
-        kind: "repair",
-        label: "repairing the workflow response",
-        reason: "correcting a malformed workflow response to restore the coordinator loop",
-        workflowId: options.workflowId,
-        iteration: options.iteration,
-        startedAt: options.timestamp
-      };
-  }
-}
-
-function selectToolReason(options: {
-  phase: CoordinatorUiPhase;
-  toolName: string;
-  command?: string | undefined;
-}): string | undefined {
-  if (options.phase === "repair") {
-    return "correcting a malformed workflow response to restore the coordinator loop";
-  }
-
-  if (isMachineBlockPseudoTool(options.toolName)) {
-    return "machine blocks must be emitted as fenced assistant text, not invoked as tools";
-  }
-
-  if (options.phase === "review") {
-    return "reviewing Agent B's completed iteration before deciding whether to finalize or hand off another revision";
-  }
-
-  if (options.phase === "planning") {
-    if (isFileInspectionTool(options.toolName)) {
-      return "reading the relevant files before proposing a concrete change";
-    }
-    return "inspecting the codebase before deciding whether execution is necessary";
-  }
-
-  if (options.phase !== "execution") {
-    return undefined;
-  }
-
-  if (isVerificationTool(options.toolName, options.command)) {
-    return "running focused verification after changes";
-  }
-
-  if (isFileInspectionTool(options.toolName)) {
-    return "verifying the target area before editing";
-  }
-
-  return undefined;
-}
-
-function isFileInspectionTool(toolName: string): boolean {
-  return toolName === "read" || toolName === "grep" || toolName === "find" || toolName === "ls";
-}
-
-function isVerificationTool(toolName: string, command?: string): boolean {
-  if (toolName !== "bash" || !command) {
-    return false;
-  }
-  return /\b(test|tests|vitest|jest|pytest|check|lint|verify|build)\b/i.test(command);
 }
 
 function isMachineBlockPseudoTool(toolName: string): boolean {

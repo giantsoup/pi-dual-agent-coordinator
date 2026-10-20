@@ -4,6 +4,7 @@ import { tmpdir, homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Role } from "../types/role.js";
+import { projectNetworkProfile } from "./local-network.js";
 
 let root = dirname(fileURLToPath(import.meta.url));
 while (!existsSync(join(root, "package.json"))) {
@@ -48,7 +49,7 @@ export class ToolIsolation {
   public readonly env: Record<string, string>;
   public readonly profile: string;
 
-  public constructor(cwd: string, role: Role, skillsDir?: string) {
+  public constructor(cwd: string, role: Role, skillsDir?: string, network: "none" | "project" = "none") {
     if (process.platform !== "darwin") throw new Error("Secure tool isolation requires macOS Seatbelt. No unrestricted fallback is available.");
     this.cwd = assertWorkspaceBoundary(cwd);
     this.scratch = realpathSync(mkdtempSync(join(tmpdir(), "pi-dual-tools-")));
@@ -80,7 +81,10 @@ export class ToolIsolation {
 (deny sysctl-read (sysctl-name-regex #"^kern.proc"))
 (allow process-info* (target self))
 (deny process-info* (target others))
-(deny mach-lookup mach-register mach-priv* ipc-posix* network* system-socket)
+(deny mach-lookup mach-register mach-priv* ipc-posix* system-socket)
+${role === "B" && network === "project" ? projectNetworkProfile() : "(deny network*)"}
+${role === "B" && network === "project" ? `(allow file-read-metadata (path-ancestors "/opt/homebrew"))
+(allow file-read* (literal "/private/etc/hosts") (literal "/private/etc/ssl/openssl.cnf") (literal "/private/etc/ssl/cert.pem"))` : ""}
 (deny file-read* file-write* (subpath "/dev/ttys") (literal "/dev/tty"))
 (deny file-write* (subpath "/cores"))
 (allow signal (target self))`;

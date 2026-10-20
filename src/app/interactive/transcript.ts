@@ -6,12 +6,13 @@ import type { NormalizedTelemetryEvent } from "../../types/telemetry.js";
 import { readableAssistantOutput } from "./history-detail.js";
 
 type Run = Extract<HistoryRecord, { kind: "run" }>;
+type RunBlock = Exclude<TranscriptBlock, { kind: "milestone" }>;
 type Message = { id: string; timestamp: string; sequence: number; text: string; calls: string[] };
 
 /** Display-only live overlay. Committed bodies reload from the read-only Pi archive. */
 export class RequestTranscript {
   private readonly live = new Map<string, Message[]>();
-  private readonly archived = new Map<string, TranscriptBlock[]>();
+  private readonly archived = new Map<string, RunBlock[]>();
   private readonly pending = new Map<string, Promise<void>>();
   private readonly unavailable = new Map<string, string>();
   private generation = 0;
@@ -52,8 +53,8 @@ export class RequestTranscript {
     if (!message.calls.includes(event.details.toolCallId)) message.calls.push(event.details.toolCallId);
   }
 
-  public blocks(records: HistoryRecord[], turnId: string): TranscriptBlock[] {
-    const blocks: TranscriptBlock[] = [];
+  public blocks(records: HistoryRecord[], turnId: string, milestones: import("../../types/history.js").TranscriptMilestone[] = []): TranscriptBlock[] {
+    const blocks: TranscriptBlock[] = milestones.filter((block) => block.turnId === turnId);
     for (const run of records) {
       if (run.kind !== "run" || run.parentId !== turnId) continue;
       const calls = records.filter((record): record is Extract<HistoryRecord, { kind: "tool" }> => record.kind === "tool" && record.parentId === run.id);
@@ -68,7 +69,7 @@ export class RequestTranscript {
     const grouped: TranscriptBlock[] = [];
     for (const block of blocks.sort(compareTranscriptTime)) {
       const previous = grouped.at(-1);
-      const boundary = previous && records.some((record) => record.kind === "run" && record.id !== block.runId && record.sequence !== undefined && record.sequence > previous.sequence && record.sequence < block.sequence);
+      const boundary = previous && records.some((record) => record.kind === "run" && (block.kind === "milestone" || record.id !== block.runId) && record.sequence !== undefined && record.sequence > previous.sequence && record.sequence < block.sequence);
       if (block.kind === "tools" && previous?.kind === "tools" && previous.runId === block.runId && !boundary) previous.callIds = [...new Set([...previous.callIds, ...block.callIds])];
       else grouped.push(block.kind === "tools" ? { ...block, callIds: [...block.callIds] } : block);
     }
@@ -132,8 +133,8 @@ function sequenceAtTime(records: HistoryRecord[], timestamp: string, run: Run): 
   return next?.sequence !== undefined ? next.sequence - 0.5 : (previous?.sequence ?? run.sequence ?? 0) + 0.5;
 }
 
-function projectMessages(run: Run, messages: Message[], calls: Extract<HistoryRecord, { kind: "tool" }>[]): TranscriptBlock[] {
-  const blocks: TranscriptBlock[] = [];
+function projectMessages(run: Run, messages: Message[], calls: Extract<HistoryRecord, { kind: "tool" }>[]): RunBlock[] {
+  const blocks: RunBlock[] = [];
   const included = new Set<string>();
   for (const message of messages) {
     const text = readableAssistantOutput(message.text);

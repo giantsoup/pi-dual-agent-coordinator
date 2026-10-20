@@ -48,22 +48,24 @@ export class ModelPicker {
   public render(width: number, height: number, busy: boolean, pendingPlan: boolean): string[] {
     const { role, models } = this.catalog;
     const current = models.find((model) => model.canonical === this.catalog.currentModel)?.name ?? this.catalog.currentModel ?? "None";
+    const compact = height < 17;
     const body = [role === "A" ? "[A Agent A / Planner]    B Agent B / Executor" : " A Agent A / Planner    [B Agent B / Executor]",
-      `Current: ${current} / ${this.catalog.currentThinking ?? "off"}`, ""];
-    const rows = Math.max(1, Math.floor((height - 11) / 2));
+      `Current: ${current} / ${this.catalog.currentThinking ?? "off"}`];
+    if (!compact) body.push("");
+    const rows = Math.max(1, Math.floor((height - (compact ? 8 : 10)) / (compact ? 1 : 2)));
     const start = Math.max(0, Math.min(Math.max(0, models.length - rows), this.index - Math.floor(rows / 2)));
     for (const [offset, model] of models.slice(start, start + rows).entries()) {
       const selected = start + offset === this.index;
       const marker = model.canonical === this.catalog.currentModel ? " / Current" : "";
       const state = role === "B" ? model.disabledReason ? " / Unavailable" : model.loaded ? " / Ready" : " / Not loaded" : "";
-      body.push(paintRole(`${selected ? ">" : " "} ${model.name}${marker}${state}`, selected ? role : undefined),
-        `  ${truncateToWidth(model.disabledReason ?? model.description, Math.max(1, width - 6), "…")}`);
+      body.push(paintRole(`${selected ? ">" : " "} ${model.name}${marker}${state}`, selected ? role : undefined));
+      if (!compact) body.push(`  ${truncateToWidth(model.disabledReason ?? model.description, Math.max(1, width - 6), "…")}`);
     }
     if (!models.length) body.push("No downloaded models. Download a tool-capable LLM in LM Studio.", "R refreshes the list.");
-    while (body.length < 3 + rows * 2) body.push("");
+    while (body.length < (compact ? 2 : 3) + Math.min(rows, models.length) * (compact ? 1 : 2)) body.push("");
     body.push(`Reasoning: ${this.levels().map((level) => this.reasoning === level ? `[${capitalize(level)}]` : capitalize(level)).join("   ")}`);
     body.push(`[${this.remember ? "x" : " "}] Remember after restart${models.length > rows ? `    ${this.index + 1}/${models.length}` : ""}`,
-      busy ? "Finish work, or close and use Controls > Cancel work." : pendingPlan ? "Changing settings clears the pending plan." : "Conversation and draft are preserved.",
+      ...(!compact ? [busy ? "Finish work, or close and use Controls > Cancel work." : pendingPlan ? "Changing settings clears the pending plan." : "Conversation and draft are preserved."] : []),
       role === "A" ? "↑/↓ model | ←/→ reasoning | Enter apply" : "↑/↓ model | ←/→ reasoning | Enter load and apply",
       "a/b agent | s remember | r refresh | h help | Esc back");
     return frame("Models", body, width, Math.min(height, body.length + 2), role);

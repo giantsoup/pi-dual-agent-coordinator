@@ -20,7 +20,7 @@ export function createDirectToolNamePlan(options: {
   toolSets: DirectToolMetadataSet[];
 }): Map<string, Map<string, string>> {
   const plan = new Map<string, Map<string, string>>();
-  const reserved = new Set([...getAllowedToolNames(options.role), "mcp", "skills", "list_tools", "browser", "codemode", "tool_search"]);
+  const reserved = new Set([...getAllowedToolNames(options.role), "mcp", "skills", "list_tools", "browser", "local_server", "codemode", "tool_search"]);
   const occurrences = new Map<string, number>();
 
   for (const set of options.toolSets) {

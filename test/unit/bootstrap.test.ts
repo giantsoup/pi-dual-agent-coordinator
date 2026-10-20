@@ -391,7 +391,7 @@ describe("bootstrap repl", () => {
   it("selects the TUI path by default on TTY when --plain is not set", async () => {
     const service = createService({
       status: createStatusSnapshot(),
-      conversation: [],
+      conversation: [], currentActivity: { action: { kind: "idle" }, owner: { kind: "coordinator" }, phase: "Planning", recent: [] },
       activity: { runtimes: {}, history: {} },
       history: { records: [], revision: 0, warnings: [] },
       modal: { kind: "none" },

@@ -16,7 +16,7 @@ interface HistoryBase {
 }
 export type HistoryRecord =
   | (HistoryBase & { kind: "turn"; requestIds: string[]; planId?: string | undefined; workflowId?: string | undefined; execution?: ExecutionProgress | undefined; responseProgress?: ResponseProgress | undefined })
-  | (HistoryBase & { kind: "run"; parentId: string; role: Role; sessionId: string; sessionFile?: string | undefined; branchId?: string | undefined; requestId?: string | undefined; workflowId?: string | undefined; handoffId?: string | undefined; phase: string })
+  | (HistoryBase & { kind: "run"; parentId: string; role: Role; sessionId: string; sessionFile?: string | undefined; branchId?: string | undefined; requestId?: string | undefined; workflowId?: string | undefined; handoffId?: string | undefined; phase: string; reviewDisposition?: "approved" | "revision_requested" | "blocked" | undefined })
   | (HistoryBase & { kind: "tool"; parentId: string; role: Role; sessionId: string; callId: string; toolName: string; request: string; preview: string });
 export interface HistorySnapshot {
   records: HistoryRecord[];
@@ -24,6 +24,7 @@ export interface HistorySnapshot {
   resetId?: string | undefined;
   revision: number;
   warnings: string[];
+  milestones?: TranscriptMilestone[] | undefined;
 }
 export interface HistoryDetail {
   recordId: string;
@@ -33,7 +34,17 @@ export interface HistoryDetail {
   totalLines: number;
   reason?: string | undefined;
 }
-export type TranscriptBlock = {
+export interface TranscriptMilestone {
+  kind: "milestone";
+  id: string;
+  turnId: string;
+  timestamp: string;
+  sequence: number;
+  label: string;
+  eventType: string;
+  workflowId?: string | undefined;
+}
+export type TranscriptBlock = TranscriptMilestone | ({
   id: string;
   runId: string;
   timestamp: string;
@@ -41,5 +52,5 @@ export type TranscriptBlock = {
 } & (
   | { kind: "response"; text: string }
   | { kind: "tools"; callIds: string[] }
-);
+));
 export const roleLabel = (role: Role): string => role === "A" ? "A - Senior" : "B - Junior";

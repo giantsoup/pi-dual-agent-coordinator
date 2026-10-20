@@ -32,7 +32,7 @@ export async function inspectRuntimeSetup(options: RuntimeSetupOptions): Promise
   });
   await test("Provider environment", () => { assertSafeProviderEnvironment(); return "No plaintext OpenAI key, endpoint, proxy, or Node injection overrides."; });
   for (const role of ["A", "B"] as const) await test(`Agent ${role} OS isolation`, () => {
-    const isolation = new ToolIsolation(cwd, role);
+    const isolation = new ToolIsolation(cwd, role, undefined, "project");
     try { isolation.verify(); return "Seatbelt active; workspace is separate from trusted code and credential storage."; }
     finally { isolation.dispose(); }
   });

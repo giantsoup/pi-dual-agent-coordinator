@@ -1,10 +1,12 @@
+import { renderCurrentActivity } from "./current-activity.js";
 import { roleLabel } from "../../types/history.js";
-import { CurrentWorkspace, liveIdentity, paintRole, type WorkspaceFocus, frame } from "./workspace.js";
+import { CurrentWorkspace, paintRole, type WorkspaceFocus, frame } from "./workspace.js";
 import { bindingMatches, browsingInput, controlActions, contextualHelp, footerBindings, type ControlAction } from "./bindings.js";
 import { safeDisplayText } from "../../security/display-text.js";
 import { ModelPicker } from "./model-picker.js";
 import {
   Editor,
+  CURSOR_MARKER,
   SelectList,
   CombinedAutocompleteProvider,
   matchesKey,
@@ -61,7 +63,6 @@ export class CoordinatorTuiApp implements Component, Focusable {
   private showActivity = false;
   private historyPaste = false;
   private historyPasteTail = "";
-  private overlay: ReturnType<TUI["showOverlay"]> | undefined;
   private historyDraft: string | undefined;
   private selection: SelectList | undefined;
   private modalViewport = { width: 1, height: 1 };
@@ -261,32 +262,36 @@ export class CoordinatorTuiApp implements Component, Focusable {
     this.editor.focused =
       this.focused && !this.controls && state.modal.kind === "none" && this.paneFocus === "editor";
 
-    const live = liveIdentity(state);
     const headerLines = [padLine(`pi-dual  ${safeDisplayText(state.status.cwd)} | ${state.status.phaseLabel}`, width)];
     const footerLines = this.controls
       ? [padLine(this.controls.kind === "menu" ? "Controls | Letter or Up/Down + Enter | Esc back" : "Quit? y confirm | n or Esc back", width), padLine("Your draft is preserved while this menu is open.", width)]
       : renderFooter(state, width, this.transientHint, this.paneFocus);
-    const editorLines = this.editor.render(width);
-    const availableMainHeight = Math.max(1, this.terminal.rows - headerLines.length - footerLines.length - editorLines.length - 1);
-    const activityHeight = this.showActivity ? Math.min(8, Math.max(3, Math.floor(availableMainHeight * .27))) : 0;
-    const bodyHeight = Math.max(1, availableMainHeight - activityHeight);
-    this.workspaceBounds = { left: 2, top: headerLines.length + 2, width: Math.max(0, width - 2), height: Math.max(0, bodyHeight - 2) };
-    const mainLines = this.controls ? this.renderControls(width, availableMainHeight) : [...this.workspace.render(state, width, bodyHeight), ...(this.showActivity ? frame(`Activity${this.paneFocus === "activity" ? " [focus]" : ""}`, selectPanelViewport(renderActivity(state, width - 2), activityHeight, "bottom", this.activityScrollOffset).lines, width, activityHeight) : [])];
-
-    const liveLine = paintRole(padLine(this.workspace.pointer(state), width), live.role);
-    let lines = [...headerLines, ...mainLines, liveLine, ...editorLines, ...footerLines];
-    lines = normalizeScreen(lines, width, this.terminal.rows);
-
-    if (width < 80 || this.terminal.rows < 24) {
-      lines = normalizeScreen([
-        padLine("Compact terminal. Resize to 80x24. Esc controls; /quit exits.", width),
-        ...mainLines.slice(0, Math.max(0, this.terminal.rows - editorLines.length - 3)),
-        ...editorLines,
-        ...footerLines
-      ], width, this.terminal.rows);
-    }
+    const editorLines = this.renderEditor(width, Math.max(1, this.terminal.rows - 6));
+    const available = Math.max(0, this.terminal.rows - headerLines.length - footerLines.length - editorLines.length);
+    const panelHeight = Math.min(width >= 100 && this.terminal.rows >= 30 ? 10 : width >= 80 && this.terminal.rows >= 24 ? 7 : 3, available);
+    const bodyHeight = Math.max(0, available - panelHeight);
+    const diagnosticsHeight = this.showActivity && !this.controls && state.modal.kind === "none" ? Math.min(8, Math.max(0, bodyHeight - 4)) : 0;
+    const narrativeHeight = bodyHeight - diagnosticsHeight;
+    this.workspaceBounds = { left: 2, top: headerLines.length + 2, width: Math.max(0, width - 2), height: Math.max(0, narrativeHeight - 2) };
+    this.modalViewport = { width, height: bodyHeight };
+    const mainLines = bodyHeight === 0 ? [] : this.controls ? this.renderControls(width, bodyHeight)
+      : state.modal.kind !== "none" ? this.renderModalBody(state, width, bodyHeight)
+      : [...this.workspace.render(state, width, narrativeHeight), ...(diagnosticsHeight ? frame(`Activity${this.paneFocus === "activity" ? " [focus]" : ""}`, selectPanelViewport(renderActivity(state, width - 2), diagnosticsHeight, "bottom", this.activityScrollOffset).lines, width, diagnosticsHeight) : [])];
+    const view = this.workspace.viewStatus(state, this.controls ? "controls" : narrativeHeight < 6 ? "compact" : false);
+    const panel = renderCurrentActivity(state, width, panelHeight, performance.now(), view);
+    const lines = normalizeScreen([...headerLines, ...fitBody(mainLines, width, bodyHeight), ...panel, ...editorLines, ...footerLines], width, this.terminal.rows);
 
     return lines;
+  }
+
+  private renderEditor(width: number, height: number): string[] {
+    const focused = this.editor.focused;
+    // Measure Pi's cursor row while a body view owns focus, then omit the hardware marker.
+    this.editor.focused = true;
+    try {
+      const lines = editorViewport(this.editor.render(width), height);
+      return focused ? lines : lines.map((line) => line.replaceAll(CURSOR_MARKER, ""));
+    } finally { this.editor.focused = focused; }
   }
 
   private openHistory(state: InteractiveUiState): void {
@@ -375,6 +380,19 @@ export class CoordinatorTuiApp implements Component, Focusable {
       return frame("Quit pi-dual?", ["Running work will be cancelled before exit.", "Unsubmitted draft text will be lost on exit.", "", "y confirm | n or Esc back"], width, height);
     }
     const selected = this.controls?.kind === "menu" ? this.controls.selected : 0;
+    if (width >= 80 && height < controlActions.length + 4) {
+      const columnWidth = Math.floor((width - 2) / 2);
+      const rows: string[] = [];
+      for (let index = 0; index < controlActions.length; index += 2) {
+        const label = (offset: number) => {
+          const item = controlActions[offset];
+          return item ? `${offset === selected ? ">" : " "} ${item.key}  ${item.label}` : "";
+        };
+        rows.push(padLine(label(index), columnWidth) + label(index + 1));
+      }
+      rows.push(controlActions[selected]?.description ?? "", "Letter or Up/Down + Enter | Esc back");
+      return frame("Controls", rows, width, height);
+    }
     const count = Math.max(1, height - 4);
     const start = Math.max(0, Math.min(selected - count + 1, controlActions.length - count));
     const body = controlActions.slice(start, start + count).map((item, index) =>
@@ -432,7 +450,6 @@ export class CoordinatorTuiApp implements Component, Focusable {
       this.modalScrollOffset = 0;
       this.selection = undefined;
       this.modelPicker = undefined; this.modelPickerKey = undefined;
-      if (this.overlay) { this.overlay.hide(); this.overlay = undefined; this.tui.setFocus(this); }
       return;
     }
 
@@ -447,39 +464,33 @@ export class CoordinatorTuiApp implements Component, Focusable {
       const selected = sameModal ? this.selection?.getSelectedItem()?.value : this.savedModals.get(state.modal.createdAt)?.selected;
       this.lastModalKey = modalKey;
       if (!sameModal) this.modalScrollOffset = this.savedModals.get(state.modal.createdAt)?.offset ?? 0;
-      this.overlay?.hide();
       const choices = state.modal.choices;
       this.selection = choices?.length ? new SelectList(choices, Math.max(1, Math.min(10, this.terminal.rows - 8)), EDITOR_THEME.selectList) : undefined;
       if (selected && choices) this.selection?.setSelectedIndex(Math.max(0, choices.findIndex((choice) => choice.value === selected)));
       if (this.selection) this.selection.onSelect = (item) => { void this.service.dispatch({ type: "select_choice", value: item.value }); };
-      this.overlay = this.tui.showOverlay({
-        render: (width) => {
-          this.modalViewport = { width, height: Math.max(3, this.terminal.rows - this.editor.render(this.terminal.columns).length - 4) };
-          const modal = this.service.getState().modal;
-          if (modal.kind === "none") return [];
-          if (this.controls) return this.renderControls(width, this.modalViewport.height);
-          if (modal.kind === "model_picker") return this.modelPicker?.render(width, Math.min(19, this.modalViewport.height), ["running", "cancelling"].includes(this.service.getState().operation.kind), Boolean(this.service.getState().pendingPlan)) ?? [];
-          if (modal.kind === "model_loading") {
-            const elapsed = Math.max(0, Math.floor((Date.now() - modal.startedAt) / 1000));
-            const spinner = ["|", "/", "-", "\\"][elapsed % 4];
-            const content = modal.cancelling && modal.progress.phase !== "restoring" ? "Cancelling… waiting for LM Studio before restoring the previous model." : modal.content;
-            const body = ["", ...wrapBlock(`${spinner} ${content}`, width - 4), "", `${elapsed}s elapsed`, "Your conversation and draft are preserved.", "", modal.cancelling ? "Restoring safely. Please wait. | q quit with confirmation" : "Esc cancel | q quit with confirmation"];
-            return frame(modal.title, body, width, Math.min(this.modalViewport.height, body.length + 2), modal.role);
-          }
-          if (modal.kind === "model_error") {
-            const height = Math.min(this.modalViewport.height, 15);
-            const choices = this.selection?.render(width - 2) ?? [];
-            const message = wrapBlock(modal.content, width - 4).slice(0, Math.max(1, height - choices.length - 5));
-            return frame(modal.title, [...message, "", ...choices, "", "↑/↓ choose | Enter select | Esc back"], width, height);
-          }
-          if (this.selection && modal.kind !== "history") return [padLine(modal.title, width), ...modal.content.split("\n").slice(0, 2).map((line) => padLine(line, width)), padLine("Up/Down choose | Enter apply | Esc close | Ctrl+C cancel", width), ...this.selection.render(width)].slice(0, this.modalViewport.height);
-          return renderModal(modal.kind === "help" ? { ...modal, content: contextualHelp(this.workspace.context) + "\n\n" + modal.content } : modal, width, this.modalViewport.height, this.modalScrollOffset);
-        },
-        invalidate() {},
-        handleInput: (data) => this.handleInput(data)
-      }, { width: state.modal.kind.startsWith("model_") ? Math.min(96, Math.max(1, this.terminal.columns - 4)) : "100%", row: 2,
-        maxHeight: Math.max(3, this.terminal.rows - this.editor.render(this.terminal.columns).length - 4), margin: { top: 2, bottom: this.editor.render(this.terminal.columns).length + 2, left: 0, right: 0 } });
     }
+  }
+
+  private renderModalBody(state: InteractiveUiState, width: number, height: number): string[] {
+    const modal = state.modal;
+    if (modal.kind === "none") return [];
+    if (this.controls) return this.renderControls(width, height);
+    if (modal.kind === "model_picker") return this.modelPicker?.render(width, Math.min(19, height), ["running", "cancelling"].includes(this.service.getState().operation.kind), Boolean(this.service.getState().pendingPlan)) ?? [];
+    if (modal.kind === "model_loading") {
+      const elapsed = Math.max(0, Math.floor((Date.now() - modal.startedAt) / 1000));
+      const spinner = process.env.TERM === "dumb" ? "*" : ["|", "/", "-", "\\"][elapsed % 4];
+      const content = modal.cancelling && modal.progress.phase !== "restoring" ? "Cancelling… waiting for LM Studio before restoring the previous model." : modal.content;
+      const body = ["", ...wrapBlock(`${spinner} ${content}`, width - 4), "", `${elapsed}s elapsed`, "Your conversation and draft are preserved.", "", modal.cancelling ? "Restoring safely. Please wait. | q quit with confirmation" : "Esc cancel | q quit with confirmation"];
+      return frame(modal.title, body, width, Math.min(height, body.length + 2), modal.role);
+    }
+    if (modal.kind === "model_error") {
+      const errorHeight = Math.min(height, 15);
+      const choices = this.selection?.render(width - 2) ?? [];
+      const message = wrapBlock(modal.content, width - 4).slice(0, Math.max(1, errorHeight - choices.length - 5));
+      return frame(modal.title, [...message, "", ...choices, "", "↑/↓ choose | Enter select | Esc back"], width, errorHeight);
+    }
+    if (this.selection && modal.kind !== "history") return [padLine(modal.title, width), ...modal.content.split("\n").slice(0, 2).map((line) => padLine(line, width)), padLine("Up/Down choose | Enter apply | Esc close | Ctrl+C cancel", width), ...this.selection.render(width)].slice(0, height);
+    return renderModal(modal.kind === "help" ? { ...modal, content: contextualHelp(this.workspace.context) + "\n\n" + modal.content } : modal, width, height, this.modalScrollOffset);
   }
 
   private handleModalInput(
@@ -545,6 +556,13 @@ function renderFooter(
   transientHint: string | undefined,
   paneFocus: PaneFocus
 ): string[] {
+  if (width < 80) {
+    const context = state.modal.kind === "model_loading" ? "Esc cancel | q quit"
+      : state.modal.kind !== "none" ? "Esc back | h help"
+      : paneFocus === "editor" ? "Enter submit | Esc controls" : "Esc controls | h help";
+    const controls = ["running", "cancelling"].includes(state.operation.kind) ? "Ctrl+C cancel | /quit exits" : "Ctrl+C clears draft; repeat exits";
+    return [padLine(context, width), padLine(controls, width)];
+  }
   if (state.modal.kind !== "none") {
     return [padLine(state.modal.kind === "model_picker" ? "Esc back | h help | a/b agent | Arrows choose | Enter apply"
       : state.modal.kind === "model_loading" ? "Esc cancel | q quit with confirmation"
@@ -563,7 +581,6 @@ function renderFooter(
 
 function renderActivity(state: InteractiveUiState, width: number): string[] {
   const lines: string[] = [];
-  const summary = selectPrimaryActivitySummary(state);
 
   if (state.pendingPlan) {
     lines.push(...wrapBlock(renderPendingPlan(state.pendingPlan.plan, state.pendingPlan.nextActionHint), width));
@@ -589,11 +606,6 @@ function renderActivity(state: InteractiveUiState, width: number): string[] {
       lines.push("  - no recent tool activity");
     }
     lines.push("");
-  }
-
-  if (summary) {
-    if (summary.reason) lines.push(...wrapBlock(`Why: ${summary.reason}`, width));
-    lines.push(`Now: ${summary.activity}`);
   }
 
   if (lines.length === 0) {
@@ -768,34 +780,6 @@ function padLine(text: string, width: number): string {
   return truncateToWidth(text.replace(/[\r\n\t]/g, " "), width, "...", true);
 }
 
-function selectPrimaryActivitySummary(
-  state: InteractiveUiState
-): { activity: string; reason?: string | undefined } | undefined {
-  const active = state.activity.active;
-  if (active) {
-    return {
-      activity: `${active.label}${active.target ? ` ${active.target}` : ""}`,
-      reason: active.reason
-    };
-  }
-
-  if (state.status.coordinatorActivity) {
-    return {
-      activity: state.status.coordinatorActivity,
-      reason: state.status.coordinatorReason
-    };
-  }
-
-  if (state.status.currentActivity) {
-    return {
-      activity: state.status.currentActivity,
-      reason: state.status.currentReason
-    };
-  }
-
-  return undefined;
-}
-
 function orderRuntimesForActivity(
   status: InteractiveUiState["status"]
 ): InteractiveUiState["status"]["runtimes"] {
@@ -808,4 +792,16 @@ function orderRuntimesForActivity(
     }
     return left.role.localeCompare(right.role);
   });
+}
+
+/** Bound only the rendered editor viewport; Pi still owns the full draft and cursor. */
+function editorViewport(lines: string[], height: number): string[] {
+  if (lines.length <= height) return lines;
+  const cursor = lines.findIndex((line) => line.includes(CURSOR_MARKER));
+  const start = Math.max(0, Math.min(lines.length - height, cursor < 0 ? 0 : cursor - Math.floor(height / 2)));
+  return lines.slice(start, start + height);
+}
+
+function fitBody(lines: string[], width: number, height: number): string[] {
+  return Array.from({ length: height }, (_, index) => padLine(lines[index] ?? "", width));
 }

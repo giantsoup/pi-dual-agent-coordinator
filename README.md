@@ -114,6 +114,18 @@ current conversation is empty. History selection changes the display only;
 new prompts continue the current conversation. Use
 `/new A` or `/new B` to reset only one agent. Cancel active work first with `/cancel`.
 
+The **Current activity** panel stays immediately above your draft, including while
+you browse history, inspect a record, or open help. It shows the observed action,
+role, model, phase, safe tool target, elapsed time, event age, and available progress.
+The action text stays steady while a small marker animates. `TERM=dumb` uses a
+static marker, and `NO_COLOR` disables role colors. Recent activity belongs to the
+current request. Hidden output remains unread until you return to visible output.
+
+The narrative retains planning, operator approval, execution, check-ins,
+continuation, revisions, and review in event order. Tool groups start folded.
+A completed run means the runtime settled. Approval and revision labels require
+coordinator decision events. The plain REPL uses the same observed activity states.
+
 During an ongoing handoff, Agent B pauses after every 10 completed model turns
 for a brief Agent A process check-in. One turn includes the model response and
 its tool results. A checks progress, repeated attempts, and drift against the
@@ -318,8 +330,32 @@ packages. Neither verifier retrieves an inference key.
 Both roles can use a native `browser` tool for explicitly configured local projects.
 Agent A navigates and inspects snapshots, screenshots, and console warnings. Agent B
 also clicks, types, selects, and presses keys after normal `/approve` authorization.
-Each role and Pi session gets its own disposable browser. Start your project server
-before requesting browser verification.
+Each role and Pi session gets its own disposable browser. After `/approve`, Agent B
+can start project servers with the managed `local_server` tool and make local TCP
+requests through sandboxed bash. Bind servers explicitly to `127.0.0.1` or `::1`, use an unused project port,
+and stop servers started for verification when finished. Public and other-host
+network connections, UDP, LM Studio port 1234, ports 5900/9222/9223, and reserved
+provider-broker ports 49152–49215 remain blocked. Agent A and generic stdio MCP
+remain network-denied. Host-local services are trusted; local proxies must not be
+used to relay public traffic. Seatbelt's `localhost` filter includes this Mac's
+own interface addresses and permits wildcard listeners, so explicit loopback
+binding is required in server commands. See the [security model](docs/security-model.md).
+
+For example, B can serve a dependency-free project on a configured origin:
+
+```json
+{"action":"start","command":"python3 -m http.server 4173 --bind 127.0.0.1 --directory unit-converter-test"}
+```
+
+Use `http://127.0.0.1:4173/`. Browser origins still require the operator policy below;
+starting a server does not grant browser access to a new origin. The tool returns
+a `serverId`; use `{"action":"status","serverId":"..."}` for recent logs and
+`{"action":"stop","serverId":"..."}` to stop it. Up to four managed servers may
+run per session. Run commands in the foreground; the coordinator manages their
+process groups and drains them on cancellation, session replacement, and disposal.
+Poll HTTP readiness from bash before opening the page. A later bash call cannot
+signal a server started in an earlier shell sandbox, so use `local_server` instead
+of detached shell jobs for servers needed across tool calls.
 
 Configure exact project origins from the built checkout with the scoped toolchain:
 
@@ -349,16 +385,20 @@ Doctor checks configuration and installation, but does not claim browser connect
 
 ```bash
 npm run verify:browser
+npm run verify:local-servers
 ```
 
 This builds the candidate, probes its browser OS boundary using dummy credentials,
 and opens a disposable HTTP/HTTPS project through real Pi sessions and Chrome.
-Inference uses fixture providers. Run the compiled scripts directly in a verified
+The local-server verifier makes B start a server, request it from bash, open it in
+Chrome, capture a screenshot, and stop it. Inference uses fixture providers.
+Run the compiled scripts directly in a verified
 trusted installation to check the installed artifact without rebuilding it:
 
 ```bash
 bin/node scripts/verify-browser-boundary.mjs
 bin/node scripts/verify-local-browser.mjs
+bin/node scripts/verify-local-servers.mjs
 ```
 
 Cancelled or failed interactions can already have changed the local app. Inspect

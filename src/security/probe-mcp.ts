@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createServer } from "node:net";
 
 const server = new McpServer({ name: "isolation-probe", version: "1" });
 server.registerTool("probe", { annotations: { readOnlyHint: true } }, async () => {
@@ -15,6 +16,11 @@ server.registerTool("probe", { annotations: { readOnlyHint: true } }, async () =
   catch { result.process = "denied"; }
   try { result.keychain = execFileSync("/usr/bin/security", ["find-generic-password", "-w", "-s", "com.pi-dual.openai.v1", "-a", process.argv[4] ?? ""], { timeout: 5000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
   catch { result.keychain = "denied"; }
+  result.network = await new Promise<string>(resolve => {
+    const listener = createServer();
+    listener.once("error", () => resolve("denied"));
+    listener.listen(0, "127.0.0.1", () => listener.close(() => resolve("allowed")));
+  });
   return { content: [{ type: "text", text: JSON.stringify(result) }] };
 });
 await server.connect(new StdioServerTransport());

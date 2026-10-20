@@ -30,6 +30,9 @@ placeholder, and LM Studio must run without API authentication. Both brokers
 require a fresh private capability, reject redirects, and limit request and
 response sizes. Agent B has no cloud fallback. Tool processes retain their
 network restrictions and cannot contact either broker or LM Studio directly.
+Provider brokers bind only within the reserved loopback TCP range 49152–49215.
+Every B project-tool sandbox denies that entire range, including brokers created
+later by another role or replacement runtime. Startup fails when the range is full.
 Treat LM Studio and its loaded model as trusted inference software; do not attach
 external execution integrations to this server for coordinator requests.
 
@@ -51,8 +54,8 @@ tools, including workspace test commands.
 
 The policy denies access to the real home and Keychain directories, outside
 credential files, other processes' information, Mach service lookup and task
-privileges, IPC, signals to other processes, terminal devices, and network
-access. Subprocesses inherit the kernel restrictions, including nested shells,
+privileges, IPC, signals to trusted processes, terminal devices, and public/other-host
+network access. Subprocesses inherit the kernel restrictions, including nested shells,
 native credential-store calls, and attempts to launch a weaker sandbox.
 Symlinks, traversal, absolute paths, and hardlinks do not grant extra access.
 Startup probes require both a running sandboxed Node process and an actual
@@ -65,9 +68,36 @@ uses `env -i` because the installed MCP transport merges a default inherited
 environment. Configured overrides are limited to PATH, LANG, LC_ALL, and TZ.
 No OpenAI key is supplied in tool environments, arguments, input, or results.
 
-Workspace tools cannot access network services, including local automation
-servers that could act as an unsandboxed deputy. Network-dependent test commands
-and stdio MCP servers that require networking will fail under this policy.
+Agent B's native workspace tools can bind, listen, and connect through host-local
+TCP. Agent A and generic stdio MCP keep their fully network-denied profiles.
+B's project profile also grants metadata for Homebrew's runtime ancestors and
+reads of the system hosts file, OpenSSL configuration, and public CA bundle so
+Python and curl can start without gaining access to private configuration files.
+Public/other-host TCP, UDP, Unix-domain networking, LM Studio port 1234,
+browser/control ports 5900/9222/9223, and provider-broker ports 49152–49215 remain
+denied. Explicit `127.0.0.1` or `::1` binds are required in project commands.
+Seatbelt's `localhost` token matches addresses belonging to this host, including
+its own LAN address, and permits wildcard binds. It does not enforce a literal
+loopback bind or prevent a wildcard listener from being exposed on the LAN.
+Host-local services are trusted deputies and may themselves have network access
+or credentials. The boundary denies direct public sockets; it cannot guarantee
+that an arbitrary local service will not relay a request. Do not use local proxies
+to bypass the public-network restriction. This is the operator-authorized trust
+expansion for B's project troubleshooting and verification.
+
+Agent B's session-owned `local_server` tool starts foreground commands under the
+same project-tool sandbox and retains bounded, redacted recent output. It accepts
+only its own random server IDs for status/stop and limits each session to four
+servers. The coordinator tracks owned process groups and identities, freezes and
+discovers descendants during teardown, then kills and polls the groups and drains
+their pipes. Cancellation, session replacement, reload, and disposal stop managed
+servers. Failed cleanup blocks further server operations. Descendant sampling has
+the same limitations as browser process ownership: daemonized commands and abrupt
+external coordinator death are not a proven cleanup path. Use foreground commands.
+A later shell sandbox cannot signal an earlier shell's detached jobs; unmanaged
+background descendants retain their sandbox but are not managed by this tool.
+Network-dependent commands that need public access and stdio MCP servers that
+require networking will fail under this policy.
 Anonymous remote Streamable HTTP uses a separate coordinator-owned HTTPS
 transport. It accepts only the configured endpoint on port 443, resolves and
 validates every DNS answer, and connects to a validated public IP with the
@@ -255,7 +285,8 @@ tree, with no separate renderer boundary. The profile permits scratch-only write
 reviewed runtime/system reads, narrow Chrome platform Mach services, private scratch
 Unix sockets, and one exact TCP proxy peer. It denies workspace/home credential
 reads, Keychain access, process inspection, direct project/inference/public sockets,
-and UDP. Ordinary role tools and generic MCP retain their existing stricter profiles.
+and UDP. Agent A tools and generic MCP retain their network-denied profiles;
+B's native project tools use the separate host-local TCP grant described above.
 
 Each browser gets a fresh scratch HOME/profile and a random proxy capability.
 The coordinator proxy resolves approved names once, rejects any non-loopback answer,

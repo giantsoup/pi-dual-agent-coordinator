@@ -1,0 +1,148 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;color:var(--foreground,#ddd);font-family:var(--font-sans,system-ui)}p{margin:0 0 12px;font-size:13px;line-height:1.5;color:var(--muted-foreground,#999)}.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}button,select{background:var(--card,#24282e);color:inherit;border:1px solid var(--border,#444);border-radius:6px;font:inherit;font-size:12px;padding:7px 10px}button{cursor:pointer}.stage{padding:16px;border-radius:var(--radius,8px);background:#171b21;color:#e4e8ed;overflow-x:auto;scrollbar-width:thin}.terminal{font-family:var(--font-mono,monospace);font-size:12px;line-height:1.55;width:120ch;white-space:pre}.line{display:block;min-height:1.55em}.dim{color:#95a1af}.a{color:#84cddd}.b{color:#e7c278}.bold{font-weight:700;color:#fff}.label{font-weight:700}.activity{color:#84cddd}.activity-b{color:#e7c278}.marker{display:inline-block;animation:pulse 1.7s ease-in-out infinite}.closed .marker{animation:none}@keyframes pulse{50%{opacity:.4}}@media(prefers-reduced-motion:reduce){.marker{animation:none}}.footnote{margin-top:12px}</style></head><body>
+<p>120 columns × 80 rows · proposed terminal UI · fictional conversation and test results</p>
+<div class="controls"><label for="phase">Live moment </label><select id="phase"><option value="review">A reviews B's final changes</option><option value="testing">B runs the final checks</option><option value="complete">A signs off</option></select><button id="size">Use readable size</button></div>
+<div class="stage" id="stage"><div id="terminal" class="terminal" role="img" aria-label="120 column by 80 row terminal mockup showing chronological narrative from agents A and B and a pinned current activity panel"></div></div>
+<p class="footnote">Earlier responses remain visible as the agents hand work back and forth. Tool batches stay folded. The bottom panel always describes the live request, even while you read earlier output.</p>
+<script>
+const history=[
+ ['',''],
+ ['OPERATOR  /  request 3  /  14:02:11','label'],
+ ['Make the current activity obvious. Keep a narrative history of A and B working together.',''],
+ ['',''],
+ ['A - Senior  /  planning  /  completed  /  14:02:12 - 14:02:36','a label'],
+ ['I will trace the activity events and screen layout first, then give B a bounded implementation plan.',''],
+ ['The live panel should stay above your draft and report the current action in plain language.',''],
+ ['  + 5 tool calls: 3 reads, 2 searches / completed','a'],
+ ['',''],
+ ['A - Senior  /  proposed plan','a label'],
+ ['1. Distinguish thinking, writing, tool execution, and waiting in shared UI state.',''],
+ ['2. Render a prominent current-activity panel above the input.',''],
+ ['3. Preserve history, scrolling, approval, cancellation, and the next-message draft.',''],
+ ['4. Verify the transitions with fixture sessions and terminal captures.',''],
+ ['',''],
+ ['OPERATOR  /  14:03:04','label'],
+ ['/approve',''],
+ ['Coordinator: approved plan delivered to Agent B.','dim'],
+ ['',''],
+ ['B - Junior  /  execution  /  completed  /  14:03:05 - 14:05:18','b label'],
+ ['I added the activity-state reducer and a dedicated panel renderer. The panel now shows the action,',''],
+ ['the active role and model, a safe tool target, and time since the last event.',''],
+ ['The existing diagnostics view still contains session IDs and runtime health details.',''],
+ ['  + 12 tool calls: 5 reads, 4 edits, 3 commands / completed','b'],
+ ['',''],
+ ['A - Senior  /  check-in after B turn 10  /  completed  /  14:05:19 - 14:05:47','a label'],
+ ['The shared-state boundary is right. Keep the action text steady while the small marker animates.',''],
+ ['One issue needs attention: a late tool result from the previous run must not replace the live action.',''],
+ ['Please add a regression for that case before continuing with the layout.',''],
+ ['  + 3 tool calls: 2 reads, 1 search / completed','a'],
+ ['',''],
+ ['B - Junior  /  resumed execution  /  completed  /  14:05:48 - 14:07:22','b label'],
+ ['Activity updates now match the current request, session, and run. Late results from an older run',''],
+ ['leave the live panel unchanged. I also kept action start time separate from the last-event time.',''],
+ ['The new regression passes. Cancellation still says "waiting for cleanup" until the runtime settles.',''],
+ ['  + 9 tool calls: 3 reads, 3 edits, 3 commands / completed','b'],
+ ['',''],
+ ['A - Senior  /  review  /  revision requested  /  14:07:23 - 14:08:06','a label'],
+ ['The state transitions look correct. The 80-column capture exposed one remaining layout problem:',''],
+ ['a long command can crowd out the current action. Give the action its own line and wrap its target.',''],
+ ['Keep the unread count visible when the operator opens an older request.',''],
+ ['  + 4 tool calls: 2 reads, 2 commands / completed','a'],
+ ['',''],
+ ['B - Junior  /  revision  /  completed  /  14:08:07 - 14:10:31','b label'],
+ ['The action now has its own bold row. Commands wrap beneath it within the panel budget.',''],
+ ['I checked the 80x24 and 120x40 layouts, multiline drafts, history navigation, and resize behavior.',''],
+ ['Older responses stay in order when A takes over for a check-in or review.',''],
+ ['  + 8 tool calls: 2 reads, 3 edits, 3 commands / completed','b'],
+ ['',''],
+ ['B - Junior  /  final verification  /  completed  /  14:10:32 - 14:12:51','b label'],
+ ['Type checking, focused regressions, the full test suite, and the build passed in this example.',''],
+ ['Fixture-backed terminal checks passed. These results do not establish live-provider behavior.',''],
+ ['I am handing the completed changes and verification evidence back to A for final review.',''],
+ ['  + 4 commands / completed','b'],
+ ['',''],
+ ['A - Senior  /  final review  /  running  /  started 14:12:52','a label'],
+ ["I am reviewing B's final diff and verification evidence against the approved plan.",''],
+ ['The final review is in progress. A has not signed off yet.','dim'],
+ ['  + 2 reads / completed','a'],
+ ['',''],
+ ['NARRATIVE HISTORY  /  chronological A-B handoffs  /  tool groups folded','dim'],
+ ['Following latest output  /  Wheel scroll  /  Esc then r: requests  /  Enter on a run: inspect','dim']
+];
+if(history.length!==62)throw new Error('History has '+history.length+' rows; expected 62');
+let fit=true;
+function fitFont(){const term=document.getElementById('terminal');term.style.fontSize='12px';if(fit){const available=document.getElementById('stage').clientWidth-32;const natural=term.getBoundingClientRect().width;term.style.fontSize=Math.min(12,12*available/natural)+'px';}document.getElementById('size').textContent=fit?'Use readable size':'Fit all 120 columns';}
+function draw(){
+ const phase=document.getElementById('phase').value;
+ const content=history.map(x=>[...x]);
+ let border='activity', role='A - Senior  /  GPT-6 Luna  /  final review';
+ let action="Reviewing B's completed changes", detail='Thinking activity received / final review';
+ let timing='Current action 00:18  /  last model event <1s ago  /  request elapsed 11:00';
+ let progress='B: 24 completed turns across 2 iterations  /  A final review in progress';
+ let recent='Last completed: read src/app/tui/app.ts  /  14:13:08';
+ let next='Next: A will approve the result or request another revision.';
+ if(phase==='testing'){
+  content[49]=['B - Junior  /  final verification  /  running  /  started 14:10:32','b label'];
+  content[50]=['The type check and build passed. I am running the terminal checks before handing the result to A.',''];
+  content[51]=['The next-message draft is still editable while the current command runs.',''];
+  content[52]=['The current tool is active; its final result is not available yet.','dim'];
+  content[53]=['  + 4 commands: 3 completed, 1 running','b'];
+  for(let i=55;i<=58;i++)content[i]=['',''];
+  border='activity-b';role='B - Junior  /  Qwen3.8 27B  /  final verification';
+  action='Running terminal verification';
+  detail='npm run verify:terminal';
+  timing='Current command 00:18  /  last tool event 2s ago  /  request elapsed 08:39';
+  progress='B: 24 completed turns  /  final verification in progress';
+  recent='Last completed: npm run build  /  exit 0';
+  next='Next: wait for the command result, then hand the evidence to A.';
+ }
+ if(phase==='complete'){
+  content[55]=['A - Senior  /  final review  /  approved  /  14:12:52 - 14:13:41','a label'];
+  content[56]=['The implementation matches the approved plan. I reviewed the diff and fixture verification evidence.',''];
+  content[57]=['Approved. The source change is complete. A new trusted installation and restart are still required.',''];
+  content[58]=['  + 3 reads / completed','a'];
+  role='Coordinator  /  request completed';action='Complete - A approved the result';
+  detail='No model or tool is running. Your next-message draft is ready.';
+  timing='Request completed at 14:13:41  /  total elapsed 11:30';
+  progress='A: approved  /  B: 24 completed turns across 2 iterations';
+  recent='Last completed: final review';
+  next='Next: prepare and verify a trusted installation before testing with real credentials.';
+ }
+ const rows=[];
+ const add=(text,kind)=>rows.push({text,kind:kind||''});
+ function bound(text){if([...text].length>116)throw new Error('Line exceeds body width: '+text);return text;}
+ function framed(text,kind){const s=bound(text);add('│ '+s+' '.repeat(116-[...s].length)+' │',kind);}
+ function edge(title,kind){const lead='─ '+title+' ';add('┌'+lead+'─'.repeat(118-[...lead].length)+'┐',kind);}
+ function bottom(kind){add('└'+'─'.repeat(118)+'┘',kind);}
+ add(('pi-dual  ~/pi-dual-agent-coordinator  |  '+(phase==='testing'?'Execution':phase==='complete'?'Completed':'Review')).padEnd(120),'dim');
+ edge('CURRENT REQUEST 3  /  narrative history');
+ content.forEach(([text,kind])=>framed(text,kind));
+ bottom();
+ edge('CURRENT ACTIVITY  /  LIVE',border);
+ framed(role,border+' label');
+ framed((phase==='complete'?'  ':'● ')+action,'bold action');
+ framed(detail);
+ framed(timing,'dim');
+ framed(progress,'dim');
+ framed(recent,'dim');
+ framed(next,'dim');
+ framed('Esc then x: cancel  /  Esc then l: return to current output','dim');
+ bottom(border);
+ edge('NEXT MESSAGE  /  editable while current work runs');
+ framed('> Please also check that opening history keeps the live panel visible.');
+ framed('');
+ bottom();
+ add('Enter submit  |  Esc controls  |  Ctrl+C cancel  |  Esc then: w workspace, r history, l latest, n newline'.padEnd(120),'dim');
+ if(rows.length!==80)throw new Error('Expected 80 rows, got '+rows.length);
+ if(rows.some(r=>[...r.text].length!==120))throw new Error('Expected exactly 120 columns in every row');
+ const terminal=document.getElementById('terminal');terminal.replaceChildren();terminal.classList.toggle('closed',phase==='complete');
+ rows.forEach(r=>{const span=document.createElement('span');span.className='line '+r.kind;if(r.kind.includes('action')&&phase!=='complete'){const marker=document.createElement('span');marker.className='marker';marker.textContent='●';const position=r.text.indexOf('●');span.append(document.createTextNode(r.text.slice(0,position)),marker,document.createTextNode(r.text.slice(position+1)));}else span.textContent=r.text;terminal.append(span);});
+ if([...terminal.textContent].length!==80*120)throw new Error('Rendered grid changed dimensions');
+ fitFont();
+ console.log(JSON.stringify({phase,rows:rows.length,columns:120,historyRows:content.length+2,activityRows:10,editorRows:4}));
+}
+document.getElementById('phase').addEventListener('change',draw);
+document.getElementById('size').addEventListener('click',()=>{fit=!fit;fitFont()});
+window.addEventListener('resize',fitFont);
+for(const phase of ['testing','complete','review']){document.getElementById('phase').value=phase;draw();}
+</script></body></html>

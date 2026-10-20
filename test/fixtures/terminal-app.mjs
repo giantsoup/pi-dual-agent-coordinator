@@ -21,6 +21,7 @@ writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: terminal-fixture\ndescript
 options.agentDir = join(stateRoot, 'agent');
 const executed = new Set();
 const stressCalls = new Map();
+const activityCalls = new Map();
 let repairScenario;
 const localInventory = ['qwen/qwen3.8-27b','qwen3-coder-next','google/gemma-4-e4b'].map((key,index) => ({type:'llm',key,display_name:key,max_context_length:262144,
   capabilities:{trained_for_tool_use:true},loaded_instances:index === 0 ? [{id:key,config:{context_length:65536}}] : []}));
@@ -73,6 +74,14 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
     const workflowId = field(handoff,'Workflow ID');
     const handoffId = field(handoff,'Handoff ID');
     const iteration = Number(field(handoff,'Iteration'));
+    if (handoff.includes('activity narrative')) {
+      const count = activityCalls.get(handoffId) ?? 0;
+      activityCalls.set(handoffId, count + 1);
+      await new Promise(resolve => setTimeout(resolve, iteration === 1 ? 160 : 450));
+      if (count === 0) return toolResponse('write',{path:'result.txt',content:iteration === 1 ? 'initial' : 'revised'}, `activity-write-${iteration}`, iteration === 1 ? 'I am implementing the approved change.' : 'I am applying the requested revision.');
+      if (count < (iteration === 1 ? 12 : 2)) return toolResponse('read',{path:'result.txt'}, `activity-read-${iteration}-${count}`, count === 10 ? 'I am continuing after the senior check-in.' : undefined);
+      return fixtureChatResponse('Implementation evidence is ready for review.\n' + block('pi-completion',{schemaVersion:1,workflowId,handoffId,iteration,summary:'Read and write results retained',changedPaths:['result.txt'],verification:['Read result.txt']}));
+    }
     if (handoff.includes('history stress')) {
       const count = stressCalls.get(handoffId) ?? 0;
       if (count < 12) {
@@ -90,6 +99,12 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
   const capped = prompt.match(/Workflow (\S+) has reached the review cap at iteration (\d+)/);
   if (capped) return fixtureResponse(block('pi-final',{schemaVersion:1,workflowId:capped[1],iteration:Number(capped[2]),decision:'blocked',summary:'Review cap',userResponse:'TERMINAL_REVIEW_CAP',changedPaths:['result.txt']}));
   if (prompt.includes('Coordinator review prompt')) {
+    if (prompt.includes('activity narrative')) {
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      const iteration = Number(field(prompt,'Current iteration'));
+      if (iteration === 1) return fixtureResponse('A revision is required before sign-off.\n' + block('pi-handoff',{schemaVersion:1,workflowId:field(prompt,'Workflow ID'),handoffId:randomUUID(),iteration:2,objective:'activity narrative revision',summary:'Revise the retained result',acceptanceCriteria:['result.txt contains revised'],relevantPaths:['result.txt'],reviewNotes:['Write revised and read the file back']}));
+      return fixtureResponse('I reviewed the revision and retained tool evidence.\n' + block('pi-final',{schemaVersion:1,workflowId:field(prompt,'Workflow ID'),iteration,decision:'approved',summary:'Revision approved',userResponse:'TERMINAL_ACTIVITY_OK',changedPaths:['result.txt']}));
+    }
     if (prompt.includes('cancel-review')) {
       await new Promise((resolve,reject) => {
         const timer = setTimeout(resolve,5000);
@@ -112,7 +127,7 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
   }
   const operator = prompt.split('\nOperator turn:\n')[1] ?? prompt;
   if (operator.includes('scroll fixture')) return fixtureResponse(Array.from({length:60},(_,i)=>`SCROLL_LINE_${i}`).join('\n'));
-  if (operator.includes('plan')) return fixtureResponse('Plan prose retained.\n' + block('pi-plan',{schemaVersion:1,objective:prompt.includes('history stress')?'history stress':prompt.includes('tool failure')?'tool failure':prompt.includes('cancel-execution')?'cancel-execution':prompt.includes('cancel-review')?'cancel-review':prompt.includes('review cap')?'review cap':'Write fixture result',summary:'Ready',acceptanceCriteria:['result file verified'],relevantPaths:['result.txt'],executionPlan:['Write result.txt','Verify content']}));
+  if (operator.includes('plan')) return fixtureResponse('Plan prose retained.\n' + block('pi-plan',{schemaVersion:1,objective:prompt.includes('activity narrative')?'activity narrative':prompt.includes('history stress')?'history stress':prompt.includes('tool failure')?'tool failure':prompt.includes('cancel-execution')?'cancel-execution':prompt.includes('cancel-review')?'cancel-review':prompt.includes('review cap')?'review cap':'Write fixture result',summary:'Ready',acceptanceCriteria:['result file verified'],relevantPaths:['result.txt'],executionPlan:['Write result.txt','Verify content']}));
   return fixtureResponse('## Discussion\nUnicode 界 😀\n```ts\nconst result = "ok";\n```\nTERMINAL_DISCUSSION_OK');
 }}})});
 const service = new HeadlessInteractiveCoordinatorService(coordinator);

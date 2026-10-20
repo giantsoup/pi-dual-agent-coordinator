@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unit Converter</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Unit Converter</h1>
+
+    <form id="converter-form" novalidate>
+      <div class="field">
+        <label for="category">Category</label>
+        <select id="category" name="category">
+          <option value="length" selected>Length</option>
+          <option value="mass">Mass</option>
+          <option value="temperature">Temperature</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="value">Value</label>
+          <input id="value" name="value" type="text" inputmode="decimal" autocomplete="off" placeholder="Enter a number" />
+        </div>
+
+        <div class="field">
+          <label for="fromUnit">From</label>
+          <select id="fromUnit" name="fromUnit"></select>
+        </div>
+
+        <button type="button" id="swap" class="swap" aria-label="Swap from and to units">Swap &#8646;</button>
+
+        <div class="field">
+          <label for="toUnit">To</label>
+          <select id="toUnit" name="toUnit"></select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="result">Result</label>
+        <output id="result" name="result" class="result" aria-live="polite"></output>
+      </div>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

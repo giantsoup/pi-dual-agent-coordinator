@@ -38,8 +38,8 @@ input and cursor behavior return.
 ## Submit and cancel work
 
 Plain text goes to Agent A. A proposed plan waits for `/approve`; `/discard`
-clears it. Another prompt revises it. An explicit request to start immediately
-can still use the existing `pi-execute` workflow.
+clears it. Another prompt revises it. Legacy `pi-execute` output also waits for
+explicit operator `/approve`.
 
 Only one request runs at a time. Submitted text clears when the service accepts
 it. You can edit the next draft during work. An attempted second submission stays
@@ -87,8 +87,25 @@ state. A is cyan and labelled `A - Senior`;
 B is amber and labelled `B - Junior`. Only an unfinished role run during a running
 operation displays `Active: A - Senior` or `Active: B - Junior`. Idle, approval
 waiting, cancellation and terminal results have separate labels. Inspecting older
-work never changes that live identity. The current phase follows the tool list,
-and live activity is the last line below the workspace and optional Activity panel.
+work never changes that live identity.
+
+**Current activity** stays immediately above the composer. The panel shows the
+active role, model, phase, and a bold action on its own steady row. A small marker
+animates during work. Thinking, response writing, tool-call preparation, provider
+waiting, native tool execution, approval waiting, model setup, and cancellation
+cleanup have distinct labels. The labels describe observed events. They do not
+expose reasoning or guess model intentions. Safe commands and targets wrap within
+the panel budget. Elapsed time keeps its action start across deltas; event age
+reports silence without declaring a hang or triggering a retry.
+
+The panel reserves ten rows at larger sizes and seven at 80x24 with a short draft.
+Pi's actual editor output determines the remaining body space. A tall draft or
+completion menu takes space from the narrative first. Compact mode keeps a short
+action summary, draft, cursor, and two contextual footer rows. Recent activity,
+operator hints, and secondary metrics yield space before the action. Up to three
+recent entries come from the current request. Hidden or paused narrative keeps an
+unread count and a return hint in the panel. Optional Activity diagnostics use
+body space above the panel and contain session and health details.
 The body shows both agents' readable responses in order, including planning,
 execution updates, check-ins, review, and repair. Earlier responses remain visible
 when another role starts. Committed responses reload from the read-only Pi archive.
@@ -116,7 +133,7 @@ Esc then r, or F4, to open the temporary **Request history** pane. It lists past
 operator requests followed by **Current request**, or **Current conversation · empty**.
 Opening history dismisses editor completion, including pending suggestions, so the
 chooser has room beside a multiline draft. The draft and cursor stay intact.
-The composer, live pointer, and footer remain visible.
+The composer, Current activity panel, and two-row footer remain visible.
 
 Arrows change the provisional highlight. Enter displays the highlighted request
 and closes history. Esc or F4 dismisses history and restores the previous request,
@@ -125,9 +142,17 @@ following and labels the body `HISTORY REQUEST`. New prompts always continue the
 current conversation. Selection never resumes an agent session or workflow and
 never approves a plan. The displayed request's runs and calls remain inspectable.
 
-Inspectors also replace the body. Below 80x24, a compact notice preserves input,
-resize, cancellation, and exit handling. Pi retains its bounded multiline editor
-viewport and IME cursor marker.
+Inspectors, help, and the controls menu also replace the body. Below 80x24, compact
+mode preserves input, resize, cancellation, and exit handling. Pi retains the full
+draft, cursor, and editor state. The renderer bounds the editor viewport around
+the IME cursor marker when the terminal cannot fit all rendered editor rows.
+
+Narrative milestones come from correlated planning and workflow events. Run
+headings show execution outcomes and available timestamps. B's continuation after
+an A check-in keeps the original run identity. A revision or approval label requires
+coordinator decision evidence; runtime completion alone does not imply sign-off.
+Restart restores unfinished requests and pending approvals as interrupted history.
+It does not resume work or recreate a pending operator approval.
 
 ### Keyboard controls
 
@@ -251,10 +276,11 @@ stripping apply to expanded text. Hidden reasoning and raw workflow blocks stay
 out of prose. Validated completion/review fields appear as reported results and
 reported verification, rather than inferred test success.
 
-Role labels, live pointers, headings and borders use standard ANSI cyan for A and
+Role labels, activity labels, headings and borders use standard ANSI cyan for A and
 yellow/amber for B. Workspace and inspector prose use the terminal's default
 colors. These styles work with the basic 16-color palette and need no truecolor
-support or `COLORFGBG` guess. `NO_COLOR` and `TERM=dumb` disable role color.
+support or `COLORFGBG` guess. `NO_COLOR` and `TERM=dumb` disable role color. `TERM=dumb` also uses a static
+activity marker.
 Text labels, state words, borders and selection markers retain meaning without
 color. Search, copy/export and future spawned-subagent execution remain outside
 this interface.

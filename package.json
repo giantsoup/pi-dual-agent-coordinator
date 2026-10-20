@@ -55,7 +55,8 @@
     "verify:global-mcp": "node scripts/verify-global-mcp.mjs",
     "verify:dependencies": "node scripts/verify-dependencies.mjs",
     "browser:allow": "node scripts/configure-local-browser.mjs",
-    "verify:browser": "npm run build && node scripts/verify-browser-boundary.mjs && node scripts/verify-local-browser.mjs"
+    "verify:browser": "npm run build && node scripts/verify-browser-boundary.mjs && node scripts/verify-local-browser.mjs",
+    "verify:local-servers": "npm run build && node scripts/verify-local-servers.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

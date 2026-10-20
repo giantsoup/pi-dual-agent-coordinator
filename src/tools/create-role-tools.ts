@@ -21,7 +21,7 @@ export function createRoleTools(options: CreateRoleToolsOptions): AgentTool<TSch
     const isolated: AgentTool<TSchema, unknown> = {
       ...definition,
       execute: async (_id, args, signal, onUpdate) => {
-        const isolation = options.isolation ?? new ToolIsolation(options.cwd, options.role, options.skillsDir);
+        const isolation = options.isolation ?? new ToolIsolation(options.cwd, options.role, options.skillsDir, "project");
         try {
           isolation.verify();
           const result = await runIsolatedTool({ isolation, role: options.role, name: definition.name, args: redactValue(args), skillsDir: options.skillsDir,

@@ -1,7 +1,7 @@
 import { responseProgressSchema } from "../../coordinator/response-progress.js";
 import { z } from "zod";
 import { readFileSync } from "node:fs";
-import type { HistoryRecord, HistorySnapshot, RecordOutcome } from "../../types/history.js";
+import type { HistoryRecord, HistorySnapshot, RecordOutcome, TranscriptMilestone } from "../../types/history.js";
 import type { NormalizedTelemetryEvent } from "../../types/telemetry.js";
 import { safeDisplayText } from "../../security/display-text.js";
 import { executionProgressSchema } from "../../workflow/execution-progress.js";
@@ -36,6 +36,7 @@ function outcome(value: unknown, timestamp: string): RecordOutcome {
 /** Metadata only. Full bodies remain in Pi's archive and are resolved on inspection. */
 export class HistoryIndex {
   private readonly records = new Map<string, HistoryRecord>();
+  private readonly milestones = new Map<string, TranscriptMilestone>();
   private currentTurnId: string | undefined;
   private resetId: string | undefined;
   private revision = 0;
@@ -50,12 +51,18 @@ export class HistoryIndex {
     if (input.events.some((event) => event.eventType.startsWith("pi.tool_execution") && !event.runId)) this.warnings.push("Earlier calls have no durable run association. Full task history was not retained by the previous UI.");
     for (const event of input.events) this.observe(event);
     for (const [id, record] of this.records) {
-      if (record.outcome.kind === "running") this.records.set(id, { ...record, outcome: { kind: "interrupted", endedAt: null } });
+      if (record.outcome.kind === "running" || record.outcome.kind === "waiting_approval") this.records.set(id, { ...record, outcome: { kind: "interrupted", endedAt: null } });
     }
   }
-  public snapshot(): HistorySnapshot { return { records: [...this.records.values()], currentTurnId: this.currentTurnId, resetId: this.resetId, revision: this.revision, warnings: this.warnings }; }
+  public snapshot(): HistorySnapshot { return { records: [...this.records.values()], currentTurnId: this.currentTurnId, resetId: this.resetId, revision: this.revision, warnings: this.warnings, milestones: [...this.milestones.values()] }; }
   public get(id: string): HistoryRecord | undefined { return this.records.get(id); }
   public observe(event: NormalizedTelemetryEvent): boolean {
+    if (event.eventType.startsWith("pi.") || event.eventType === "runtime.run_finished") {
+      const owner = event.runId ? this.records.get(event.runId) : undefined;
+      if (!owner || owner.kind !== "run" || owner.role !== event.role || owner.sessionId !== event.sessionId
+        || owner.requestId !== event.requestId || event.operatorTurnId && owner.parentId !== event.operatorTurnId
+        || owner.outcome.kind !== "running") return false;
+    }
     this.sequence++;
     const d = event.details;
     const turnId = event.operatorTurnId ?? [...this.records.values()].find((record) => record.kind === "turn" && event.requestId && record.requestIds.includes(event.requestId))?.id;
@@ -113,14 +120,17 @@ export class HistoryIndex {
     }
     if (event.eventType === "runtime.run_started" && runId && turnId && !this.records.has(runId)) {
       const provenance = string(d.provenance) ?? "planning_user";
-      const phase = provenance.includes("repair") ? "Repair" : provenance.includes("check_in") ? "Check-in" : provenance.includes("review") || provenance.includes("control") ? "Review" : provenance.includes("handoff") ? "Execution" : "Planning";
+      const initialPhase = provenance.includes("repair") ? "Repair" : provenance.includes("check_in") ? "Check-in" : provenance.includes("review") || provenance.includes("control") ? "Review" : provenance.includes("handoff") ? "Execution" : "Planning";
+      const revision = event.role === "B" && [...this.milestones.values()].some((item) => item.turnId === turnId && item.eventType === "workflow.iteration_prepared" && item.workflowId === d.workflowId);
+      const phase = revision && initialPhase === "Execution" ? "Revision" : initialPhase;
       put({ kind: "run", id: runId, parentId: turnId, role: event.role, sessionId: event.sessionId, sessionFile: event.sessionFile,
         branchId: string(d.branchId), requestId: event.requestId, workflowId: string(d.workflowId), handoffId: string(d.handoffId),
         phase, title: phase, timestamp: event.timestamp, outcome: { kind: "running", startedAt: event.timestamp } });
     }
     const run = runId ? this.records.get(runId) : undefined;
-    if (event.eventType === "runtime.run_finished" && run?.kind === "run" && run.outcome.kind === "running") put({ ...run, outcome: outcome(d.outcome, event.timestamp) });
-    if (event.eventType.startsWith("pi.tool_execution_") && run?.kind === "run") {
+    const matchesRun = run?.kind === "run" && run.role === event.role && run.sessionId === event.sessionId && run.requestId === event.requestId;
+    if (event.eventType === "runtime.run_finished" && matchesRun && run.outcome.kind === "running") put({ ...run, outcome: outcome(d.outcome, event.timestamp) });
+    if (event.eventType.startsWith("pi.tool_execution_") && matchesRun && run.outcome.kind === "running") {
       const callId = string(d.toolCallId);
       const toolName = string(d.toolName);
       if (callId && toolName && !toolName.startsWith("pi-")) {
@@ -138,7 +148,34 @@ export class HistoryIndex {
         }
       }
     }
+    const label = milestoneLabel(event);
+    if (label && turnId) {
+      const id = JSON.stringify([turnId, event.eventType, event.requestId, d.workflowId, d.handoffId, d.iteration, d.turnCount]);
+      if (!this.milestones.has(id)) {
+        this.milestones.set(id, { kind: "milestone", id, turnId, timestamp: event.timestamp, sequence: this.sequence, label, eventType: event.eventType, workflowId: string(d.workflowId) });
+        changed = true;
+        const disposition = event.eventType === "workflow.iteration_prepared" && typeof d.iteration === "number" && d.iteration > 1 ? "revision_requested"
+          : event.eventType === "workflow.finalized" && (d.decision === "approved" || d.decision === "blocked") ? d.decision : undefined;
+        if (disposition) {
+          const review = [...this.records.values()].reverse().find((record) => record.kind === "run" && record.role === "A" && record.parentId === turnId && record.phase === "Review" && (!record.workflowId || record.workflowId === d.workflowId));
+          if (review?.kind === "run") put({ ...review, reviewDisposition: disposition });
+        }
+      }
+    }
     if (changed) this.revision++;
     return changed;
+  }
+}
+
+function milestoneLabel(event: NormalizedTelemetryEvent): string | undefined {
+  switch (event.eventType) {
+    case "planning.plan_ready": return "Plan ready / waiting for operator approval";
+    case "planning.plan_approved": return "Operator approved the plan / execution authorized";
+    case "planning.plan_discarded": return "Operator discarded the plan";
+    case "workflow.check_in_started": return "Coordinator requested an A check-in";
+    case "workflow.check_in_completed": return event.details.decision === "continue" ? "A check-in / continue execution" : event.details.decision === "redirect" ? "A check-in / redirect execution" : event.details.decision === "blocked" ? "A check-in / execution blocked" : undefined;
+    case "workflow.iteration_prepared": return typeof event.details.iteration === "number" && event.details.iteration > 1 ? "A requested a revision / next handoff prepared" : undefined;
+    case "workflow.finalized": return event.details.decision === "approved" ? "A approved the result" : event.details.decision === "blocked" ? "A blocked the result" : undefined;
+    default: return undefined;
   }
 }

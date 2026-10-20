@@ -168,11 +168,34 @@ export type UiConversationEntryDraft =
       text: string;
     };
 
+export type CurrentAction =
+  | { kind: "idle" }
+  | { kind: "preparing"; role: Role }
+  | { kind: "waiting"; reason: "provider" | "next_event" }
+  | { kind: "thinking" | "writing" | "tool_preparation" }
+  | { kind: "tool_execution"; callId: string; toolName: string; label: string; target?: string | undefined; additionalCalls: number }
+  | { kind: "approval_waiting" }
+  | { kind: "model_loading"; role: Role; label: string }
+  | { kind: "cancelling" }
+  | { kind: "terminal"; outcome: "completed" | "failed" | "cancelled" | "timed_out" | "interrupted" };
+
+export interface CurrentActivity {
+  action: CurrentAction;
+  owner: { kind: "coordinator" } | { kind: "runtime"; role: Role; sessionId: string; runId: string; turnId: string; requestId?: string | undefined };
+  phase: string;
+  model?: string | undefined;
+  progress?: string | undefined;
+  startedAt?: number | undefined;
+  lastEventAt?: number | undefined;
+  recent: Array<{ id: string; text: string }>;
+}
+
 export interface InteractiveUiState {
   status: CoordinatorStatusSnapshot;
   conversation: UiConversationEntry[];
   liveStream?: UiStreamingState | undefined;
   activity: UiActivityState;
+  currentActivity: CurrentActivity;
   pendingPlan?: UiPendingPlanState | undefined;
   modal: UiModalState;
   notifications: UiNotification[];

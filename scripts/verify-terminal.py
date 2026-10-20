@@ -2,6 +2,7 @@
 """Drive real Pi runtimes and both terminal interfaces in isolated PTYs. No API key."""
 import codecs
 import hashlib
+import html
 import fcntl
 import json
 import os
@@ -46,6 +47,10 @@ def check(condition, message):
     if not condition:
         raise AssertionError(message)
     checks += 1
+
+def stable_screen(screen):
+    # The pinned clock can advance while browsing; compare all other text and geometry.
+    return re.sub(r'\d+s elapsed(?: / last event \d+s ago)?', 'CLOCK', screen)
 
 class Terminal:
     def __init__(self, root, mode, size=(80,24), startup_failure=False):
@@ -113,6 +118,25 @@ class Terminal:
                 check(self.screen.buffer[y][row.index('CURRENT REQUEST')].fg == ('cyan' if role == 'A' else 'brown'),'current-turn heading retains actual role accent: '+label)
             styles = sorted({(cell.fg, cell.bg, cell.bold, cell.reverse) for cell in cells})
             (EVIDENCE/(label+'.colors.json')).write_text(json.dumps({'palette':'Ghostty 1.3.1 defaults', 'minimumTextContrast':round(minimum,2), 'defaultProseContrast':round(prose_contrast,2), 'styles':[{'foreground':fg,'background':bg,'bold':bold,'reverse':reverse} for fg,bg,bold,reverse in styles]},indent=2)+'\n')
+            rendered_rows = []
+            for y in range(self.screen.lines):
+                spans = []
+                previous_style = None
+                text = ''
+                for x in range(self.screen.columns):
+                    cell = self.screen.buffer[y][x]
+                    color = DEFAULT_PALETTE.get(cell.fg, DEFAULT_PALETTE['default'])
+                    style = f'color:#{color};font-weight:{700 if cell.bold else 400}'
+                    if cell.reverse: style = 'color:#282c34;background:white'
+                    if style != previous_style and text:
+                        spans.append(f'<span style="{previous_style}">{html.escape(text)}</span>')
+                        text = ''
+                    previous_style = style
+                    text += cell.data
+                if text: spans.append(f'<span style="{previous_style}">{html.escape(text)}</span>')
+                rendered_rows.append(''.join(spans))
+            document = '<!doctype html><meta charset="utf-8"><title>'+html.escape(label)+'</title><style>body{margin:0;padding:16px;background:#282c34;color:white}pre{font:13px/1.4 Menlo,monospace;white-space:pre;margin:0}p{font:13px system-ui}</style><p>Actual Pi fixture PTY capture: '+html.escape(label)+f' · {self.screen.columns}×{self.screen.lines}</p><pre>'+"\n".join(rendered_rows)+'</pre>'
+            (EVIDENCE/(label+'.html')).write_text(document)
             return '\n'.join(rows)
         return ''
     def stop(self, via_signal=False, shutdown_signal=signal.SIGTERM, ctrl_c=False, expected_exit=0):
@@ -207,7 +231,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
                 terminal.wait(lambda:terminal.state().get('operation',{}).get('kind') == 'completed','post cancel request')
                 for cols,rows in [(120,40),(40,12),(80,24),(120,40)]:
                     terminal.size(cols,rows);time.sleep(.08);terminal.read()
-                check(b'Compact terminal' in terminal.output,'small terminal notice')
+                check(b'Current activity' in terminal.output,'current action remains visible after compact resize')
                 terminal.send('\x1b[200~paste 界 😀\nsecond line\x1b[201~')
                 terminal.send('\x03')
                 terminal.command('/sessions A')
@@ -337,9 +361,9 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
     try:
         repair.command('repair fixture')
         repair.wait(lambda:any(record['kind']=='run' and record.get('phase')=='Repair' and record['outcome']['kind']=='running' for record in repair.state().get('history',{}).get('records',[])),'actual planning repair')
-        repair.wait(lambda:b'Active: A - Senior / Repair' in repair.output,'honest repair role and phase')
+        repair.wait(lambda:repair.state().get('currentActivity',{}).get('owner',{}).get('role')=='A' and repair.state().get('currentActivity',{}).get('phase')=='Repair','honest repair role and phase')
         screen = repair.snapshot('A-repair-80x24',role='A')
-        if CAPTURE: check('REPAIR / running' in screen and 'Active: A - Senior' in screen,'real repair step in current workspace')
+        if CAPTURE: check('Repair' in screen and 'Current activity / live' in screen and 'Active: A - Senior' in screen,'real repair step in current workspace')
         repair.wait(lambda:repair.state().get('operation',{}).get('kind')=='completed','repair completion')
         check([record['phase'] for record in repair.state()['history']['records'] if record['kind']=='run']==['Planning','Repair'],'planning and repair separately inspectable')
         repair.stop()
@@ -423,7 +447,10 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             chooser.wait(lambda:chooser.state().get('operation',{}).get('kind')=='completed','chooser retained request')
             chooser.command('plan chooser request')
             chooser.wait(lambda:bool(chooser.state().get('pendingPlan')),'chooser pending plan')
-            if CAPTURE: chooser.wait(lambda:any('Plan prose retained.' in row for row in chooser.screen.display),'chooser baseline prose hydrated')
+            if CAPTURE:
+                chooser.wait(lambda:any('Plan ready / waiting' in row for row in chooser.screen.display),'chooser plan milestone rendered')
+                chooser.send('\x1bw');chooser.send('g');chooser.send('\x1be')
+                chooser.wait(lambda:any('Plan prose retained.' in row for row in chooser.screen.display),'planning prose remains reachable above the milestone')
             chooser.send('\x1b[200~ab\ncd\x1b[201~');chooser.send('\x1b[D')
             closed = chooser.snapshot(f'chooser-{cols}-closed')
             identity = lambda state: (state['history']['currentTurnId'],state.get('pendingPlan'),[(r['role'],r['sessionId']) for r in state['status']['runtimes']])
@@ -439,15 +466,15 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             chooser.send('\x1b[<64;5;3M');wheel = chooser.snapshot(f'chooser-{cols}-wheel')
             if CAPTURE: check('> Request 1' in wheel,'wheel targets chooser without committing a request')
             chooser.send(f'\x1b[<65;5;{rows}M');outside = chooser.snapshot(f'chooser-{cols}-wheel-outside')
-            if CAPTURE: check(outside==wheel,'wheel outside chooser body leaves highlight alone')
+            if CAPTURE: check(stable_screen(outside)==stable_screen(wheel),'wheel outside chooser body leaves highlight alone')
             chooser.send('g');highlighted = chooser.snapshot(f'chooser-{cols}-highlight')
             if CAPTURE: check('> Request 1' in highlighted and 'Enter choose' in highlighted,'arrows only highlight and show choose action')
             chooser.send('h');chooser.wait(lambda:chooser.state().get('modal',{}).get('kind')=='help','help over chooser')
             chooser.send('\x1b');time.sleep(.1)
-            if CAPTURE: check(chooser.snapshot(f'chooser-{cols}-help-restored')==highlighted,'help restores chooser candidate and viewport')
+            if CAPTURE: check(stable_screen(chooser.snapshot(f'chooser-{cols}-help-restored'))==stable_screen(highlighted),'help restores chooser candidate and viewport')
             chooser.send('h');chooser.wait(lambda:chooser.state().get('modal',{}).get('kind')=='help','reopen help over chooser')
             chooser.send('\x03');chooser.wait(lambda:chooser.state().get('modal',{}).get('kind')=='none','idle Ctrl+C closes help first')
-            if CAPTURE: check(chooser.snapshot(f'chooser-{cols}-help-ctrl-c')==highlighted,'Ctrl+C help dismissal preserves chooser and draft')
+            if CAPTURE: check(stable_screen(chooser.snapshot(f'chooser-{cols}-help-ctrl-c'))==stable_screen(highlighted),'Ctrl+C help dismissal preserves chooser and draft')
             chooser.size(120 if cols==80 else 80,40 if cols==80 else 24)
             resized = chooser.snapshot(f'chooser-{cols}-resized')
             if CAPTURE: check('> Request 1' in resized and 'Request history' in resized,'resize keeps candidate and uniform chooser')
@@ -455,7 +482,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             chooser.send('\x1b[200~');chooser.send('l\r\x1bOR\x03');chooser.send('\x1b[201~');time.sleep(.1)
             if CAPTURE: check('Request history' in chooser.snapshot(f'chooser-{cols}-paste'),'paste cannot select, cancel, or open models')
             chooser.send('\x03');dismissed = chooser.snapshot(f'chooser-{cols}-dismissed')
-            if CAPTURE: check(dismissed==closed,'idle Ctrl+C restores underlying view and draft cursor')
+            if CAPTURE: check(stable_screen(dismissed)==stable_screen(closed),'idle Ctrl+C restores underlying view and draft cursor')
             chooser.send('\x1b[14~');chooser.send('g');chooser.send('\r');time.sleep(.1)
             selected = chooser.snapshot(f'chooser-{cols}-selected')
             if CAPTURE: check('HISTORY REQUEST 1' in selected and 'previous chooser request' in selected,'Enter displays selected historical request')
@@ -488,7 +515,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             if CAPTURE: check('Request history' in cancelled and 'cancel draft' in cancelled and 'unread' in cancelled,'running cancellation preserves chooser, hidden draft and unread output')
             check([(r['role'],r['sessionId']) for r in chooser.state()['status']['runtimes']]==running_sessions,'running chooser never rebinds sessions')
             chooser.send('\x1bOS');chooser.send('\x03');chooser.command('/new')
-            chooser.wait(lambda:not chooser.state()['history'].get('currentTurnId') and chooser.state().get('operation',{}).get('kind')=='idle','empty current conversation')
+            chooser.wait(lambda:not chooser.state()['history'].get('currentTurnId') and chooser.state().get('operation',{}).get('kind')=='idle' and chooser.state().get('notification',{}).get('code')=='conversation.created','both replacements completed for empty current conversation')
             if CAPTURE: chooser.wait(lambda:any('New conversation' in row for row in chooser.screen.display),'new conversation rendered before opening history')
             chooser.send('\x1bOS');empty = chooser.snapshot(f'chooser-{cols}-empty')
             if CAPTURE: check('> Current conversation' in empty and 'empty' in empty,'blank Current target remains selectable')
@@ -507,7 +534,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
         completion.send('\x1bOS');screen = completion.snapshot('chooser-completion-80x24')
         if CAPTURE:
             check('> Current conversation' in screen and 'Enter choose' in screen,'chooser remains usable after dismissing tall editor completion')
-            check('six' in screen and 'Activity' in screen,'multiline draft and activity remain mounted')
+            check('six' in screen and 'Current activity' in screen,'multiline draft and activity remain mounted')
         completion.send('\x1bOS');completion.send('sta');time.sleep(.08);completion.send('\t')
         if CAPTURE: check('/status' in completion.snapshot('chooser-completion-restored-80x24'),'completion works again after history dismisses')
         check(not any(entry['kind']=='operator_message' for entry in completion.state()['conversation']),'completion and chooser never submit the multiline draft')
@@ -531,7 +558,9 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             terminal.wait(lambda:any(record['kind']=='run' and record.get('role')=='B' and record['outcome']['kind']=='running' for record in terminal.state().get('history',{}).get('records',[])),'real B run')
             if history_mode != 'plain':
                 terminal.wait(lambda:b'Active: B - Junior' in terminal.output,'B active label')
-                screen = terminal.snapshot('B-execution-120x40',role='B')
+                terminal.snapshot('B-execution-120x40',role='B')
+                terminal.size(120,80)
+                screen = terminal.snapshot('B-execution-120x80',role='B')
                 if CAPTURE:
                     check('CURRENT REQUEST' in screen and 'HISTORY' not in screen and 'History /' not in screen,'full-width closed history layout')
                     check('Plan prose retained.' in screen,'planning narrative remains visible after B takes ownership')
@@ -549,12 +578,15 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             if history_mode != 'plain':
                 terminal.wait(lambda:b'Active: A - Senior' in terminal.output,'A active label')
                 terminal.size(120,40)
-                screen = terminal.snapshot('A-review-120x40',role='A')
+                terminal.snapshot('A-review-120x40',role='A')
+                terminal.size(120,80)
+                screen = terminal.snapshot('A-review-120x80',role='A')
                 if CAPTURE:
                     check('checking the remaining evidence' in screen,'B narrative resumes after the A check-in')
                     check('collecting the requested history evidence' in screen,'senior check-in summary stays in the narrative')
                     check(screen.index('collecting the requested history evidence') < screen.index('checking the remaining evidence'),'B commentary follows the completed senior check-in')
                     check('tool call' in screen and '[completed] read evidence.txt' not in screen,'tool totals replace individual tool rows')
+                terminal.size(120,40)
             terminal.wait(lambda:terminal.state().get('operation',{}).get('kind')=='completed','history stress complete')
             history = terminal.state()['history']; records = history['records']
             calls = [record for record in records if record['kind']=='tool']
@@ -609,7 +641,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
                     check('历史 é 😀 draft' in screen_after,'draft survives inspection and help')
                 terminal.size(80,24)
                 screen = terminal.snapshot('historical-tool-80x24')
-                if CAPTURE: check('READ-ONLY INSPECTOR' in screen and 'Idle' in screen,'narrow inspector keeps honest active pointer')
+                if CAPTURE: check('READ-ONLY INSPECTOR' in screen and 'Request completed' in screen,'narrow inspector keeps honest active pointer')
                 terminal.send('\x1b');time.sleep(.1)
                 for _ in range(4): terminal.send('\x1b[B')
                 terminal.send('\r');time.sleep(.1);terminal.send('3')
@@ -624,7 +656,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
                 screen = terminal.snapshot('history-selected-80x24')
                 if CAPTURE: check('HISTORY REQUEST 1' in screen and 'New prompts use current conversation' in screen,'Enter displays historical request')
                 terminal.send('\r');time.sleep(.1);terminal.send('3')
-                terminal.read();time.sleep(.1)
+                terminal.read();time.sleep(.1);terminal.send('\x1b[F')
                 screen = terminal.snapshot('previous-A-run-80x24')
                 if CAPTURE: check('A - Senior / run' in screen and 'TERMINAL_DISCUSSION_OK' in screen,'past operator turn run prose independently inspectable')
                 terminal.send('\x1b');time.sleep(.1)
@@ -644,6 +676,49 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             terminal.stop()
         finally:
             if terminal.process.poll() is None: terminal.process.kill();terminal.process.wait()
+    activity = Terminal(root,'activity-narrative',size=(120,80))
+    try:
+        activity.command('/config review-rounds 3')
+        activity.wait(lambda:activity.state().get('status',{}).get('maxReviewRounds')==3,'activity review budget')
+        activity.command('plan activity narrative')
+        activity.wait(lambda:bool(activity.state().get('pendingPlan')),'activity plan ready')
+        check(not (activity.workspace/'result.txt').exists(),'activity scenario requires explicit approval')
+        activity.snapshot('activity-approval-120x80')
+        activity.command('/approve')
+        activity.wait(lambda:activity.state().get('currentActivity',{}).get('owner',{}).get('role')=='B','activity B owner')
+        b_run = activity.state()['currentActivity']['owner']['runId']
+        activity.send('next 界 😀 draft')
+        activity.wait(lambda:'next 界 😀 draft' in '\n'.join(activity.screen.display) if CAPTURE else 'next 界 😀 draft'.encode() in activity.output,'next-message draft rendered before resize')
+        for cols,rows in [(120,80),(120,40),(80,24),(40,12),(120,80)]:
+            activity.size(cols,rows);time.sleep(.1)
+            screen = activity.snapshot(f'activity-live-{cols}x{rows}')
+            if CAPTURE:
+                check('Current activity' in screen and 'draft' in screen,'live action and draft visible at target size')
+        activity.wait(lambda:activity.state().get('currentActivity',{}).get('phase')=='Check-in','activity A check-in')
+        screen = activity.snapshot('activity-check-in-120x80',role='A')
+        if CAPTURE: check('Active: A - Senior' in screen and 'A checking turn 10' in screen,'real check-in owns the activity panel')
+        activity.wait(lambda:activity.state().get('currentActivity',{}).get('owner',{}).get('role')=='B','B continues after check-in')
+        check(activity.state()['currentActivity']['owner']['runId']==b_run,'continued B activity retains original run identity')
+        activity.wait(lambda:any('continuing after the senior check-in' in entry.get('text','') for entry in activity.state().get('conversation',[])),'continued B prose observed')
+        screen = activity.snapshot('activity-continuation-120x80',role='B')
+        if CAPTURE: check('Execution continued' in screen,'continuation is chronological rather than a new operator request')
+        activity.wait(lambda:activity.state().get('currentActivity',{}).get('phase')=='Revision','B revision starts')
+        activity.snapshot('activity-revision-120x80',role='B')
+        activity.wait(lambda:activity.state().get('operation',{}).get('kind')=='completed','activity final approval')
+        check((activity.workspace/'result.txt').read_text()=='revised','revision is a real sandboxed write')
+        reviews = [record for record in activity.state()['history']['records'] if record['kind']=='run' and record.get('phase')=='Review']
+        check([record.get('reviewDisposition') for record in reviews]==['revision_requested','approved'],'review decisions are separate from run settlement')
+        final = activity.snapshot('activity-final-120x80')
+        if CAPTURE: check('A approved the result' in final and 'Request completed' in final,'final approval and terminal outcome are rendered')
+        activity.send('\x1bOS')
+        activity.snapshot('activity-history-120x80')
+        activity.send('\x1b')
+        activity.send('\x1b');activity.send('h')
+        activity.snapshot('activity-help-120x80')
+        activity.send('\x1b')
+        activity.stop(via_signal=True)
+    finally:
+        if activity.process.poll() is None: activity.process.kill();activity.process.wait()
     for shutdown_signal in [signal.SIGHUP,signal.SIGINT]:
         probe = Terminal(root,'signal-'+str(shutdown_signal))
         try: probe.stop(via_signal=True,shutdown_signal=shutdown_signal)

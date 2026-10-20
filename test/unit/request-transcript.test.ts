@@ -47,7 +47,7 @@ describe("request transcript projection", () => {
     emit("runtime.run_finished", "a", { outcome: "completed" }, "A");
     output("b", "b4", "I am continuing with the fix.");
     emit("pi.tool_execution_start", "b", { toolName: "edit", toolCallId: "edit", messageId: "b4" });
-    expect(blocks().map((block) => block.kind === "response" ? block.text : `${block.callIds.length} calls`)).toEqual([
+    expect(blocks().map((block) => block.kind === "response" ? block.text : block.kind === "tools" ? `${block.callIds.length} calls` : block.label)).toEqual([
       "I will inspect the files.", "3 calls", "The work remains on scope.", "I am continuing with the fix.", "1 calls"
     ]);
     const calls = history.snapshot().records.filter((record) => record.kind === "tool");
@@ -97,4 +97,66 @@ describe("request transcript projection", () => {
     await transcript.hydrate(history.snapshot().records, "turn");
     expect(blocks()).toMatchObject([{ kind: "response", text: "The provider was interrupted here." }]);
   });
+});
+
+it("keeps request milestones deduplicated and separate from settled run outcomes in live and replay history", () => {
+  const events: NormalizedTelemetryEvent[] = [];
+  const index = new HistoryIndex();
+  const emit = (eventType: string, details: Record<string, unknown> = {}, runId?: string) => {
+    const event: NormalizedTelemetryEvent = { eventType, details, operatorTurnId: "turn", requestId: "request", role: "A", sessionId: "A", timestamp, runId };
+    events.push(event); index.observe(event);
+  };
+  emit("ui.turn_started", { objective: "Review" });
+  emit("planning.plan_ready"); emit("planning.plan_ready");
+  emit("planning.plan_approved");
+  emit("runtime.run_started", { provenance: "coordinator_review", workflowId: "workflow" }, "review");
+  emit("runtime.run_finished", { outcome: "completed" }, "review");
+  expect(index.get("review")).not.toHaveProperty("reviewDisposition");
+  emit("workflow.finalized", { decision: "maybe", workflowId: "workflow" });
+  expect(index.get("review")).not.toHaveProperty("reviewDisposition");
+  emit("workflow.iteration_prepared", { iteration: 2, workflowId: "workflow", handoffId: "revision" });
+  expect(index.get("review")).toMatchObject({ outcome: { kind: "completed" }, reviewDisposition: "revision_requested" });
+  const milestones = index.snapshot().milestones ?? [];
+  expect(milestones.map((item) => item.label)).toEqual(["Plan ready / waiting for operator approval", "Operator approved the plan / execution authorized", "A requested a revision / next handoff prepared"]);
+  expect(milestones.every((item) => item.turnId === "turn" && !("runId" in item))).toBe(true);
+  const restored = new HistoryIndex(); restored.restore({ events, warnings: [] });
+  expect(restored.snapshot().milestones).toEqual(milestones);
+  expect(restored.get("review")).toEqual(index.get("review"));
+  expect(restored.get("turn")?.outcome).toEqual({ kind: "interrupted", endedAt: null });
+});
+
+it("restores a pending approval as interrupted history without resurrecting an approval", () => {
+  const index = new HistoryIndex();
+  const base = { role: "A" as const, sessionId: "A", timestamp, operatorTurnId: "turn" };
+  index.restore({ events: [{ ...base, eventType: "ui.turn_started", details: {} }, { ...base, eventType: "ui.turn_finished", details: { outcome: "waiting_approval" } }], warnings: [] });
+  expect(index.get("turn")?.outcome).toEqual({ kind: "interrupted", endedAt: null });
+});
+
+it("rejects mismatched native ownership before changing narrative or unread revisions", () => {
+  const { emit, history } = setup();
+  const before = history.snapshot();
+  for (const mismatch of [{ role: "A" as const }, { sessionId: "old" }, { requestId: "old" }, { operatorTurnId: "old" }, { runId: "old" }]) {
+    history.observe({ eventType: "pi.tool_execution_start", role: "B", sessionId: "B", runId: "b", operatorTurnId: "turn", timestamp, details: { toolName: "read", toolCallId: "stale" }, ...mismatch });
+    expect(history.snapshot()).toEqual(before);
+  }
+  emit("runtime.run_finished", "b", { outcome: "completed" });
+  const ended = history.snapshot();
+  emit("pi.tool_execution_start", "b", { toolName: "read", toolCallId: "late" });
+  expect(history.snapshot()).toEqual(ended);
+});
+
+it("does not apply a duplicate earlier revision milestone to a later review run", () => {
+  const index = new HistoryIndex();
+  const base = { role: "A" as const, sessionId: "A", timestamp, operatorTurnId: "turn", requestId: "request" };
+  index.observe({ ...base, eventType: "ui.turn_started", details: {} });
+  index.observe({ ...base, runId: "first", eventType: "runtime.run_started", details: { provenance: "coordinator_review", workflowId: "workflow" } });
+  index.observe({ ...base, runId: "first", eventType: "runtime.run_finished", details: { outcome: "completed" } });
+  const revision = { ...base, eventType: "workflow.iteration_prepared", details: { iteration: 2, workflowId: "workflow", handoffId: "handoff" } };
+  index.observe(revision);
+  index.observe({ ...base, runId: "later", eventType: "runtime.run_started", details: { provenance: "coordinator_review", workflowId: "workflow" } });
+  const before = index.snapshot();
+  index.observe(revision);
+  expect(index.snapshot()).toEqual(before);
+  expect(index.get("first")).toHaveProperty("reviewDisposition", "revision_requested");
+  expect(index.get("later")).not.toHaveProperty("reviewDisposition");
 });

@@ -7,7 +7,8 @@ import {
   ReplProgressRenderer
 } from "../../src/app/repl-progress.js";
 import type { CoordinatorStatusSnapshot } from "../../src/types/status.js";
-import type { NormalizedTelemetryEvent } from "../../src/types/telemetry.js";
+import { createInitialInteractiveUiState } from "../../src/app/interactive/store.js";
+import type { CurrentActivity } from "../../src/types/ui.js";
 
 describe("repl progress renderer", () => {
   it("renders the startup banner and prompt with model displays", () => {
@@ -23,187 +24,37 @@ describe("repl progress renderer", () => {
     expect(buildHelpText(false)).toContain("/help /status /approve /discard /sessions /handoff /cancel /new [A|B] /switch A|B /quit");
   });
 
-  it("groups same-context progress under one header and compacts reason lines", () => {
-    const { renderer, stderrWrites } = createRenderer();
-
-    renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "text_delta" }));
-    renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "thinking_delta" }));
-    renderer.handleEvent(
-      createEvent("pi.tool_execution_start", "A", {
-        toolName: "read",
-        toolArgs: { path: "/tmp/project/src/app/repl-progress.ts" }
-      })
-    );
-    renderer.handleEvent(createEvent("pi.tool_execution_end", "A", { toolName: "read" }));
-    const progress = stderrWrites.join("");
-
-    expect(
-      progress.match(/Planning · Agent A · GPT-5.4 \(openai\/gpt-5.4\)/g)
-    ).toHaveLength(1);
-    expect(
-      progress.match(
-        /  reason: inspecting the codebase before deciding whether execution is necessary/g
-      )
-    ).toHaveLength(1);
-    expect(progress).toContain("  reading src/app/repl-progress.ts");
-    expect(progress).toContain("  finished reading src/app/repl-progress.ts");
-    expect(progress).toContain(
-      "  reason: reading the relevant files before proposing a concrete change"
-    );
-  });
-
-  it("renders MCP tool progress with an explicit MCP prefix", () => {
-    const statusRef = {
-      current: {
-        ...createStatus(),
-        mcp: {
-          enabled: true,
-          configSources: [],
-          roleA: {
-            role: "A" as const,
-            enabled: true,
-            servers: [
-              {
-                name: "laravel-boost",
-                connected: true,
-                transport: "stdio" as const,
-                directTools: ["search-docs"]
-              }
-            ]
-          },
-          roleB: {
-            role: "B" as const,
-            enabled: true,
-            servers: []
-          }
-        }
-      }
-    };
-    const { renderer, stderrWrites } = createRenderer(statusRef);
-
-    renderer.handleEvent(
-      createEvent("pi.tool_execution_start", "A", {
-        toolName: "search-docs",
-        toolArgs: { queries: ["routing"] }
-      })
-    );
-    renderer.handleEvent(
-      createEvent("pi.tool_execution_end", "A", {
-        toolName: "search-docs"
-      })
-    );
-
-    const progress = stderrWrites.join("");
-    expect(progress).toContain("  MCP tool running: laravel-boost/search-docs");
-    expect(progress).toContain("  finished MCP tool: laravel-boost/search-docs");
-  });
-
-  it("emits a fresh header when phase, role, or model display changes", () => {
-    const statusRef = { current: createStatus() };
-    const { renderer, stderrWrites } = createRenderer(statusRef);
-
-    renderer.handleEvent(createEvent("planning.plan_ready", "A"));
-
-    statusRef.current = {
-      ...statusRef.current,
-      phase: "execution",
-      phaseLabel: "Execution",
-      currentIteration: 1
-    };
-    renderer.handleEvent(
-      createEvent("workflow.iteration_prepared", "A", {
-        iteration: 1,
-        modelDisplayA: "GPT-5.4 (openai/gpt-5.4)"
-      })
-    );
-
-    statusRef.current = {
-      ...statusRef.current,
-      phase: "repair",
-      phaseLabel: "Repair",
-      activeRole: "B",
-      activeRoleLabel: "Agent B",
-      activeModelName: "Qwen3 Coder Next",
-      activeModelProvider: "local-qwen",
-      activeModelId: "qwen3-coder-next",
-      activeModelCanonical: "local-qwen/qwen3-coder-next",
-      activeModelDisplay: "Qwen3 Coder Next (local-qwen/qwen3-coder-next)"
-    };
-    renderer.handleEvent(
-      createEvent("workflow.repair_requested", "B", {
-        iteration: 1,
-        reason: "missing pi-completion block",
-        modelDisplayB: "Qwen3 Coder Next (local-qwen/qwen3-coder-next)"
-      })
-    );
-
-    statusRef.current = {
-      ...statusRef.current,
-      phase: "execution",
-      phaseLabel: "Execution",
-      activeRole: "B",
-      activeRoleLabel: "Agent B",
-      activeModelName: "Qwen3 Coder Next v2",
-      activeModelProvider: "local-qwen",
-      activeModelId: "qwen3-coder-next-v2",
-      activeModelCanonical: "local-qwen/qwen3-coder-next-v2",
-      activeModelDisplay: "Qwen3 Coder Next v2 (local-qwen/qwen3-coder-next-v2)",
-      runtimes: [
-        statusRef.current.runtimes[0]!,
-        {
-          ...statusRef.current.runtimes[1]!,
-          modelName: "Qwen3 Coder Next v2",
-          modelId: "qwen3-coder-next-v2",
-          modelCanonical: "local-qwen/qwen3-coder-next-v2",
-          modelDisplay: "Qwen3 Coder Next v2 (local-qwen/qwen3-coder-next-v2)"
-        }
-      ]
-    };
-    renderer.handleEvent(
-      createEvent("pi.message_update", "B", {
-        assistantEventType: "thinking_delta",
-        modelDisplay: "Qwen3 Coder Next v2 (local-qwen/qwen3-coder-next-v2)"
-      })
-    );
-
+  it("renders the shared observed actions once without per-delta noise or inferred intentions", () => {
+    const { renderer, stderrWrites, stdoutWrites } = createRenderer();
+    const state = createInitialInteractiveUiState(createStatus());
+    const emit = (activity: CurrentActivity) => { state.currentActivity = activity; renderer.handleUiEvent({ type: "state_changed", state }); };
+    const activity: CurrentActivity = { action: { kind: "thinking" }, owner: { kind: "runtime", role: "A", sessionId: "A", runId: "run", turnId: "turn" }, phase: "Planning", model: "Fixture A", startedAt: 0, lastEventAt: 0, recent: [] };
+    emit(activity); emit({ ...activity, lastEventAt: 100 });
+    emit({ ...activity, action: { kind: "writing" } });
+    const tool: CurrentActivity = { ...activity, action: { kind: "tool_execution", toolName: "read", callId: "one", label: "reading", target: "src/index.ts", additionalCalls: 0 } };
+    emit(tool); emit({ ...tool, lastEventAt: 200 });
+    emit({ ...tool, action: { kind: "tool_execution", toolName: "read", callId: "two", label: "reading", additionalCalls: 0 } });
+    emit({ ...activity, action: { kind: "cancelling" }, owner: { kind: "coordinator" } });
+    emit({ ...activity, action: { kind: "terminal", outcome: "cancelled" }, owner: { kind: "coordinator" } });
+    renderer.beforeTextOutput(); renderer.beforeTextOutput();
     expect(stderrWrites).toEqual([
-      "Planning · Agent A · GPT-5.4 (openai/gpt-5.4)\n",
-      "  prepared a plan for approval\n",
-      "  reason: the plan is ready for operator approval before starting Agent B\n",
-      "Execution · Agent A · GPT-5.4 (openai/gpt-5.4)\n",
-      "  prepared iteration 1 for Agent B\n",
-      "  reason: sending the next handoff to Agent B\n",
-      "Repair · Agent B · Qwen3 Coder Next (local-qwen/qwen3-coder-next)\n",
-      "  requesting repair from Agent B\n",
-      "  reason: missing pi-completion block\n",
-      "Execution · Agent B · Qwen3 Coder Next v2 (local-qwen/qwen3-coder-next-v2)\n",
-      "  gathering local context\n",
-      "  reason: gathering local context before making changes\n"
+      "Agent A / Fixture A / Planning: Thinking\n",
+      "Agent A / Fixture A / Planning: Writing a response\n",
+      "Agent A / Fixture A / Planning: Reading src/index.ts\n",
+      "Agent A / Fixture A / Planning: Reading\n",
+      "Coordinator / Planning: Cancelling; waiting for runtime cleanup\n",
+      "Coordinator / Planning: Request cancelled\n"
     ]);
+    expect(stdoutWrites).toEqual(["\n"]);
+    expect(stderrWrites.join("")).not.toMatch(/reason:|gathering|inspecting/);
   });
 
-  it("resets the current burst after text output and clear boundaries", () => {
-    const statusRef = { current: createStatus() };
-    const { renderer, stderrWrites, stdoutWrites } = createRenderer(statusRef);
-
-    renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "thinking_delta" }));
-    renderer.beforeTextOutput();
-    renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "thinking_delta" }));
-    renderer.handleEvent(createEvent("pi.turn_end", "A"));
-    renderer.handleEvent(createEvent("pi.message_update", "A", { assistantEventType: "thinking_delta" }));
-    renderer.beforeTextOutput();
-    renderer.handleEvent(createEvent("planning.plan_ready", "A"));
-    renderer.handleEvent(createEvent("pi.turn_end", "A"));
-    renderer.handleEvent(createEvent("planning.plan_ready", "A"));
-
-    const progress = stderrWrites.join("");
-    expect(
-      progress.match(/Planning · Agent A · GPT-5.4 \(openai\/gpt-5.4\)/g)
-    ).toHaveLength(5);
-    expect(
-      progress.match(/  prepared a plan for approval/g)
-    ).toHaveLength(2);
-    expect(stdoutWrites.join("")).toBe("\n\n");
+  it("reports a new role, model and phase directly from the shared owner", () => {
+    const { renderer, stderrWrites } = createRenderer();
+    const state = createInitialInteractiveUiState(createStatus());
+    state.currentActivity = { action: { kind: "waiting", reason: "provider" }, owner: { kind: "runtime", role: "B", sessionId: "B", runId: "b", turnId: "turn" }, phase: "Revision", model: "Local B", recent: [] };
+    renderer.handleUiEvent({ type: "state_changed", state });
+    expect(stderrWrites).toEqual(["Agent B / Local B / Revision: Waiting for model response\n"]);
   });
 });
 
@@ -283,19 +134,5 @@ function createStatus(): CoordinatorStatusSnapshot {
       }
     ],
     metrics: {}
-  };
-}
-
-function createEvent(
-  eventType: string,
-  role: "A" | "B",
-  details: Record<string, unknown> = {}
-): NormalizedTelemetryEvent {
-  return {
-    eventType,
-    role,
-    sessionId: `${role}-session-1`,
-    timestamp: "2026-04-19T00:00:00.000Z",
-    details
   };
 }
