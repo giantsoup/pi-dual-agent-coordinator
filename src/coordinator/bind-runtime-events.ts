@@ -9,6 +9,7 @@ import { CorrelationState } from "../telemetry/correlation.js";
 import { TelemetryLogger } from "../telemetry/logger.js";
 import { Metrics } from "../telemetry/metrics.js";
 import { getModelDisplayInfo } from "../runtime/model-display.js";
+import { safeDisplayText } from "../security/display-text.js";
 import type { RoleRuntimeBinding, SessionPromptOptions } from "../runtime/create-role-runtime.js";
 import type { Role } from "../types/role.js";
 
@@ -89,7 +90,13 @@ export class RuntimeEventBridge {
       this.pending.add(pending);
     });
 
-    this.subscriptions.set(binding.role, unsubscribe);
+    const unsubscribeCompaction = session.subscribeCompaction?.((event) => {
+      if (binding.session !== session) return;
+      this.logger.log({ ...normalizeLifecycleEvent({ role: binding.role, sessionId: binding.sessionId, sessionFile: binding.sessionFile,
+        requestId: this.requestIds.get(binding.role), eventType: `compaction.${event.type}`, details: { ...event } }),
+        runId: this.runIds.get(binding.role), operatorTurnId: this.operatorTurnId });
+    });
+    this.subscriptions.set(binding.role, () => { unsubscribe(); unsubscribeCompaction?.(); });
   }
 
   public beginOperation(signal: AbortSignal): void {
@@ -164,7 +171,9 @@ export class RuntimeEventBridge {
         return message;
       } catch (error) {
         if (!this.operationSignal?.aborted) await binding.session.abort();
-        logRun("runtime.run_finished", { outcome: this.operationSignal?.aborted ? "interrupted" : "failed", leafId: binding.session.sessionManager?.getLeafId() });
+        logRun("runtime.run_finished", { outcome: this.operationSignal?.aborted ? "interrupted" : "failed",
+          reason: this.operationSignal?.aborted ? undefined : safeDisplayText(error instanceof Error ? error.message : String(error)).slice(0, 1600),
+          leafId: binding.session.sessionManager?.getLeafId() });
         throw this.operationSignal?.aborted ? new OperationStoppedError() : this.submissions.get(sessionKey)?.failure ?? error;
       } finally {
         try {

@@ -36,6 +36,14 @@ later by another role or replacement runtime. Startup fails when the range is fu
 Treat LM Studio and its loaded model as trusted inference software; do not attach
 external execution integrations to this server for coordinator requests.
 
+B's broker has a 120-second upstream inactivity limit and a separate 30-minute
+absolute request limit. Headers and nonempty upstream chunks refresh only the
+inactivity timer. A keeps its 120-second absolute limit. The coordinator's total
+operation deadline and cancellation still take precedence. Local streaming errors
+use fixed, safe SSE messages rather than raw upstream exceptions. Pending partial
+SSE lines are discarded on failure. Neither timeout nor transport failure grants
+permission to replay tools or handoffs.
+
 The broker discards upstream error bodies and response headers. Whole SSE lines
 are redacted before returning to Pi, including credential strings split across
 transport chunks. Registered secrets and their common encodings are redacted
@@ -318,3 +326,28 @@ HTTP/HTTPS page actions with fixture inference and separately probes the product
 profile with dummy Keychain/filesystem/network targets. It does not prove live model
 vision or live provider behavior. Re-run these gates when macOS, Chrome, Playwright,
 the proxy, or the profile changes.
+
+## Compaction capability
+
+B cannot select or access a cloud provider through compaction. Its trusted hook
+receives only a summary callback installed by the coordinator. The current A
+binding owns a separate lazy A-only broker, validated model, and tools-disabled
+ModelRuntime. Summary output is inert context data, never approval or workflow
+protocol. Transcript serialization omits thinking, bounds tool-result text, and
+uses existing redaction before provider submission. Chunking, output, request
+count, and total job time are bounded; cancellation drains inference.
+
+The trusted process uses pinned `@lmstudio/sdk` 2.1.0 only for template/tokenizer
+metadata calls at `ws://127.0.0.1:1234`. Automatic endpoint discovery and model
+loading are not used. This adds no role tool or sandbox network grant. The same
+verified loaded instance is checked before and after counting. Unsupported
+formats, including images without verified accounting, stop before inference.
+Private B reasoning remains archived but is stripped from the replay payload
+before counting and inference. The final request must fit the selected window with output allowance and safety
+margin. A text requests use a conservative byte allowance, which can reject
+requests earlier than a tokenizer would.
+
+The broker reads at most 8 KiB of known error-status bodies to classify context
+overflow. Only a fixed error category/message crosses the boundary; arbitrary
+provider body text remains private. Authentication, transport, rate-limit, and
+unknown failures do not become context-overflow retries.

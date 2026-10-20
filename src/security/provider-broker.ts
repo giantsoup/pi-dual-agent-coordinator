@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
+import { isProviderContextOverflow } from "./provider-error.js";
 import { protectSecret, redactText } from "./redact.js";
 import { loadCredential } from "./credentials.js";
 import { LM_STUDIO_BASE_URL, QWEN38_MODEL_ID } from "./models.js";
@@ -22,6 +23,9 @@ export interface ProviderBroker {
   close(): Promise<void>;
 }
 
+type BrokerStop = { kind: "idle" | "deadline"; milliseconds: number }
+  | { kind: "client_disconnect" | "shutdown" };
+
 export async function createProviderBroker(options: {
   provider?: "openai" | "lm-studio" | undefined;
   cwd: string;
@@ -32,9 +36,15 @@ export async function createProviderBroker(options: {
   maxRequests?: number | undefined;
   maxOutputTokens?: number | undefined;
   timeoutMs?: number | undefined;
+  idleTimeoutMs?: number | undefined;
 }): Promise<ProviderBroker> {
   assertSafeProviderEnvironment();
   const local = options.provider === "lm-studio";
+  const timeoutMs = options.timeoutMs ?? (local ? 30 * 60_000 : 120_000);
+  const idleTimeoutMs = local ? options.idleTimeoutMs ?? 120_000 : undefined;
+  for (const value of [timeoutMs, options.idleTimeoutMs]) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647)) throw new Error("Provider timeout must be a positive whole number within the supported timer range.");
+  }
   const operation = local ? "/v1/chat/completions" : "/v1/responses";
   const endpoint = local ? `${LM_STUDIO_BASE_URL}/chat/completions` : trustedProviderEndpoint;
   const key = local ? "lm-studio" : await (options.load ?? (() => loadCredential(options.cwd)))();
@@ -44,7 +54,7 @@ export async function createProviderBroker(options: {
   const releaseToken = protectSecret(token);
   const request = options.request ?? fetch;
   let requests = 0;
-  const controllers = new Set<AbortController>();
+  const controllers = new Map<AbortController, (reason: BrokerStop) => void>();
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     // Pi's OpenAI SDK retries HTTP failures independently of session retry settings.
     res.setHeader("x-should-retry", "false");
@@ -57,9 +67,17 @@ export async function createProviderBroker(options: {
       res.writeHead(400).end('{"error":{"message":"Provider operation rejected"}}'); return;
     }
     const controller = new AbortController();
-    controllers.add(controller);
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 120_000);
-    res.on("close", () => controller.abort());
+    let stopped: BrokerStop | undefined;
+    const stop = (reason: BrokerStop) => {
+      if (stopped) return;
+      stopped = reason;
+      controller.abort();
+    };
+    controllers.set(controller, stop);
+    const timer = setTimeout(() => stop({ kind: "deadline", milliseconds: timeoutMs }), timeoutMs);
+    let idleTimer: NodeJS.Timeout | undefined;
+    const clearTimers = () => { clearTimeout(timer); clearTimeout(idleTimer); };
+    res.on("close", () => { if (!res.writableEnded) stop({ kind: "client_disconnect" }); });
     try {
       let body = "";
       for await (const chunk of req) {
@@ -78,20 +96,27 @@ export async function createProviderBroker(options: {
       requests++;
       if (local) {
         const instanceId = await options.resolveLocalInstanceId?.();
+        if ("pi_dual_expected_instance" in parsed && parsed.pi_dual_expected_instance !== instanceId) throw new Error("Local model changed after context admission");
+        const forwarded: Record<string, unknown> = { ...parsed };
+        delete forwarded.pi_dual_expected_instance;
         const effort = parsed.model === QWEN38_MODEL_ID
           ? ("reasoning_effort" in parsed ? parsed.reasoning_effort : "xhigh") : "none";
         if (typeof effort !== "string" || !["none", "low", "medium", "xhigh"].includes(effort)) throw new Error("Unsupported local reasoning effort");
-        body = JSON.stringify({ ...parsed, ...(instanceId ? { model: instanceId } : {}), reasoning_effort: effort });
+        body = JSON.stringify({ ...forwarded, ...(instanceId ? { model: instanceId } : {}), reasoning_effort: effort });
       }
       if (!local) assertProviderEndpoint(endpoint);
+      controller.signal.throwIfAborted();
+      if (idleTimeoutMs !== undefined) idleTimer = setTimeout(() => stop({ kind: "idle", milliseconds: idleTimeoutMs }), idleTimeoutMs);
       const upstream = await request(endpoint, {
         method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body, redirect: "error", signal: controller.signal
       });
+      idleTimer?.refresh();
+      controller.signal.throwIfAborted();
       if (!upstream.ok || !upstream.body || upstream.redirected) {
-        await upstream.body?.cancel();
+        const overflow = await isProviderContextOverflow(upstream) && !upstream.redirected;
         res.writeHead(upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502,
-          { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message: local ? "LM Studio request failed; start the local server and load the selected model with 65536 context tokens." : "OpenAI request failed; check credential, permissions, quota, and model access." } }));
+          { "Content-Type": "application/json" }).end(JSON.stringify({ error: overflow ? { code: "context_length_exceeded", message: "Model context limit exceeded" } : { message: local ? "LM Studio request failed; start the local server and load the selected model with 65536 context tokens." : "OpenAI request failed; check credential, permissions, quota, and model access." } }));
         return;
       }
       res.writeHead(200, { "Content-Type": "text/event-stream" });
@@ -100,6 +125,8 @@ export async function createProviderBroker(options: {
       const decoder = new TextDecoder();
       let bytes = 0;
       for await (const chunk of Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream)) {
+        controller.signal.throwIfAborted();
+        if (chunk.length > 0) idleTimer?.refresh();
         bytes += chunk.length;
         if (bytes > 16 * 1024 * 1024) throw new Error("Response limit");
         pending += decoder.decode(chunk, { stream: true });
@@ -108,11 +135,21 @@ export async function createProviderBroker(options: {
           res.write(`${redactText(pending.slice(0, end))}\n`); pending = pending.slice(end + 1);
         }
       }
+      clearTimers();
       res.end(redactText(pending + decoder.decode()));
     } catch {
-      if (res.headersSent) res.destroy();
-      else res.writeHead(502, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message: local ? "LM Studio request unavailable or rejected. Start the local server and load the selected model. No cloud fallback." : "Trusted provider request unavailable or rejected." } }));
-    } finally { clearTimeout(timer); controllers.delete(controller); }
+      clearTimers();
+      if (res.destroyed) return;
+      const message = stopped?.kind === "idle" ? `LM Studio response stalled: no upstream data for ${stopped.milliseconds / 1000} seconds. No automatic replay was attempted.`
+        : stopped?.kind === "deadline" ? `${local ? "LM Studio" : "OpenAI"} response exceeded the ${stopped.milliseconds / 1000}-second request deadline. No automatic replay was attempted.`
+        : stopped?.kind === "shutdown" ? "Provider broker shut down. No automatic replay was attempted."
+        : local ? "LM Studio request interrupted, unavailable or rejected. Check the local server and model. No cloud fallback or automatic replay." : "Trusted provider request unavailable or rejected.";
+      if (res.headersSent) {
+        // Pending partial SSE lines stay private. Pi's Chat Completions SDK accepts an error frame.
+        if (local) res.end(`\ndata: ${JSON.stringify({ error: { message } })}\n\n`);
+        else res.destroy();
+      } else res.writeHead(stopped?.kind === "idle" || stopped?.kind === "deadline" ? 504 : 502, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message } }));
+    } finally { clearTimers(); controllers.delete(controller); }
   };
   const server = createServer((req, res) => { void handle(req, res); });
   server.requestTimeout = 125_000;
@@ -141,7 +178,7 @@ export async function createProviderBroker(options: {
     return {
       baseUrl: `http://127.0.0.1:${address.port}/v1`, token,
       close: async () => {
-        for (const controller of controllers) controller.abort();
+        for (const stop of controllers.values()) stop({ kind: "shutdown" });
         server.closeAllConnections();
         await new Promise<void>((resolve) => server.close(() => resolve()));
         releaseKey(); releaseToken();

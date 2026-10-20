@@ -21,6 +21,10 @@ import {
   SettingsManager
 } from "@earendil-works/pi-coding-agent";
 
+import { AgentASummarizer } from "./agent-a-summarizer.js";
+import { CompactionController, type SummarizeCompaction, type CompactionEvent } from "./compaction.js";
+import { assertRequestBudget, textPayloadAllowance, withOutputBudget, ContextBudgetExceededError, type PayloadCounter } from "./context-budget.js";
+import { localTokenCounter, localReplayPayload } from "../security/local-token-counter.js";
 import { ManagedSession } from "./managed-session.js";
 import { readSessionHistory } from "./session-history.js";
 import { cleanupAll } from "./cleanup.js";
@@ -61,7 +65,9 @@ export interface SessionLike {
   readonly thinkingLevel?: string | undefined;
   readonly isStreaming?: boolean | undefined;
   readonly messages?: AgentMessage[] | undefined;
+  readonly requestBudget?: import("./context-budget.js").RequestBudget | undefined;
   readonly sessionManager?: { getLeafId(): string | null; appendCustomEntry?(type: string, data: unknown): string; getEntries?(): import("@earendil-works/pi-coding-agent").SessionEntry[] } | undefined;
+  subscribeCompaction?(listener: (event: CompactionEvent) => void): () => void;
   bindExtensions?(bindings: Record<string, never>): Promise<void>;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(
@@ -97,6 +103,8 @@ export interface CreateRoleRuntimeOptions {
   /** Trusted test seam, never accepted from CLI, config, extensions, or model input. */
   providerTestBackend?: Parameters<typeof createProviderBroker>[0] | undefined;
   noTools?: boolean | undefined;
+  summarizeCompaction?: SummarizeCompaction | undefined;
+  summaryModel?: (() => string) | undefined;
   /** Adopt live state on model changes; Pi may not have flushed a session file yet. */
   initialSessionManager?: SessionManager | undefined;
 }
@@ -108,6 +116,7 @@ export interface RoleRuntimeBinding {
   readonly sessionId: string;
   readonly sessionFile?: string | undefined;
   cwd: string;
+  summarizeCompaction?: SummarizeCompaction | undefined;
   getMcpStatus?(): RoleMcpStatusSnapshot;
   resetBrowser?: (() => Promise<void>) | undefined;
   rebind(): Promise<void>;
@@ -178,6 +187,7 @@ export async function createRoleRuntime(
   const resourceRoot = mkdtempSync(join(tmpdir(), "pi-dual-resources-"));
   let broker: Awaited<ReturnType<typeof createProviderBroker>> | undefined;
   let runtime: AgentSessionRuntime | undefined;
+  let summarizer: AgentASummarizer | undefined;
   let mcpRuntime: ReturnType<typeof createMcpExtension>;
   try {
     isolation.verify();
@@ -211,6 +221,16 @@ export async function createRoleRuntime(
       sessionRoot: options.sessionRoot, sessionMode: options.sessionMode });
     mcpRuntime = !options.noTools && options.mcp ? createMcpExtension({ role: options.role, config: options.mcp }) : undefined;
 
+    const summarize: SummarizeCompaction | undefined = options.role === "A" ? async (request, signal) => {
+      summarizer ??= new AgentASummarizer({ cwd, model: selected, thinking: selected.reasoning ? (getSupportedThinkingLevels(selected).includes("low") ? "low" : "high") : "off", testBackend: options.providerTestBackend });
+      return summarizer.summarize(request, signal);
+    } : options.summarizeCompaction;
+    const counter: PayloadCounter = options.providerTestBackend
+      ? async (payload) => ({ tokens: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), contextWindow: model.contextWindow, method: "fixture-estimate" })
+      : options.role === "B" ? localTokenCounter(() => assertLmStudioModelReady(selected))
+      : async (payload) => ({ tokens: textPayloadAllowance(payload), contextWindow: model.contextWindow, method: "text-byte-allowance" });
+    const preparePayload = (payload: unknown) => withOutputBudget(options.role === "B" ? localReplayPayload(payload) : payload,
+      model.api, options.noTools ? SMOKE_MAX_TOKENS : model.maxTokens);
     const sessions = new WeakMap<AgentSession, ManagedSession>();
     const sessionBrowsers = new WeakMap<AgentSession, ProjectBrowser>();
     const sessionServers = new WeakMap<AgentSession, LocalServers>();
@@ -231,9 +251,10 @@ export async function createRoleRuntime(
         signal?.throwIfAborted();
         return catalog;
       };
+      const compaction = new CompactionController(options.role, sessionManager, summarize, options.summaryModel ?? (() => selected.id));
       const settings = {
         defaultProvider: selected.provider, defaultModel: selected.id,
-        compaction: { enabled: !options.noTools }, retry: { enabled: false },
+        compaction: { enabled: !options.noTools, reserveTokens: Math.min(20_480, Math.floor(model.contextWindow / 2)), keepRecentTokens: Math.min(20_000, Math.floor(model.contextWindow / 3)) }, retry: { enabled: false },
         enableSkillCommands: false, shellPath: "/bin/bash",
         cacheWarming: "off", enableInstallTelemetry: false, enableAnalytics: false
       } satisfies Parameters<typeof SettingsManager.inMemory>[0];
@@ -256,7 +277,7 @@ export async function createRoleRuntime(
         noContextFiles: true, systemPrompt: "You are a coding assistant in a coordinator-controlled workspace.",
         appendSystemPrompt: [...buildRolePromptAppendix(options.role), ...(options.noTools ? [] : [buildSkillCatalogPrompt(await skillCatalog)])],
         agentsFilesOverride: () => ({ agentsFiles }),
-        extensionFactories: options.noTools ? [] : [createToolInventoryExtension({ readSkills, mcp: mcpRuntime }), ...(browser ? [browser.extensionFactory] : []), ...(servers ? [servers.extensionFactory] : []), ...(mcpRuntime ? [mcpRuntime.extensionFactory] : [])]
+        extensionFactories: options.noTools ? [] : [compaction.extension, createToolInventoryExtension({ readSkills, mcp: mcpRuntime }), ...(browser ? [browser.extensionFactory] : []), ...(servers ? [servers.extensionFactory] : []), ...(mcpRuntime ? [mcpRuntime.extensionFactory] : [])]
       });
       await resourceLoader.reload();
       const extensionErrors = resourceLoader.getExtensions().errors;
@@ -266,6 +287,8 @@ export async function createRoleRuntime(
       const thinkingLevel = !selected.reasoning ? "off" : options.thinkingOverride ?? (options.noTools && selected.id !== "gpt-6.1-sol" ? "off" : options.role === "B" ? defaultLocalThinking(selected.id) : resolveThinkingLevel(options.role));
       if (!getSupportedThinkingLevels(selected).includes(thinkingLevel)) throw new Error("Unsupported reasoning level for this model.");
       if (selected.id === "gpt-6.1-sol" && (thinkingLevel === "off" || thinkingLevel === "minimal")) throw new Error("GPT-6.1 Sol requires Low, Medium or High reasoning.");
+      let recordRequestBudget: (budget: import("./context-budget.js").RequestBudget) => void = () => {};
+      let recordContextFailure: (error: unknown) => void = () => {};
       let assertPromptActive: () => void = () => { throw new Error("Session is not ready."); };
       const agent = new Agent({
         initialState: { model, thinkingLevel, tools: [] }, convertToLlm: (messages) => convertToLlm(redactValue(messages)),
@@ -278,7 +301,18 @@ export async function createRoleRuntime(
             }
             return await modelRuntime.streamSimple(model, redactValue(context), { ...streamOptions, apiKey: ownedToken, maxRetries: 0,
               ...(["gpt-6-luna", "gpt-6.1-sol", "gpt-5.6-terra"].includes(model.id) ? { cacheRetention: "none" } : {}),
-              ...(options.noTools ? { maxTokens: SMOKE_MAX_TOKENS } : {}) });
+              ...(options.noTools ? { maxTokens: SMOKE_MAX_TOKENS } : {}),
+              onPayload: async (payload) => {
+                try {
+                  assertPromptActive(); compaction.assertHealthy();
+                  const replay = preparePayload(payload);
+                  const counted = await counter(replay, streamOptions?.signal);
+                  recordRequestBudget(assertRequestBudget(model, replay, counted, options.noTools ? SMOKE_MAX_TOKENS : model.maxTokens));
+                  assertPromptActive();
+                  return counted.instanceId ? { ...replay, pi_dual_expected_instance: counted.instanceId } : replay;
+                }
+                catch (error) { recordContextFailure(error); throw error; }
+              } });
           } catch (error) {
             return failedModelStream(model, error, streamOptions?.signal?.aborted ?? false);
           }
@@ -296,8 +330,53 @@ export async function createRoleRuntime(
         initialActiveToolNames: tools.map((tool) => tool.name),
         ...(sessionStartEvent ? { sessionStartEvent } : {}) });
       session.refreshContext();
-      const managed = new ManagedSession(session, servers ? () => servers.reset() : undefined);
-      assertPromptActive = () => managed.assertActive();
+      const inspectContext = async (messages: AgentMessage[], signal?: AbortSignal): Promise<void> => {
+        let budgetFailure: unknown;
+        let inspected = false;
+        const preview = modelRuntime.streamSimple(model, { messages: convertToLlm(redactValue(messages)) },
+          { apiKey: ownedToken, maxRetries: 0, ...(signal ? { signal } : {}), onPayload: async (payload) => {
+            inspected = true;
+            try { const replay = preparePayload(payload); assertRequestBudget(model, replay, await counter(replay, signal), options.noTools ? SMOKE_MAX_TOKENS : model.maxTokens); }
+            catch (error) { budgetFailure = error; }
+            throw new Error("Context preview only; inference forbidden.");
+          } });
+        await preview.result();
+        signal?.throwIfAborted();
+        if (!inspected) throw new Error("Context preflight could not inspect the provider request.");
+        if (budgetFailure) throw budgetFailure;
+      };
+      const preflight = options.noTools ? undefined : async (text: string, signal: AbortSignal) => {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          session.refreshContext();
+          try { await inspectContext([...session.messages, { role: "user", content: text, timestamp: Date.now() }], signal); return; }
+          catch (error) {
+            if (!(error instanceof ContextBudgetExceededError) || attempt || session.messages.filter((message) => message.role !== "system").length < 2) throw error;
+          }
+          await session.compact();
+          compaction.assertHealthy();
+        }
+      };
+      if (!options.noTools) {
+        const prepareNext = agent.prepareNextTurnWithContext;
+        agent.prepareNextTurnWithContext = async (turn, signal) => {
+          let force = false;
+          try { await inspectContext(turn.context.messages, signal); }
+          catch (error) { if (error instanceof ContextBudgetExceededError) force = true; else { recordContextFailure(error); throw error; } }
+          const reserve = settingsManager.getCompactionReserveTokens(model);
+          const recent = settingsManager.getCompactionKeepRecentTokens(model);
+          // Ask Pi's existing next-turn hook to compact, retaining its preparation and persistence.
+          if (force) settingsManager.applyOverrides({ compaction: { reserveTokens: model.contextWindow, keepRecentTokens: Math.min(recent, 4096) } });
+          try {
+            const next = await prepareNext?.(turn, signal);
+            compaction.assertHealthy();
+            return next;
+          } finally { if (force) settingsManager.applyOverrides({ compaction: { reserveTokens: reserve, keepRecentTokens: recent } }); }
+        };
+      }
+      const managed = new ManagedSession(session, servers ? () => servers.reset() : undefined, compaction, preflight);
+      assertPromptActive = () => { managed.assertActive(); compaction.assertHealthy(); };
+      recordContextFailure = (error) => managed.failContext(error);
+      recordRequestBudget = (budget) => { managed.requestBudget = budget; compaction.recordBudget(budget); };
       sessions.set(session, managed);
       if (browser) sessionBrowsers.set(session, browser);
       if (servers) sessionServers.set(session, servers);
@@ -345,14 +424,14 @@ export async function createRoleRuntime(
       dispose: () => ownedRuntime.dispose()
     };
     const binding = new RoleRuntimeBindingImpl(options.role, guardedRuntime, cwd, mcpRuntime?.getStatus, async () => {
-      await cleanupAll([...Array.from(localServers, servers => () => servers.dispose()), ...Array.from(browsers, browser => () => browser.dispose()), async () => mcpRuntime?.dispose(), () => ownedBroker.close(),
+      await cleanupAll([...Array.from(localServers, servers => () => servers.dispose()), ...Array.from(browsers, browser => () => browser.dispose()), async () => mcpRuntime?.dispose(), () => summarizer?.dispose(), () => ownedBroker.close(),
         () => isolation.dispose(), () => rmSync(resourceRoot, { recursive: true, force: true })]);
     }, async () => { for (const browser of browsers) await browser.reset(); });
     await binding.rebind();
-    return binding;
+    return Object.assign(binding, { summarizeCompaction: summarize });
   } catch (error) {
     await cleanupAll([async () => runtime?.session.abort(), () => runtime?.session.dispose(), async () => runtime?.dispose(), async () => mcpRuntime?.dispose(),
-      ...Array.from(localServers, servers => () => servers.dispose()), ...Array.from(browsers, browser => () => browser.dispose()), async () => broker?.close(), () => isolation.dispose(), () => rmSync(resourceRoot, { recursive: true, force: true })]).catch(() => undefined);
+      ...Array.from(localServers, servers => () => servers.dispose()), ...Array.from(browsers, browser => () => browser.dispose()), async () => summarizer?.dispose(), async () => broker?.close(), () => isolation.dispose(), () => rmSync(resourceRoot, { recursive: true, force: true })]).catch(() => undefined);
     throw new Error(redactText(error instanceof Error ? error.message : "Secure runtime initialization failed."));
   }
 }

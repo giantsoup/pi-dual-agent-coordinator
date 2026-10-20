@@ -34,6 +34,9 @@ npm run secure:install -- "$HOME/.local/share/pi-dual/runtime-1"
 ```
 
 The snapshot includes `bin/node`, npm 12.2.0, the lockfile, and a hash manifest.
+`secure:install` builds fresh and checks the copied broker with credential-free
+stream fixtures before recording a successful installation. The check covers
+active streams, upstream silence, and the absolute request deadline.
 Verify it with its `bin/node scripts/verify-installation.mjs`. See the exact
 upgrade evidence and rollback limits in [Pi upgrade verification](docs/pi-upgrade-verification.md).
 
@@ -125,6 +128,10 @@ The narrative retains planning, operator approval, execution, check-ins,
 continuation, revisions, and review in event order. Tool groups start folded.
 A completed run means the runtime settled. Approval and revision labels require
 coordinator decision events. The plain REPL uses the same observed activity states.
+
+When a runtime fails, Current activity retains the failed role, phase, and safe
+reason, including after B continues from an A check-in. The reason remains in
+retained history. An interrupted tool call is never presented as executed.
 
 During an ongoing handoff, Agent B pauses after every 10 completed model turns
 for a brief Agent A process check-in. One turn includes the model response and
@@ -421,6 +428,21 @@ Cancellation and timeout preserve completed file changes. Inspect those changes
 before submitting another request. Project `AGENTS.md` instructions load when a
 role runtime is created. Use `/new` or restart Pi after adding or editing them.
 
+Agent B's local provider stops after 120 seconds without upstream data. An active
+stream can continue for up to 30 minutes per request, subject to the outer
+operation deadline. Streaming tool arguments count as activity. A's provider
+keeps its 120-second absolute request limit. Provider failure stops the workflow
+without replaying tools or a handoff. The terminal shows the safe stopping cause.
+
+Run `bin/node scripts/verify-provider-stream-deadlines.mjs` inside a trusted
+installation to check its compiled broker with injected streams and scaled
+deadlines. This check makes no live inference requests.
+For a separate bounded live check, run `bin/node scripts/verify-local-stream.mjs`
+inside a verified trusted installation. It uses the saved already-loaded local
+model, permits only native write and read tools, and checks a response lasting
+over two minutes plus exact file bytes in a disposable workspace. It stops after
+seven minutes and never loads a model or resumes an existing workflow.
+
 ## Development
 
 ```bash
@@ -446,3 +468,30 @@ See [terminal controls](docs/terminal-experience.md) for the terminal work plan.
 - [CONTRIBUTING.md](./CONTRIBUTING.md): local setup, validation, and pull request expectations
 - [docs/security-model.md](./docs/security-model.md): role separation and trust boundaries
 - [docs/implementation-backlog.md](./docs/implementation-backlog.md): future work
+
+### History compaction
+
+The coordinator uses Agent A's selected approved model to summarize both agents'
+histories through a separate, tools-disabled request. Agent B's execution stays
+in LM Studio. The Current activity panel identifies which history A is compacting,
+shows the pause and elapsed time, and retains the outcome in request history.
+Ctrl+C cancels during compaction, including while browsing history. Plain mode
+prints the start and outcome once.
+
+Compaction preserves the full archive and completed file changes. If summary
+creation, persistence, or request-budget verification fails, execution stops;
+submit explicitly to continue. A summary never grants execution approval.
+
+B's complete text/tool request is counted with the loaded LM Studio model's
+prompt template and tokenizer before inference. Its selected window remains
+65,536 tokens, with output headroom and a 4,096-token safety margin. Tokenizer
+unavailability and unsupported image formats fail before inference. Private B
+reasoning remains archived and is omitted from provider replay. A's text requests use a conservative byte allowance. Summary requests
+use low reasoning where supported and a separate bounded output budget.
+
+From a verified trusted installation, `bin/node scripts/verify-context-budget.mjs`
+checks the saved local executor's tokenizer without inference.
+`bin/node scripts/verify-compaction.mjs /absolute/credential-project` separately
+checks real A summaries and B tool continuation across two compactions in a
+throwaway workspace. Both require the saved executor to be already loaded;
+neither loads or downloads a model.

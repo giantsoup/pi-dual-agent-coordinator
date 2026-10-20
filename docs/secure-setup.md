@@ -29,6 +29,12 @@ An unavailable local model blocks startup; there is no cloud fallback.
    Existing installation directories are never overwritten. Use a new directory
    when updating. Do not let an agent run against this installation or its parent
    as its workspace. The copy includes source, compiled app, native helper, lockfile, dependencies, Node 24.22.0, npm 12.2.0, and `installation-manifest.json`. It verifies copied bytes and executable modes. Run `bin/node scripts/verify-installation.mjs` inside the snapshot before using credentials.
+   Installation runs a fresh build and checks the copied compiled provider broker
+   with injected local streams. Active-stream, idle, and absolute-deadline results
+   are bound to the broker hash in the manifest. A failed check leaves an
+   incomplete snapshot without a success manifest. Do not activate that snapshot.
+   Rerun `bin/node scripts/verify-provider-stream-deadlines.mjs` inside a verified
+   snapshot to repeat the credential-free check.
 5. Run doctor from that installation against the target workspace:
 
    ```sh

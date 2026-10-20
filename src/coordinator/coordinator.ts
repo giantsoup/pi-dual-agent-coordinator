@@ -77,6 +77,8 @@ import type {
 } from "../types/workflow.js";
 import { isWorkflowTerminal } from "../types/workflow.js";
 
+import type { SummarizeCompaction } from "../runtime/compaction.js";
+
 export interface CoordinatorOptions {
   cwd: string;
   agentDir?: string;
@@ -102,6 +104,12 @@ export interface CoordinatorOptions {
 
 export class Coordinator {
   private readonly registry = new RuntimeRegistry();
+  private readonly summarizeHistory: SummarizeCompaction = (request, signal) => {
+    const summarize = this.registry.get("A")?.summarizeCompaction;
+    if (!summarize) throw new Error("Trusted Agent A compaction summarizer unavailable.");
+    return summarize(request, signal);
+  };
+  private readonly summaryModel = () => this.registry.get("A")?.session.model?.id ?? "Agent A";
   private readonly metrics = new Metrics();
   private readonly sessionRoot: string;
   private readonly ledger: SessionLedger;
@@ -198,7 +206,8 @@ export class Coordinator {
         modelOverride: this.options.modelA,
         thinkingOverride: this.options.thinkingA,
         sessionMode: this.options.sessionMode,
-        mcp: this.resolvedMcpConfig, browser: this.browserConfiguration
+        mcp: this.resolvedMcpConfig, browser: this.browserConfiguration,
+        summarizeCompaction: this.summarizeHistory, summaryModel: this.summaryModel
       });
       this.registry.set(bindingA);
       let prepared: PreparedLocalModel | undefined;
@@ -218,7 +227,8 @@ export class Coordinator {
           localModel: prepared?.model,
           thinkingOverride: this.options.thinkingB,
           sessionMode: this.options.sessionMode,
-          mcp: this.resolvedMcpConfig, browser: this.browserConfiguration
+          mcp: this.resolvedMcpConfig, browser: this.browserConfiguration,
+          summarizeCompaction: this.summarizeHistory, summaryModel: this.summaryModel
         });
         this.registry.set(bindingB);
         controller.signal.throwIfAborted();
@@ -554,6 +564,7 @@ export class Coordinator {
       replacement = await this.runtimeFactory({ role, cwd: this.options.cwd, agentDir: this.options.agentDir,
         sessionRoot: this.sessionRoot, sessionMode: this.options.sessionMode,
         modelOverride: model, localModel: prepared?.model, thinkingOverride: thinking, mcp: this.resolvedMcpConfig, browser: this.browserConfiguration,
+        summarizeCompaction: this.summarizeHistory, summaryModel: this.summaryModel,
         initialSessionManager: previous.session.sessionManager instanceof SessionManager ? previous.session.sessionManager : undefined });
       signal.throwIfAborted();
       await previous.resetBrowser?.();

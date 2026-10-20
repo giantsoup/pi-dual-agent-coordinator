@@ -174,10 +174,12 @@ export type CurrentAction =
   | { kind: "waiting"; reason: "provider" | "next_event" }
   | { kind: "thinking" | "writing" | "tool_preparation" }
   | { kind: "tool_execution"; callId: string; toolName: string; label: string; target?: string | undefined; additionalCalls: number }
+  | { kind: "compaction"; jobId: string; role: Role; outcome: "running" | "completed" | "failed" | "cancelled" }
   | { kind: "approval_waiting" }
   | { kind: "model_loading"; role: Role; label: string }
   | { kind: "cancelling" }
-  | { kind: "terminal"; outcome: "completed" | "failed" | "cancelled" | "timed_out" | "interrupted" };
+  | { kind: "terminal"; outcome: "failed"; failure?: { role: Role; reason: string } | undefined }
+  | { kind: "terminal"; outcome: "completed" | "cancelled" | "timed_out" | "interrupted" };
 
 export interface CurrentActivity {
   action: CurrentAction;

@@ -1,9 +1,14 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { ResponseFormatError, PROTOCOL_TOOL_NAMES } from "../coordinator/response-repair.js";
+import type { CompactionController, CompactionEvent } from "./compaction.js";
+import { type RequestBudget, ContextManagementError } from "./context-budget.js";
 import type { SessionLike } from "./create-role-runtime.js";
 
 /** Owns Pi preflight, agent work, and post-turn compaction as one submission. */
 export class ManagedSession implements SessionLike {
+  public requestBudget: RequestBudget | undefined;
+  private submissionController: AbortController | undefined;
+  private contextFailure: Error | undefined;
   private stopped = true;
   private pending: Promise<void> | undefined;
   private compactionDone = Promise.resolve();
@@ -11,7 +16,7 @@ export class ManagedSession implements SessionLike {
   private readonly autoCompactionEnabled: boolean;
   private readonly unsubscribe: () => void;
 
-  public constructor(public readonly piSession: AgentSession, private readonly onAbort?: (() => Promise<void>) | undefined) {
+  public constructor(public readonly piSession: AgentSession, private readonly onAbort?: (() => Promise<void>) | undefined, private readonly compaction?: CompactionController, private readonly preflight?: (text: string, signal: AbortSignal) => Promise<void>) {
     const session = this.piSession;
     this.autoCompactionEnabled = session.autoCompactionEnabled;
     session.setAutoCompactionEnabled(false);
@@ -20,7 +25,10 @@ export class ManagedSession implements SessionLike {
         this.compactionDone = new Promise((resolve) => { this.finishCompaction = resolve; });
         // Pi installs its abort controller immediately after emitting this event.
         if (this.stopped) queueMicrotask(() => session.abortCompaction());
-      } else if (event.type === "compaction_end") this.finishCompaction();
+      } else if (event.type === "compaction_end") {
+        if (event.errorMessage) this.failContext(new ContextManagementError("History compaction failed; execution stopped."));
+        this.finishCompaction();
+      }
     });
   }
 
@@ -34,12 +42,20 @@ export class ManagedSession implements SessionLike {
   public bindExtensions(bindings: Record<string, never>) { return this.piSession.bindExtensions(bindings); }
   public subscribe(listener: (event: AgentSessionEvent) => void) { return this.piSession.subscribe(listener); }
 
+  public subscribeCompaction(listener: (event: CompactionEvent) => void): () => void { return this.compaction?.subscribe(listener) ?? (() => {}); }
+  public failContext(error: unknown): void { this.contextFailure ??= error instanceof Error ? error : new ContextManagementError("Context admission failed."); }
   public assertActive(): void {
+    if (this.contextFailure) throw this.contextFailure;
+    this.compaction?.assertHealthy();
     if (this.stopped) throw new Error("Submission has stopped.");
   }
 
   public prompt(text: string, options?: Parameters<SessionLike["prompt"]>[1]): Promise<void> {
     if (this.pending) throw new Error("A submission is already active.");
+    const controller = new AbortController();
+    this.submissionController = controller;
+    this.contextFailure = undefined;
+    this.compaction?.reset();
     this.stopped = false;
     const { onTurnEnd, formatOnly, responseId, responseAttempt: _responseAttempt, ...piOptions } = options ?? {};
     const previousTools = this.piSession.getActiveToolNames();
@@ -73,20 +89,29 @@ export class ManagedSession implements SessionLike {
     });
     const pending = (async () => {
       try {
+        await this.preflight?.(text, controller.signal);
+        controller.signal.throwIfAborted();
+        this.assertActive();
         await this.piSession.prompt(text, { ...piOptions, preflightResult: (disposition) => {
           if (disposition === "started" && this.stopped) void this.piSession.abort();
           options?.preflightResult?.(disposition === "started");
         } });
         await this.piSession.waitForIdle();
         await this.compactionDone;
+        this.compaction?.assertHealthy();
+        if (this.contextFailure) throw this.contextFailure;
         if (turnError) throw turnError;
       } catch (error) {
-        throw turnError ?? error;
+        this.piSession.clearQueue();
+        this.compaction?.assertHealthy();
+        throw this.contextFailure ?? turnError ?? error;
       } finally {
         this.stopped = true;
+        if (this.contextFailure) this.piSession.clearQueue();
         this.piSession.setAutoCompactionEnabled(false);
         unsubscribeTurns();
         this.pending = undefined;
+        this.submissionController = undefined;
         if (formatOnly) this.piSession.setActiveToolsByName(previousTools);
       }
     })();
@@ -96,7 +121,9 @@ export class ManagedSession implements SessionLike {
 
   public async abort(): Promise<void> {
     this.stopped = true;
+    this.submissionController?.abort();
     this.piSession.setAutoCompactionEnabled(false);
+    this.compaction?.abort();
     this.piSession.abortCompaction();
     this.piSession.abortBranchSummary();
     this.piSession.clearQueue();

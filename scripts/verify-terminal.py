@@ -13,6 +13,7 @@ import select
 import signal
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import time
@@ -163,6 +164,43 @@ class Terminal:
         if self.mode.startswith('history'):
             (EVIDENCE/(self.mode+'.ansi')).write_bytes(self.output)
         os.close(self.master); os.close(self.slave)
+
+def verify_stream_failure(root):
+    for stream_mode in ['stream-failure', 'plain-stream-failure']:
+        terminal = Terminal(root, stream_mode, (120,80))
+        try:
+            terminal.command('plan stream failure')
+            terminal.wait(lambda:bool(terminal.state().get('pendingPlan')),'stream failure approval boundary')
+            terminal.command('/approve')
+            terminal.wait(lambda:terminal.state().get('operation',{}).get('kind')=='failed','B stream interruption after check-in')
+            state = terminal.state()
+            activity = state['currentActivity']
+            check(activity['owner']['role']=='B' and activity['phase']=='Execution','failure retains B ownership after A check-in')
+            check('request interrupted' in activity['action']['failure']['reason'],'specific safe failure retained')
+            check((terminal.workspace/'result.txt').read_text()=='write preserved before interruption','earlier write survives provider failure')
+            check(not (terminal.workspace/'must-not-exist.txt').exists(),'incomplete streamed tool never executes')
+            runs = [record for record in state['history']['records'] if record['kind']=='run']
+            check(any(run['phase']=='Check-in' and run['outcome']['kind']=='completed' for run in runs),'A check-in succeeded before B failure')
+            if stream_mode == 'stream-failure':
+                for cols,rows in [(120,80),(80,24),(40,12)]:
+                    terminal.size(cols,rows)
+                    screen = terminal.snapshot(f'stream-failure-{cols}x{rows}')
+                    if CAPTURE: check('LM Studio request interrupted' in screen and 'Agent B' in screen,'failure role and cause visible at target size')
+                terminal.send('\x1bOS')
+                terminal.snapshot('stream-failure-history-40x12')
+            else:
+                terminal.read()
+                check(b'Agent B / Execution: Request failed / LM Studio request interrupted' in terminal.output,'plain mode prints role and cause')
+            check(b'private upstream detail' not in terminal.output,'raw provider errors stay private')
+            terminal.stop(via_signal=stream_mode == 'stream-failure')
+        finally:
+            if terminal.process.poll() is None: terminal.process.kill();terminal.process.wait()
+
+if sys.argv[1:] == ['--provider-stream-only']:
+    with tempfile.TemporaryDirectory(prefix='pi-stream-terminal-') as directory:
+        verify_stream_failure(Path(directory))
+    print(json.dumps({'outcome':'passed','scope':'provider-stream','ptyAssertions':checks,'interfaces':['tui','plain'],'screenCapture':CAPTURE}))
+    raise SystemExit(0)
 
 with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
     root = Path(directory)
@@ -719,6 +757,45 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
         activity.stop(via_signal=True)
     finally:
         if activity.process.poll() is None: activity.process.kill();activity.process.wait()
+    verify_stream_failure(root)
+    for scenario in ['A', 'B', 'fail', 'cancel', 'plain']:
+        compact = Terminal(root, 'plain-compaction' if scenario == 'plain' else 'compaction-' + scenario, (120,80))
+        try:
+            if scenario == 'B':
+                compact.command('plan B compaction fixture')
+                compact.wait(lambda:bool(compact.state().get('pendingPlan')),'compaction approval boundary')
+                compact.command('/approve')
+            else:
+                compact.command(('fail ' if scenario == 'fail' else '') + 'compaction fixture')
+            compact.wait(lambda:compact.state().get('currentActivity',{}).get('action',{}).get('kind')=='compaction','visible compaction pause')
+            role = 'B' if scenario == 'B' else 'A'
+            state = compact.state()
+            check(state['currentActivity']['action']['role']==role,'compaction identifies affected history')
+            if scenario != 'plain':
+                screen = compact.snapshot('compaction-'+scenario+'-120x80')
+                if CAPTURE: check("Agent A is compacting Agent " + role in screen,'compaction is obvious with diagnostics hidden')
+                compact.size(40,12);time.sleep(.1)
+                small = compact.snapshot('compaction-'+scenario+'-40x12')
+                if CAPTURE: check('compact' in small.lower() and 'Ctrl+C' in small,'narrow compaction retains action and cancellation')
+                compact.size(120,80)
+            if scenario == 'cancel':
+                compact.send('\x1bOS');time.sleep(.1)
+                compact.snapshot('compaction-cancel-history-120x80')
+                compact.send('\x03')
+                compact.wait(lambda:compact.state().get('operation',{}).get('kind')=='cancelled','compaction cancel drains')
+            else:
+                expected = 'failed' if scenario == 'fail' else 'completed'
+                compact.wait(lambda:compact.state().get('operation',{}).get('kind')==expected,'compaction terminal outcome')
+            milestones = compact.state().get('history',{}).get('milestones',[])
+            check(any(item.get('eventType')=='compaction.started' for item in milestones),'compaction start retained in history')
+            terminal_event = 'cancelled' if scenario == 'cancel' else 'failed' if scenario == 'fail' else 'completed'
+            check(any(item.get('eventType')=='compaction.'+terminal_event for item in milestones),'compaction outcome retained in history')
+            if scenario == 'B': check((compact.workspace/'result.txt').read_text()=='compaction write preserved','compaction preserves completed B write')
+            if scenario == 'plain':
+                check(b'Agent A is compacting' in compact.output and b'history compacted by A' in compact.output,'plain compaction prints lifecycle')
+            compact.stop(via_signal=True)
+        finally:
+            if compact.process.poll() is None: compact.process.kill();compact.process.wait()
     for shutdown_signal in [signal.SIGHUP,signal.SIGINT]:
         probe = Terminal(root,'signal-'+str(shutdown_signal))
         try: probe.stop(via_signal=True,shutdown_signal=shutdown_signal)

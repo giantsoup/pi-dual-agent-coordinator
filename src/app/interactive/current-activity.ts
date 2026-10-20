@@ -28,6 +28,8 @@ export class CurrentActivityReducer {
   private operation: Context["operation"]["kind"] = "idle";
   private turnId: string | undefined;
   private actionKey = "";
+  private compaction: { action: Extract<CurrentAction, { kind: "compaction" }>; sessionId: string; startedAt: number; model?: string | undefined } | undefined;
+  private readonly completedCompactions = new Set<string>();
 
   public constructor(private readonly now: () => number = () => performance.now()) {}
 
@@ -37,18 +39,38 @@ export class CurrentActivityReducer {
     const turnId = history.currentTurnId;
     if (turnId !== this.turnId || operation.kind === "running" && this.operation !== "running" && this.operation !== "cancelling") {
       this.runs.clear();
+      this.compaction = undefined;
+      this.completedCompactions.clear();
       this.turnId = turnId;
     }
     this.operation = operation.kind;
     for (const [role, observation] of this.runs) {
       if (status.runtimes.find((runtime) => runtime.role === role)?.sessionId !== observation.run.sessionId) this.runs.delete(role);
     }
+    if (event?.eventType.startsWith("compaction.") && event.operatorTurnId === turnId && operation.kind === "running") {
+      const runtime = status.runtimes.find((item) => item.role === event.role);
+      const jobId = event.details.jobId;
+      if (runtime?.sessionId === event.sessionId && typeof jobId === "string") {
+        if (event.eventType === "compaction.started" && !this.completedCompactions.has(jobId)) {
+          if (this.compaction?.action.jobId !== jobId) this.compaction = { action: { kind: "compaction", jobId, role: event.role, outcome: "running" }, sessionId: event.sessionId, startedAt: now, model: typeof event.details.summarizerModel === "string" ? safeDisplayText(event.details.summarizerModel) : undefined };
+        } else if (this.compaction?.action.jobId === jobId && !this.completedCompactions.has(jobId)) {
+          const outcome = event.eventType === "compaction.completed" ? "completed" : event.eventType === "compaction.failed" ? "failed" : "cancelled";
+          this.compaction.action = { ...this.compaction.action, outcome };
+          this.completedCompactions.add(jobId);
+        }
+      }
+    }
+    if (this.compaction && status.runtimes.find((item) => item.role === this.compaction?.action.role)?.sessionId !== this.compaction.sessionId) this.compaction = undefined;
+    if (event && event.operatorTurnId === turnId && event.sessionId === this.compaction?.sessionId && this.compaction?.action.outcome === "completed" && !event.eventType.startsWith("compaction.") && !event.eventType.startsWith("pi.compaction") && (event.eventType === "pi.message_update" || event.eventType === "runtime.run_finished")) this.compaction = undefined;
     if (event && operation.kind === "running" && event.operatorTurnId === turnId && turnId) this.observe(context, event, now);
 
     const recent = recentActivity(history, turnId);
     const base = { owner: { kind: "coordinator" } as const, phase: status.phaseLabel, recent, progress: activityProgress(context) };
     if (operation.kind === "cancelling" || modal.kind === "model_loading" && modal.cancelling) {
       return this.commit({ ...base, action: { kind: "cancelling" } }, now);
+    }
+    if (this.compaction && (operation.kind === "running" || this.compaction.action.outcome === "failed")) {
+      return this.commit({ ...base, action: this.compaction.action, model: this.compaction.model, startedAt: this.compaction.startedAt, progress: this.compaction.action.outcome === "running" ? "Execution paused / Ctrl+C cancel" : undefined }, now);
     }
     if (modal.kind === "model_loading") {
       return this.commit({ ...base, action: { kind: "model_loading", role: modal.role, label: safeDisplayText(modal.progress.message) } }, now);
@@ -61,6 +83,14 @@ export class CurrentActivityReducer {
         : turn && turn.outcome.kind !== "running" ? { kind: "terminal", outcome: turn.outcome.kind === "waiting_approval" ? "interrupted" : turn.outcome.kind }
         : { kind: "idle" };
       const latestRun = [...history.records].reverse().find((record) => record.kind === "run" && record.parentId === turnId);
+      if (action.kind === "terminal" && action.outcome === "failed" && turnId) {
+        const failedRun = history.records.filter((record): record is Run => record.kind === "run" && record.parentId === turnId && record.outcome.kind === "failed")
+          .sort((a, b) => Date.parse(b.outcome.kind === "failed" ? b.outcome.endedAt : b.timestamp) - Date.parse(a.outcome.kind === "failed" ? a.outcome.endedAt : a.timestamp) || (b.sequence ?? 0) - (a.sequence ?? 0))[0];
+        if (failedRun?.outcome.kind === "failed") return this.commit({ ...base,
+          owner: { kind: "runtime", role: failedRun.role, sessionId: failedRun.sessionId, runId: failedRun.id, turnId, requestId: failedRun.requestId },
+          phase: failedRun.phase, action: { ...action, ...(failedRun.outcome.reason ? { failure: { role: failedRun.role, reason: safeDisplayText(failedRun.outcome.reason) } } : {}) }
+        }, now);
+      }
       return this.commit({ ...base, phase: action.kind === "terminal" && latestRun?.kind === "run" ? latestRun.phase : base.phase, action }, now);
     }
     const observation = this.runs.get(status.activeRole);
@@ -153,6 +183,9 @@ export function currentActionText(action: CurrentAction): string {
     case "writing": return "Writing a response";
     case "tool_preparation": return "Preparing a tool call";
     case "tool_execution": return `${action.label[0]?.toUpperCase() ?? ""}${action.label.slice(1)}${action.additionalCalls ? ` (+${action.additionalCalls} running)` : ""}`;
+    case "compaction": return action.outcome === "running" ? `Agent A is compacting Agent ${action.role}'s history`
+      : action.outcome === "completed" ? `Agent ${action.role} history compacted by A`
+      : action.outcome === "cancelled" ? "History compaction cancelled; execution stopped" : "History compaction failed; execution stopped";
     case "approval_waiting": return "Waiting for your approval";
     case "model_loading": return action.label;
     case "cancelling": return "Cancelling; waiting for runtime cleanup";

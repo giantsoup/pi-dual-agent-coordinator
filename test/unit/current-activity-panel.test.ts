@@ -19,6 +19,17 @@ function setup() {
 }
 
 describe("pinned current activity", () => {
+  it.each([[120, 10], [80, 7], [40, 3], [40, 1]])("retains a terminal failure reason at %s columns and %s rows", (width, height) => {
+    const state = setup();
+    state.currentActivity.action = { kind: "terminal", outcome: "failed", failure: { role: "B", reason: "LM Studio response stalled: no upstream data for 120 seconds." } };
+    const lines = renderCurrentActivity(state, width, height, 10000, { unread: 0, following: true, hidden: false, returnHint: "" });
+    const screen = stripTerminalSequences(lines.join("\n"));
+    expect(screen).toContain("LM Studio response stalled");
+    expect(screen).toMatch(/Agent B|B failed/);
+    expect(lines.length).toBeLessThanOrEqual(height);
+    expect(lines.every(line => visibleWidth(line) <= width)).toBe(true);
+    expect(screen).not.toMatch(/Active:|elapsed|last event/);
+  });
   it.each([[120, 10], [80, 7], [40, 3]])("keeps action and unread status bounded at %s columns", (width, height) => {
     const state = setup();
     const lines = renderCurrentActivity(state, width, height, 10000, view);

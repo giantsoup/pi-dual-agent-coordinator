@@ -11,6 +11,15 @@ import { createInitialInteractiveUiState } from "../../src/app/interactive/store
 import type { CurrentActivity } from "../../src/types/ui.js";
 
 describe("repl progress renderer", () => {
+  it("prints the retained failed role and cause once", () => {
+    const { renderer, stderrWrites } = createRenderer();
+    const state = createInitialInteractiveUiState(createStatus());
+    state.currentActivity = { action: { kind: "terminal", outcome: "failed", failure: { role: "B", reason: "LM Studio response stalled: no upstream data for 120 seconds." } },
+      owner: { kind: "runtime", role: "B", sessionId: "B", runId: "B-run", turnId: "turn" }, phase: "Execution", recent: [] };
+    renderer.handleUiEvent({ type: "state_changed", state });
+    renderer.handleUiEvent({ type: "state_changed", state });
+    expect(stderrWrites).toEqual(["Agent B / Execution: Request failed / LM Studio response stalled: no upstream data for 120 seconds.\n"]);
+  });
   it("renders the startup banner and prompt with model displays", () => {
     const status = createStatus();
 

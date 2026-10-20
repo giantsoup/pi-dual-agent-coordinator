@@ -129,7 +129,10 @@ export class HistoryIndex {
     }
     const run = runId ? this.records.get(runId) : undefined;
     const matchesRun = run?.kind === "run" && run.role === event.role && run.sessionId === event.sessionId && run.requestId === event.requestId;
-    if (event.eventType === "runtime.run_finished" && matchesRun && run.outcome.kind === "running") put({ ...run, outcome: outcome(d.outcome, event.timestamp) });
+    if (event.eventType === "runtime.run_finished" && matchesRun && run.outcome.kind === "running") {
+      const terminal = outcome(d.outcome, event.timestamp);
+      put({ ...run, outcome: terminal.kind === "failed" ? { ...terminal, reason: string(d.reason)?.slice(0, 1600) } : terminal });
+    }
     if (event.eventType.startsWith("pi.tool_execution_") && matchesRun && run.outcome.kind === "running") {
       const callId = string(d.toolCallId);
       const toolName = string(d.toolName);
@@ -150,7 +153,7 @@ export class HistoryIndex {
     }
     const label = milestoneLabel(event);
     if (label && turnId) {
-      const id = JSON.stringify([turnId, event.eventType, event.requestId, d.workflowId, d.handoffId, d.iteration, d.turnCount]);
+      const id = JSON.stringify([turnId, event.eventType, event.requestId, d.workflowId, d.handoffId, d.iteration, d.turnCount, d.jobId]);
       if (!this.milestones.has(id)) {
         this.milestones.set(id, { kind: "milestone", id, turnId, timestamp: event.timestamp, sequence: this.sequence, label, eventType: event.eventType, workflowId: string(d.workflowId) });
         changed = true;
@@ -169,6 +172,10 @@ export class HistoryIndex {
 
 function milestoneLabel(event: NormalizedTelemetryEvent): string | undefined {
   switch (event.eventType) {
+    case "compaction.started": return `Agent A is compacting Agent ${event.role}'s history`;
+    case "compaction.completed": return `Agent ${event.role} history compacted by A`;
+    case "compaction.failed": return "History compaction failed; execution stopped";
+    case "compaction.cancelled": return "History compaction cancelled; execution stopped";
     case "planning.plan_ready": return "Plan ready / waiting for operator approval";
     case "planning.plan_approved": return "Operator approved the plan / execution authorized";
     case "planning.plan_discarded": return "Operator discarded the plan";

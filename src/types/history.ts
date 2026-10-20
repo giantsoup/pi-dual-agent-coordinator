@@ -6,7 +6,8 @@ export type RecordOutcome =
   | { kind: "running"; startedAt: string }
   | { kind: "waiting_approval"; endedAt: string }
   | { kind: "interrupted"; endedAt: string | null }
-  | { kind: "completed" | "failed" | "cancelled" | "timed_out"; endedAt: string };
+  | { kind: "failed"; endedAt: string; reason?: string | undefined }
+  | { kind: "completed" | "cancelled" | "timed_out"; endedAt: string };
 interface HistoryBase {
   id: string;
   title: string;

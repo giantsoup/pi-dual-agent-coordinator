@@ -63,7 +63,7 @@ it("fails locally without a cloud fallback when LM Studio is unavailable", async
   } finally { await binding.dispose(); }
 });
 
-it("keeps automatic compaction on the local provider", async () => {
+it("requires trusted A summarization instead of local self-compaction", async () => {
   const options = await workspace();
   let calls = 0;
   const load = vi.fn(async () => { throw new Error("No cloud auth"); });
@@ -83,10 +83,10 @@ it("keeps automatic compaction on the local provider", async () => {
     }
   } });
   try {
-    await binding.session.prompt("Continue the local task");
-    expect(calls).toBe(2);
+    await expect(binding.session.prompt("Continue the local task")).rejects.toThrow(/compaction/i);
+    expect(calls).toBe(1);
     expect(load).not.toHaveBeenCalled();
-    expect(binding.session.messages).toEqual(expect.arrayContaining([expect.objectContaining({ role: "compactionSummary", summary: expect.stringContaining("Preserved local task summary") })]));
+    expect(binding.session.messages?.some((message) => message.role === "compactionSummary")).toBe(false);
   } finally { await binding.dispose(); }
 });
 

@@ -17,7 +17,9 @@ assert.equal(process.versions.node, '24.22.0', 'Install using the frozen Node 24
 assert.ok(process.env.npm_execpath, 'Run npm run secure:install with npm 12.2.0');
 const npmRoot = dirname(dirname(realpathSync(process.env.npm_execpath)));
 assert.equal(JSON.parse(readFileSync(join(npmRoot, 'package.json'), 'utf8')).version, '12.2.0');
-if (!existsSync(join(source, 'dist/native/credential-store'))) throw new Error('Run npm run build on macOS first.');
+const build = spawnSync(process.execPath, [process.env.npm_execpath, 'run', 'build'], { cwd: source, stdio: 'inherit' });
+assert.equal(build.status, 0, 'Fresh build failed; installation was not prepared');
+if (!existsSync(join(source, 'dist/native/credential-store'))) throw new Error('The macOS credential helper is required.');
 mkdirSync(destination, { recursive: true, mode: 0o700 });
 const entries = ['dist', 'node_modules', 'src', 'test', 'scripts', 'native', 'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.check.json', 'vitest.config.ts', '.nvmrc', 'docs', 'examples', 'README.md', 'CONTRIBUTING.md'];
 for (const name of entries) cpSync(join(source, name), join(destination, name), { recursive: true, dereference: false, verbatimSymlinks: true });
@@ -53,6 +55,12 @@ const git = args => {
   return result.stdout.trim();
 };
 const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'));
-const record = { createdAt: new Date().toISOString(), node: process.versions.node, npm: '12.2.0', pi: manifest.dependencies['@earendil-works/pi-coding-agent'], sourceCommit: git(['rev-parse', 'HEAD']), sourceDiffSha256: createHash('sha256').update(git(['diff', '--binary', 'HEAD'])).digest('hex'), files: hashes(destination) };
+const verification = spawnSync(join(destination, 'bin/node'), [join(destination, 'scripts/verify-provider-stream-deadlines.mjs')], { cwd: destination, encoding: 'utf8', timeout: 15_000 });
+assert.equal(verification.status, 0, 'Prepared provider stream verification failed; do not activate this installation');
+const providerStreams = JSON.parse(verification.stdout);
+assert.equal(providerStreams.outcome, 'passed');
+assert.deepEqual(providerStreams.checks, ['active', 'idle', 'deadline']);
+assert.equal(providerStreams.brokerSha256, createHash('sha256').update(readFileSync(join(destination, 'dist/src/security/provider-broker.js'))).digest('hex'));
+const record = { createdAt: new Date().toISOString(), node: process.versions.node, npm: '12.2.0', pi: manifest.dependencies['@earendil-works/pi-coding-agent'], sourceCommit: git(['rev-parse', 'HEAD']), sourceDiffSha256: createHash('sha256').update(git(['diff', '--binary', 'HEAD'])).digest('hex'), providerStreams, files: hashes(destination) };
 writeFileSync(join(destination, 'installation-manifest.json'), JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
 process.stdout.write(`Trusted runtime prepared and copy hashes verified at ${destination}\nUse: ${join(destination, 'bin/node')} ${join(destination, 'dist/src/index.js')} doctor /path/to/workspace --no-mcp\n`);

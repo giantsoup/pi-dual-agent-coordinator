@@ -14,7 +14,7 @@ if (!workspace || !stateRoot) throw new Error('Supply isolated workspace and sta
 const block = (name, data) => `\`\`\`${name}\n${JSON.stringify(data)}\n\`\`\``;
 const field = (text, name) => { const value = text.match(new RegExp(`${name}: ([^\\n]+)`))?.[1]; if (!value) throw new Error(`Missing ${name}`); return value; };
 const toolResponse = fixtureChatToolResponse;
-const options = {command:'repl',cwd:workspace,sessionRoot:stateRoot,sessionMode:'persistent',mcpEnabled:false,jsonLogs:false,verbose:false,maxReviewRounds:2,timeoutMs:15000,plainUi:mode === 'plain' || mode === 'plain-repair'};
+const options = {command:'repl',cwd:workspace,sessionRoot:stateRoot,sessionMode:'persistent',mcpEnabled:false,jsonLogs:false,verbose:false,maxReviewRounds:2,timeoutMs:15000,plainUi:mode === 'plain' || mode === 'plain-repair' || mode === 'plain-compaction' || mode === 'plain-stream-failure'};
 const skillDir = join(stateRoot, 'agent', 'skills', 'terminal-fixture');
 mkdirSync(skillDir, {recursive:true});
 writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: terminal-fixture\ndescription: Terminal skill fixture\n---\nTERMINAL_SKILL_INSTRUCTIONS_OK\n');
@@ -23,6 +23,7 @@ const executed = new Set();
 const stressCalls = new Map();
 const activityCalls = new Map();
 let repairScenario;
+let compactionScenario = "";
 const localInventory = ['qwen/qwen3.8-27b','qwen3-coder-next','google/gemma-4-e4b'].map((key,index) => ({type:'llm',key,display_name:key,max_context_length:262144,
   capabilities:{trained_for_tool_use:true},loaded_instances:index === 0 ? [{id:key,config:{context_length:65536}}] : []}));
 const localModels = new LmStudioModels({request:async (url,init) => {
@@ -37,10 +38,21 @@ const localModels = new LmStudioModels({request:async (url,init) => {
   }
   return Response.json({});
 }});
-const coordinator = new Coordinator({...options, localModels, createRoleRuntime: async input => createRoleRuntime({...input,providerTestBackend:{cwd:workspace,modelIds:[],load:async()=>`dummy-${randomUUID()}`,request:async (_url,init) => {
+const coordinator = new Coordinator({...options, localModels, createRoleRuntime: async input => { const binding = await createRoleRuntime({...input,providerTestBackend:{cwd:workspace,modelIds:[],load:async()=>`dummy-${randomUUID()}`,request:async (_url,init) => {
   const body = JSON.parse(String(init.body));
   const promptContent = (body.input ?? body.messages).filter(item => item.role === 'user').at(-1)?.content;
   const prompt = typeof promptContent === 'string' ? promptContent : promptContent?.map(item => item.text ?? '').join('\n') ?? '';
+  if (input.role === 'A' && body.max_output_tokens === 1536) {
+    await new Promise((resolve,reject) => {
+      const timer = setTimeout(resolve,1600);
+      init.signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(new Error('fixture summary cancelled'));},{once:true});
+    });
+    return compactionScenario.includes('\nOperator turn:\nfail compaction fixture') ? new Response('fixture summary failure',{status:503}) : fixtureResponse('Retained objective, constraints, completed writes, and next steps.');
+  }
+  if (input.role === 'A' && prompt.includes('compaction fixture') && !prompt.includes('\nOperator turn:\nplan ') && !prompt.includes('provenance="coordinator_review"')) {
+    const response = fixtureResponse('COMPACTION_DISCUSSION_OK');
+    return new Response((await response.text()).replace('"input_tokens":10','"input_tokens":10000000'),{headers:response.headers});
+  }
   if (input.role === 'A' && (prompt.includes('List the installed Pi skills using the skills tool') || prompt.includes('Use the installed Pi skill terminal-fixture'))) {
     const latestUser = body.input.findLastIndex(item => item.role === 'user');
     const result = body.input.slice(latestUser).find(item => item.type === 'function_call_output');
@@ -74,6 +86,23 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
     const workflowId = field(handoff,'Workflow ID');
     const handoffId = field(handoff,'Handoff ID');
     const iteration = Number(field(handoff,'Iteration'));
+    if (handoff.includes('stream failure')) {
+      const count = activityCalls.get(handoffId) ?? 0;
+      activityCalls.set(handoffId, count + 1);
+      if (count === 0) return toolResponse('write',{path:'result.txt',content:'write preserved before interruption'},'preserved-write');
+      if (count < 10) return toolResponse('read',{path:'result.txt'},`before-interruption-${count}`);
+      const partial = (await toolResponse('write',{path:'must-not-exist.txt',content:'never execute'},'incomplete-write').text()).split('\n\n')[0];
+      return new Response(new ReadableStream({start(controller) {
+        controller.enqueue(new TextEncoder().encode(partial+'\n\n'));
+        const timer = setTimeout(()=>controller.error(new Error('private upstream detail')),250);
+        init.signal?.addEventListener('abort',()=>{clearTimeout(timer);try{controller.error(new Error('cancelled'));}catch{}},{once:true});
+      }}));
+    }
+    if (handoff.includes('B compaction fixture') && !executed.has(handoffId)) {
+      executed.add(handoffId);
+      const response = toolResponse('write',{path:'result.txt',content:'compaction write preserved'});
+      return new Response((await response.text()).replace('"prompt_tokens":10','"prompt_tokens":100000'),{headers:response.headers});
+    }
     if (handoff.includes('activity narrative')) {
       const count = activityCalls.get(handoffId) ?? 0;
       activityCalls.set(handoffId, count + 1);
@@ -127,9 +156,21 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
   }
   const operator = prompt.split('\nOperator turn:\n')[1] ?? prompt;
   if (operator.includes('scroll fixture')) return fixtureResponse(Array.from({length:60},(_,i)=>`SCROLL_LINE_${i}`).join('\n'));
-  if (operator.includes('plan')) return fixtureResponse('Plan prose retained.\n' + block('pi-plan',{schemaVersion:1,objective:prompt.includes('activity narrative')?'activity narrative':prompt.includes('history stress')?'history stress':prompt.includes('tool failure')?'tool failure':prompt.includes('cancel-execution')?'cancel-execution':prompt.includes('cancel-review')?'cancel-review':prompt.includes('review cap')?'review cap':'Write fixture result',summary:'Ready',acceptanceCriteria:['result file verified'],relevantPaths:['result.txt'],executionPlan:['Write result.txt','Verify content']}));
+  if (operator.includes('plan')) return fixtureResponse('Plan prose retained.\n' + block('pi-plan',{schemaVersion:1,objective:prompt.includes('stream failure')?'stream failure':prompt.includes('B compaction fixture')?'B compaction fixture':prompt.includes('activity narrative')?'activity narrative':prompt.includes('history stress')?'history stress':prompt.includes('tool failure')?'tool failure':prompt.includes('cancel-execution')?'cancel-execution':prompt.includes('cancel-review')?'cancel-review':prompt.includes('review cap')?'review cap':'Write fixture result',summary:'Ready',acceptanceCriteria:['result file verified'],relevantPaths:['result.txt'],executionPlan:['Write result.txt','Verify content']}));
   return fixtureResponse('## Discussion\nUnicode 界 😀\n```ts\nconst result = "ok";\n```\nTERMINAL_DISCUSSION_OK');
-}}})});
+}}});
+  const prompt = binding.session.prompt.bind(binding.session);
+  let seeded = false;
+  binding.session.prompt = (text, options) => {
+    if (!seeded && text.includes('compaction fixture') && (input.role === 'B' || !text.includes('\nOperator turn:\nplan '))) {
+      seeded = true; compactionScenario = text;
+      binding.session.sessionManager.appendMessage({role:'user',content:'Retained objective',timestamp:1});
+      binding.session.sessionManager.appendMessage({role:'user',content:'Historical context '.repeat(6000),timestamp:1});
+    }
+    return prompt(text,options);
+  };
+  return binding;
+}});
 const service = new HeadlessInteractiveCoordinatorService(coordinator);
 service.subscribeState(state => {
   writeFileSync(join(stateRoot,'ui-state.next'),JSON.stringify(state));

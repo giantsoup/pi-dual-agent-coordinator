@@ -57,6 +57,17 @@ resource reloads retain retry and discovery policy. Reload regression tests
 verify cache warming, analytics, and install telemetry remain disabled. Broker error responses also disable the
 OpenAI SDK's independent HTTP retry path.
 
+The local provider distinguishes upstream inactivity from total request duration.
+Its 120-second idle timer refreshes on headers and nonempty chunks. A separate
+30-minute cap never refreshes. Provider failures end the request without replay.
+Runtime settlement telemetry retains the failed run's bounded reason, so a later
+A check-in run cannot steal attribution from resumed B execution. Terminal
+presentation and read-only history consume that evidence without deciding retries.
+
+Trusted installation builds fresh and runs credential-free stream checks against
+the copied compiled broker. The installation manifest binds the result to the
+broker hash. Copy integrity alone does not establish correct timeout behavior.
+
 Session resets create mode-appropriate managers explicitly; Pi's generic runtime
 `newSession()` would turn a memory session into a persistent file. Replacements
 are constructed before the current conversation is released. History previews
@@ -126,3 +137,25 @@ Chrome's nested sandbox fails under the verified outer profile. The fixed
 unrestricted fallback. Proxy revocation precedes process drain. Runtime replacement
 explicitly awaits browser teardown because Pi extension shutdown diagnostics alone
 cannot carry a security failure. See the security model for limits and verification.
+
+## History compaction ownership
+
+Each role installs a trusted `session_before_compact` hook. An independent,
+lazy A-only broker and ModelRuntime generate summaries for both roles using
+public Pi `compact` APIs. The capability belongs to the A runtime binding and
+uses its validated model selection, with its own broker lifetime; B's callback
+resolves the current A binding on every job. Model switches are idle transactions,
+so an old binding drains before its capability is disposed. The summarizer has
+no AgentSession, tools, MCP, planning transcript, or workflow parser.
+
+Pi appends checkpoints and rebuilds context. Hook failures explicitly abort and
+cancel; `session_compact_failed` also catches persistence/rebuild failures.
+ManagedSession propagates failures after drain and rejects later dispatch. Its
+owned preflight can compact old history before a new user request. A final payload
+admission check covers late steering and tool/schema growth without replaying
+writes or redelivering a handoff. Raw session history remains intact.
+
+Compaction events correlate the source session and job separately from A's model.
+The shared activity reducer renders compaction without changing workflow role or
+approval. Success is reported after checkpoint creation; it does not claim that
+execution resumed until real execution activity arrives.

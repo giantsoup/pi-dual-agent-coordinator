@@ -154,6 +154,12 @@ coordinator decision evidence; runtime completion alone does not imply sign-off.
 Restart restores unfinished requests and pending approvals as interrupted history.
 It does not resume work or recreate a pending operator approval.
 
+A failed runtime retains its role, execution phase, and safe stopping reason in
+Current activity and read-only history. This includes B failures after a completed
+A check-in. The plain interface prints the same reason. Narrow terminals reserve
+space for the failed role and cause before secondary progress or recent entries.
+Partial streamed tool arguments remain preparation, not execution evidence.
+
 ### Keyboard controls
 
 From the editor, workspace, or activity pane, press **Esc**, then choose a letter
@@ -386,3 +392,18 @@ Use `/skills` to ask A for the installed catalog, or `/skill:NAME [request]` to
 request one skill. Both commands create ordinary operator turns. They do not
 approve execution or change the active workflow. Both roles can read installed
 Pi skill instructions through the sandboxed `skills` tool.
+
+## Compaction pauses
+
+Current activity shows `Agent A is compacting Agent A's history` or
+`Agent A is compacting Agent B's history`, elapsed time, and `Ctrl+C cancel`.
+Execution pauses while the summary is created and committed. The indicator is
+shared by the TUI and plain REPL and does not require activity diagnostics.
+Cancellation takes precedence until cleanup drains. Narrow layouts retain a
+short compaction label and cancel hint.
+
+Start and terminal milestones remain in request history even for a quick
+compaction. Completion reports that history was compacted; the next real activity
+shows whether execution continued. Failure reports that execution stopped and
+preserves completed edits and the archive. Summary requests are not displayed
+as A planning/review runs or tool calls.

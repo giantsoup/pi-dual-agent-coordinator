@@ -41,7 +41,8 @@ export class ReplProgressRenderer {
     if (event.type !== "state_changed") return;
     const activity = event.state.currentActivity;
     const owner = activity.owner.kind === "runtime" ? `Agent ${activity.owner.role}${activity.model ? ` / ${activity.model}` : ""}` : "Coordinator";
-    const line = `${owner} / ${activity.phase}: ${currentActionText(activity.action)}${activity.action.kind === "tool_execution" && activity.action.target ? ` ${activity.action.target}` : ""}${activity.progress ? ` / ${activity.progress}` : ""}`;
+    const failure = activity.action.kind === "terminal" && activity.action.outcome === "failed" ? activity.action.failure : undefined;
+    const line = `${owner} / ${activity.phase}: ${currentActionText(activity.action)}${failure ? ` / ${failure.reason}` : ""}${activity.action.kind === "tool_execution" && activity.action.target ? ` ${activity.action.target}` : ""}${activity.progress ? ` / ${activity.progress}` : ""}`;
     const key = JSON.stringify([activity.owner, activity.action.kind === "tool_execution" ? activity.action.callId : "", line]);
     if (key === this.sharedActivityKey) return;
     this.sharedActivityKey = key;

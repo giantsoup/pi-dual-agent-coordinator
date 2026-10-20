@@ -122,3 +122,32 @@ adapter handles 0.0.83's file-backed snapshots/screenshots and `target` input fi
 then returns bounded Pi text/image content. Its sandbox wrapper remains application
 owned because the SDK stdio convenience transport does not enforce this OS boundary
 or own Chrome's detached process groups.
+
+## A-backed compaction and token counting
+
+The compaction integration uses public Pi 1.3.0 `session_before_compact`,
+`session_compact`, `session_compact_failed`, `compact`, `serializeConversation`,
+`convertToLlm`, and ModelRuntime streaming. Preparation is derived from the
+exported event type; no private import is needed. Public `onPayload` permits
+inspection/rejection after serialization, including a no-inference preflight.
+The integration explicitly aborts on failed hooks because extension dispatch
+catches throws and automatic compaction otherwise can continue unchanged.
+
+Pinned `@lmstudio/sdk` 2.1.0 supplies `LMStudioClient`, dynamic handles,
+`applyPromptTemplate` with tool definitions, `countTokens`, `getContextLength`,
+and async disposal. Dynamic handles target an already verified instance and do
+not load models. Public ChatMessageData/LLMTool types model tool-call history.
+Malformed or unsupported content fails closed at the payload boundary. The
+package adds ten locked packages, no lifecycle scripts, and no allowScripts
+policy changes. A direct local counting probe confirmed template application
+with tools against a loaded 65,536-token model; inference parity is a separate
+trusted-install verification gate.
+
+The runtime wraps the public `prepareNextTurnWithContext` hook to check serialized
+admission before calling Pi's existing next-turn preparation. When a measured
+request is too large, public in-memory `SettingsManager.applyOverrides` asks Pi
+to compact using a smaller retained tail, then restores the original token
+settings. No private auto-compaction method or direct checkpoint append is used.
+Queued input added later still passes final payload admission. The local broker
+checks an internal admitted-instance identity and removes that marker before
+forwarding the request.

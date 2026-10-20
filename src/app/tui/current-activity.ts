@@ -16,27 +16,32 @@ export function renderCurrentActivity(state: InteractiveUiState, width: number, 
   const activity = state.currentActivity;
   const action = activity.action;
   const role = activity.owner.kind === "runtime" ? activity.owner.role : undefined;
-  const active = !["idle", "terminal", "approval_waiting"].includes(action.kind);
+  const active = !(action.kind === "compaction" && action.outcome !== "running") && !["idle", "terminal", "approval_waiting"].includes(action.kind);
   const marker = active && process.env.TERM !== "dumb" ? ["●", "○"][Math.floor(now / 500) % 2] ?? "●" : active ? "*" : "-";
   const bold = (text: string) => process.env.TERM === "dumb" ? text : `\x1b[1m${text}\x1b[22m`;
   const inner = Math.max(1, width - 2);
   const actionLine = `${marker} ${bold(safeDisplayText(currentActionText(action)))}`;
-  const roleText = role ? `Active: ${role === "A" ? "A - Senior" : "B - Junior"}` : "Coordinator";
+  const failure = action.kind === "terminal" && action.outcome === "failed" ? action.failure : undefined;
+  const reason = failure ? safeDisplayText(failure.reason) : undefined;
+  const roleText = role ? action.kind === "terminal" ? `Agent ${role}` : `Active: ${role === "A" ? "A - Senior" : "B - Junior"}` : "Coordinator";
   const phase = safeDisplayText(activity.phase);
   const model = activity.model ? truncateToWidth(safeDisplayText(activity.model), Math.max(1, inner - roleText.length - phase.length - 6), "…") : undefined;
   const identity = `${roleText}${model ? ` / ${model}` : ""} / ${phase}`;
   const returnHint = view.unread ? `${view.unread} unread / ${view.returnHint}` : view.hidden || !view.following ? view.returnHint : undefined;
   if (height < 5) {
-    if (height === 1) return [truncateToWidth(actionLine, width, "…", true)];
+    if (height === 1) return [truncateToWidth(failure ? `${failure.role} failed: ${reason}` : actionLine, width, "…", true)];
+    if (failure) return [truncateToWidth(`Agent ${failure.role} failed / ${phase}`, width, "…"), ...wrapTextWithAnsi(reason ?? "Request failed", width).slice(0, height - 1)];
+    if (action.kind === "compaction") return [truncateToWidth(action.outcome === "running" ? `A compacting ${action.role} history / Ctrl+C cancel` : currentActionText(action), width, "…"), ...[actionLine, returnHint ?? identity].slice(0, height - 1)].map((row) => truncateToWidth(row, width, "…", true));
     const rows = [paintRole(`Current activity / ${role ? `Agent ${role}` : "Coordinator"}`, role), actionLine, ...(returnHint ? [returnHint] : [identity])];
     return rows.slice(0, height).map((row) => truncateToWidth(row, width, "…", true));
   }
   const budget = height - 2;
   const rows = [identity, actionLine];
+  if (reason) rows.push(...wrapTextWithAnsi(reason, inner).slice(0, Math.max(1, budget - rows.length - 1)));
   const progress = activity.progress;
-  const timing = [activity.startedAt !== undefined && action.kind !== "terminal" ? `${seconds(now - activity.startedAt)}s elapsed` : undefined,
+  const timing = [activity.startedAt !== undefined && action.kind !== "terminal" && !(action.kind === "compaction" && action.outcome !== "running") ? `${seconds(now - activity.startedAt)}s elapsed` : undefined,
     activity.lastEventAt !== undefined && active ? `last event ${seconds(now - activity.lastEventAt)}s ago` : undefined].filter(Boolean).join(" / ");
-  const next = action.kind === "approval_waiting" ? "/approve starts B / /discard clears the plan" : active ? "Esc then x cancel / Ctrl+C cancel" : undefined;
+  const next = action.kind === "compaction" ? undefined : action.kind === "approval_waiting" ? "/approve starts B / /discard clears the plan" : active ? "Esc then x cancel / Ctrl+C cancel" : undefined;
   const requiredTail = [progress, returnHint].filter((row): row is string => Boolean(row));
   if (action.kind === "tool_execution" && action.target) {
     const targetBudget = Math.max(1, Math.min(width >= 100 ? 2 : 1, budget - rows.length - requiredTail.length - (timing ? 1 : 0)));
@@ -49,7 +54,7 @@ export function renderCurrentActivity(state: InteractiveUiState, width: number, 
     if (rows.length >= budget) break;
     rows.push(`Recent: ${safeDisplayText(item.text)}`);
   }
-  const label = action.kind === "terminal" ? action.outcome.replaceAll("_", " ") : action.kind === "approval_waiting" ? "waiting approval" : active ? "live" : "ready";
+  const label = action.kind === "compaction" && action.outcome !== "running" ? action.outcome : action.kind === "terminal" ? action.outcome.replaceAll("_", " ") : action.kind === "approval_waiting" ? "waiting approval" : active ? "live" : "ready";
   return frame(`Current activity / ${label}`, rows.map((row, index) => index === 0 ? paintRole(row, role) : row), width, height, role);
 }
 

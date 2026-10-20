@@ -12,16 +12,43 @@ function setup() {
   state.operation = { kind: "running" };
   const history = new HistoryIndex();
   const reducer = new CurrentActivityReducer(() => now);
+  const events: NormalizedTelemetryEvent[] = [];
   const emit = (eventType: string, details: Record<string, unknown> = {}, overrides: Partial<NormalizedTelemetryEvent> = {}) => {
     const event: NormalizedTelemetryEvent = { role: status.activeRole, sessionId: status.activeRole, operatorTurnId: "turn", runId: status.activeRole, requestId: "request", timestamp: "2026-10-19T12:00:00Z", eventType, details, ...overrides };
+    events.push(event);
     history.observe(event); state.history = history.snapshot();
     return reducer.update(state, event);
   };
   emit("ui.turn_started", { objective: "Activity" }); emit("runtime.run_started");
-  return { state, status, reducer, emit, advance: (time: number) => { now += time; } };
+  return { state, status, reducer, emit, events, advance: (time: number) => { now += time; } };
 }
 
 describe("current activity ownership", () => {
+  it("retains B's failure after a completed A check-in, including read-only replay", () => {
+    const { emit, status, reducer, state, events } = setup();
+    status.activeRole = "B";
+    emit("runtime.run_started", { provenance: "coordinator_handoff" });
+    status.activeRole = "A";
+    emit("runtime.run_started", { provenance: "coordinator_check_in" }, { runId: "check" });
+    emit("runtime.run_finished", { outcome: "completed" }, { runId: "check" });
+    status.activeRole = "B";
+    emit("pi.message_update", { assistantEventType: "toolcall_delta" });
+    emit("runtime.run_finished", { outcome: "failed", reason: "LM Studio response stalled: no upstream data for 120 seconds." });
+    state.operation = { kind: "failed" };
+    // The coordinator returns to planning after settlement. Failure ownership must survive.
+    status.activeRole = "A";
+    emit("ui.turn_finished", { outcome: "failed" });
+    const expected = { owner: { kind: "runtime", role: "B", runId: "B" }, phase: "Execution",
+      action: { kind: "terminal", outcome: "failed", failure: { role: "B", reason: "LM Studio response stalled: no upstream data for 120 seconds." } } };
+    expect(reducer.update(state)).toMatchObject(expected);
+    const restored = new HistoryIndex();
+    restored.restore({ events, warnings: [] });
+    state.history = restored.snapshot();
+    state.operation = { kind: "idle" };
+    expect(new CurrentActivityReducer().update(state)).toMatchObject(expected);
+    state.operation = { kind: "cancelled" };
+    expect(reducer.update(state).action).toEqual({ kind: "terminal", outcome: "cancelled" });
+  });
   it("distinguishes observed actions and retains action time across deltas and render ticks", () => {
     const { emit, advance, reducer, state } = setup();
     expect(reducer.update(state).action).toEqual({ kind: "waiting", reason: "provider" });
@@ -123,4 +150,32 @@ it("bounds safe recent outcomes to the current request and keeps failed calls", 
   expect(recent).toHaveLength(3);
   expect(recent[0]?.text).toContain("file-4 / failed");
   expect(new Set(recent.map((item) => item.id)).size).toBe(3);
+});
+
+describe("visible compaction", () => {
+  it("shows A summarizing B without changing the workflow role and rejects stale/duplicate events", () => {
+    const { emit, status, advance, reducer, state } = setup();
+    status.activeRole = "B";
+    emit("runtime.run_started", { provenance: "coordinator_handoff" });
+    const running = emit("compaction.started", { jobId: "compact-1" });
+    expect(running.action).toEqual({ kind: "compaction", jobId: "compact-1", role: "B", outcome: "running" });
+    expect(status.activeRole).toBe("B");
+    advance(1000);
+    expect(reducer.update(state).startedAt).toBe(running.startedAt);
+    expect(emit("compaction.failed", { jobId: "old" }, { sessionId: "old" }).action).toEqual(running.action);
+    expect(emit("compaction.completed", { jobId: "compact-1" }).action).toMatchObject({ outcome: "completed" });
+    expect(emit("compaction.started", { jobId: "compact-1" }).action).toMatchObject({ outcome: "completed" });
+    expect(emit("pi.message_update", { assistantEventType: "text_delta" }).action.kind).toBe("writing");
+    expect(state.history.milestones?.some((milestone) => milestone.label === "Agent B history compacted by A")).toBe(true);
+  });
+  it("gives cancellation precedence and retains compaction failure after settlement", () => {
+    const { emit, state, reducer } = setup();
+    emit("compaction.started", { jobId: "compact-A" });
+    state.operation = { kind: "cancelling" };
+    expect(reducer.update(state).action.kind).toBe("cancelling");
+    state.operation = { kind: "running" };
+    emit("compaction.failed", { jobId: "compact-A" });
+    state.operation = { kind: "failed" };
+    expect(reducer.update(state).action).toMatchObject({ kind: "compaction", outcome: "failed" });
+  });
 });
