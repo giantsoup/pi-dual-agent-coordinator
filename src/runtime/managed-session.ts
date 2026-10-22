@@ -3,6 +3,8 @@ import { ResponseFormatError, PROTOCOL_TOOL_NAMES } from "../coordinator/respons
 import type { CompactionController, CompactionEvent } from "./compaction.js";
 import { type RequestBudget, ContextManagementError } from "./context-budget.js";
 import type { SessionLike } from "./create-role-runtime.js";
+import type { ResponseFormattingInput } from "./response-formatter.js";
+import { redactValue } from "../security/redact.js";
 
 /** Owns Pi preflight, agent work, and post-turn compaction as one submission. */
 export class ManagedSession implements SessionLike {
@@ -15,8 +17,9 @@ export class ManagedSession implements SessionLike {
   private finishCompaction = () => {};
   private readonly autoCompactionEnabled: boolean;
   private readonly unsubscribe: () => void;
+  private readonly formatterListeners = new Set<(event: AgentSessionEvent) => void>();
 
-  public constructor(public readonly piSession: AgentSession, private readonly onAbort?: (() => Promise<void>) | undefined, private readonly compaction?: CompactionController, private readonly preflight?: (text: string, signal: AbortSignal) => Promise<void>) {
+  public constructor(public readonly piSession: AgentSession, private readonly format: (input: ResponseFormattingInput) => Promise<void>, private readonly onAbort?: (() => Promise<void>) | undefined, private readonly compaction?: CompactionController, private readonly preflight?: (text: string, signal: AbortSignal) => Promise<void>) {
     const session = this.piSession;
     this.autoCompactionEnabled = session.autoCompactionEnabled;
     session.setAutoCompactionEnabled(false);
@@ -36,11 +39,15 @@ export class ManagedSession implements SessionLike {
   public get sessionFile() { return this.piSession.sessionFile; }
   public get model() { return this.piSession.model; }
   public get thinkingLevel() { return this.piSession.thinkingLevel; }
-  public get isStreaming() { return this.piSession.isStreaming; }
+  public get isStreaming() { return this.pending !== undefined || this.piSession.isStreaming; }
   public get messages() { return this.piSession.messages; }
   public get sessionManager() { return this.piSession.sessionManager; }
   public bindExtensions(bindings: Record<string, never>) { return this.piSession.bindExtensions(bindings); }
-  public subscribe(listener: (event: AgentSessionEvent) => void) { return this.piSession.subscribe(listener); }
+  public subscribe(listener: (event: AgentSessionEvent) => void) {
+    this.formatterListeners.add(listener);
+    const unsubscribe = this.piSession.subscribe(listener);
+    return () => { unsubscribe(); this.formatterListeners.delete(listener); };
+  }
 
   public subscribeCompaction(listener: (event: CompactionEvent) => void): () => void { return this.compaction?.subscribe(listener) ?? (() => {}); }
   public failContext(error: unknown): void { this.contextFailure ??= error instanceof Error ? error : new ContextManagementError("Context admission failed."); }
@@ -57,20 +64,16 @@ export class ManagedSession implements SessionLike {
     this.contextFailure = undefined;
     this.compaction?.reset();
     this.stopped = false;
-    const { onTurnEnd, formatOnly, responseId, responseAttempt: _responseAttempt, ...piOptions } = options ?? {};
-    const previousTools = this.piSession.getActiveToolNames();
-    if (formatOnly) this.piSession.setActiveToolsByName([]);
-    this.piSession.setAutoCompactionEnabled(this.autoCompactionEnabled);
+    const { onTurnEnd, formatting, responseId, responseAttempt: _responseAttempt, ...piOptions } = options ?? {};
+    if (!formatting) this.piSession.setAutoCompactionEnabled(this.autoCompactionEnabled);
     let turnError: Error | undefined;
     // AgentSession notifications are queued and cannot pause the model loop.
-    const unsubscribeTurns = this.piSession.agent.subscribe(async (event, signal) => {
+    const unsubscribeTurns = formatting ? () => {} : this.piSession.agent.subscribe(async (event, signal) => {
       if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason !== "error" && event.message.stopReason !== "aborted") {
         const calls = event.message.content.filter((part) => part.type === "toolCall");
-        const misuse = calls.find((call) => formatOnly || PROTOCOL_TOOL_NAMES.has(call.name));
+        const misuse = calls.find((call) => PROTOCOL_TOOL_NAMES.has(call.name));
         if (misuse) {
-          turnError = new ResponseFormatError(responseId ?? "unscoped", formatOnly
-            ? "Tools are disabled during response formatting. Return assistant text only."
-            : `Protocol label ${misuse.name} is assistant text, not a tool.`, misuse.name);
+          turnError = new ResponseFormatError(responseId ?? "unscoped", `Protocol label ${misuse.name} is assistant text, not a tool.`, misuse.name);
           throw turnError;
         }
       }
@@ -89,6 +92,16 @@ export class ManagedSession implements SessionLike {
     });
     const pending = (async () => {
       try {
+        if (formatting) {
+          await this.format({ text, source: this.piSession.messages, previousResponse: formatting.previousResponse,
+            responseId: responseId ?? "unscoped", signal: controller.signal, onTurnEnd,
+            onEvent: (event) => {
+              if (event.type === "message_end") this.piSession.sessionManager.appendCustomEntry("pi-dual-format-message", { message: redactValue(event.message) });
+              for (const listener of this.formatterListeners) listener(event);
+            } });
+          controller.signal.throwIfAborted();
+          return;
+        }
         await this.preflight?.(text, controller.signal);
         controller.signal.throwIfAborted();
         this.assertActive();
@@ -112,7 +125,6 @@ export class ManagedSession implements SessionLike {
         unsubscribeTurns();
         this.pending = undefined;
         this.submissionController = undefined;
-        if (formatOnly) this.piSession.setActiveToolsByName(previousTools);
       }
     })();
     this.pending = pending;
@@ -135,6 +147,7 @@ export class ManagedSession implements SessionLike {
 
   public dispose(): void {
     this.unsubscribe();
+    this.formatterListeners.clear();
     this.piSession.dispose();
   }
 }

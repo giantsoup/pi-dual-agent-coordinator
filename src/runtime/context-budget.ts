@@ -2,7 +2,10 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { z } from "zod";
 
 export const CONTEXT_SAFETY_TOKENS = 4096;
-export const SUMMARY_OUTPUT_TOKENS = 1536;
+export const SUMMARY_OUTPUT_TOKENS = 4096;
+export const AGENT_A_OUTPUT_TOKENS = 16384;
+export const AGENT_B_INPUT_TARGET = 32768;
+export const AGENT_B_KEEP_RECENT_TOKENS = 8192;
 export class ContextManagementError extends Error {}
 export class ContextBudgetExceededError extends ContextManagementError {}
 export interface RequestBudget { inputTokens: number; outputTokens: number; contextWindow: number; method: string }

@@ -162,6 +162,14 @@ export function assistantTurnEnd(text: string): AgentSessionEvent {
   };
 }
 
+export function successfulToolTurn(name: string, args: Extract<AssistantMessage["content"][number], { type: "toolCall" }>["arguments"]): AgentSessionEvent {
+  const message = assistantMessage("");
+  message.stopReason = "toolUse";
+  message.content.push({ type: "toolCall", id: "fixture-tool", name, arguments: args });
+  return { type: "turn_end", message, toolResults: [{ role: "toolResult", toolCallId: "fixture-tool",
+    toolName: name, content: [{ type: "text", text: "OK" }], isError: false, timestamp: Date.now() }] };
+}
+
 export function assistantMessage(text: string): AssistantMessage {
   return {
     role: "assistant",

@@ -21,10 +21,13 @@ describe("renderHandoffMessage", () => {
     expect(message).toContain("- Update the implementation");
     expect(message).toContain("- Run tests");
     expect(message).toContain("It is not a tool name");
-    expect(message).toContain("For `pi-completion.summary`, describe the concrete code changes");
+    expect(message).toContain("For `pi-completion.summary`, describe actual changes or observed verification results");
     expect(message).toContain("Include `verification`");
     expect(message).toContain("not as a tool call");
     expect(message).toContain("do not place prose after the completion block");
     expect(message).not.toContain("raw planning transcript");
+    expect(message).toContain("then stop even when the check fails");
+    expect(message).toContain("there is no universal tool-call limit");
+    expect(message).toContain("Failure does not authorize diagnosis, repair, or a rerun");
   });
 });

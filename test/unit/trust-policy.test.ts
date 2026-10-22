@@ -46,8 +46,10 @@ describe("trust policy", () => {
     expect(prompt).toContain('schemaVersion` must be the integer `1`');
     expect(prompt).toContain("```pi-completion");
     expect(prompt).toContain("not a tool name, command, or function call");
-    expect(prompt).toContain("Make `pi-completion.summary` concrete and implementation-specific");
+    expect(prompt).toContain("Make `pi-completion.summary` concrete about actual changes or observed verification results");
     expect(prompt).toContain("Include `verification`");
+    expect(prompt).toContain("including after a failed verification-only check");
+    expect(prompt).toContain("Do not diagnose, repair, or rerun without authorization");
     expect(prompt).toContain('"schemaVersion":1');
   });
 });

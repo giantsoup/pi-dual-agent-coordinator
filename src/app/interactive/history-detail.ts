@@ -2,6 +2,7 @@ import { extractMachineBlock } from "../../handoff/handoff-envelope.js";
 import { completionRecordSchema, executionPlanEnvelopeSchema, finalDecisionSchema, handoffEnvelopeSchema, planProposalEnvelopeSchema } from "../../handoff/handoff-envelope-schema.js";
 import type { ArchiveEntry } from "../../runtime/session-history.js";
 import type { HistoryDetail, HistoryRecord } from "../../types/history.js";
+import type { HandoffEnvelope } from "../../types/handoff.js";
 import { roleLabel } from "../../types/history.js";
 import { safeDisplayText, visibleProse } from "../../security/display-text.js";
 import { sanitizeToolArgs } from "../activity-summary.js";
@@ -40,6 +41,11 @@ export function projectHistoryDetail(record: HistoryRecord, records: HistoryReco
       text = result.content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n");
       // Pi tools disclose their own truncation in text and details. Do not follow arbitrary paths.
       if (text === "Isolated tool failed or access was denied.") reason ??= "Error detail was limited by the isolation boundary; only this safe result was retained.";
+      const native = result.details && typeof result.details === "object" && "piDualShell" in result.details ? result.details.piDualShell : undefined;
+      if (record.toolName === "bash" && native && typeof native === "object" && "exitCode" in native && Number.isInteger(native.exitCode)) {
+        text = `Observed shell exit code: ${String(native.exitCode)}\n${text}`;
+        if ("outputTruncated" in native && native.outputTruncated === true) reason ??= "Native shell output is truncated; missing facts remain unknown.";
+      } else if (record.toolName === "bash") reason ??= "Observed shell exit code is unknown: this historical result has no validated native metadata.";
       const details = result.details;
       if (details && typeof details === "object" && ("truncation" in details || "fullOutputPath" in details)) reason ??= "Retained Pi result may be truncated upstream. External full-output files are not opened by this inspector.";
       if (result.content.some((part) => part.type !== "text")) reason ??= "Non-text result content is not rendered.";
@@ -76,11 +82,15 @@ function reportedResult(text: string): string {
   const final = finalDecisionSchema.safeParse(parse("pi-final"));
   if (final.success) return `Review decision: ${final.data.decision}\n${final.data.summary}\n${final.data.userResponse}`;
   const plan = planProposalEnvelopeSchema.safeParse(parse("pi-plan"));
-  if (plan.success) return `Proposed plan: ${plan.data.summary}\n${plan.data.executionPlan.join("\n")}\nAcceptance criteria:\n${plan.data.acceptanceCriteria.join("\n")}`;
+  if (plan.success) return renderPlanSummary({ label: "Proposed plan", plan: plan.data });
   const execution = executionPlanEnvelopeSchema.safeParse(parse("pi-execute"));
-  if (execution.success) return `Execution plan: ${execution.data.summary}\n${execution.data.executionPlan.join("\n")}\nAcceptance criteria:\n${execution.data.acceptanceCriteria.join("\n")}`;
+  if (execution.success) return renderPlanSummary({ label: "Execution plan", plan: execution.data });
   const handoff = handoffEnvelopeSchema.safeParse(parse("pi-handoff"));
-  if (handoff.success) return [`Handoff: ${handoff.data.summary}`, ...(handoff.data.executionPlan ?? []), ...(handoff.data.reviewNotes ?? []),
-    `Acceptance criteria:\n${handoff.data.acceptanceCriteria.join("\n")}`].join("\n");
+  if (handoff.success) return renderPlanSummary({ label: "Handoff", plan: handoff.data });
   return "";
+}
+
+function renderPlanSummary({ label, plan }: { label: string; plan: Pick<HandoffEnvelope, "summary" | "executionPlan" | "reviewNotes" | "acceptanceCriteria"> }): string {
+  return [`${label}: ${plan.summary}`, ...(plan.executionPlan ?? []), ...(plan.reviewNotes ?? []), "Acceptance criteria:",
+    ...plan.acceptanceCriteria.map((criterion) => `- ${criterion.replaceAll("\n", "\n  ")}`)].join("\n\n");
 }

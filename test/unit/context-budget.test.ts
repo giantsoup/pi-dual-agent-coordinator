@@ -1,8 +1,15 @@
 import { expect, it } from "vitest";
 import { assertRequestBudget, textPayloadAllowance, withOutputBudget } from "../../src/runtime/context-budget.js";
-import { createLocalModel } from "../../src/security/models.js";
+import { createLocalModel, createSecureModelCatalog } from "../../src/security/models.js";
 const model = createLocalModel({ id: "qwen/qwen3.8-27b", name: "Fixture" });
 const payload = { model: model.id, max_tokens: 16384, messages: [{ role: "user", content: "Hello" }] };
+it("leaves A about 251k input tokens with bounded reasoning/output headroom", () => {
+  const a = createSecureModelCatalog().find("openai", "gpt-6-luna");
+  if (!a) throw new Error("Missing approved A model");
+  const request = { model: a.id, max_output_tokens: 16384, input: [] };
+  expect(assertRequestBudget(a, request, { tokens: 251520, contextWindow: 272000, method: "openai-input-tokens" }).inputTokens).toBe(251520);
+  expect(() => assertRequestBudget(a, request, { tokens: 251521, contextWindow: 272000, method: "openai-input-tokens" })).toThrow("Context budget exceeded");
+});
 it("admits the exact boundary and refuses one token over it", () => {
   expect(assertRequestBudget(model, payload, { tokens: 45056, contextWindow: 65536, method: "fixture" }).inputTokens).toBe(45056);
   expect(() => assertRequestBudget(model, payload, { tokens: 45057, contextWindow: 65536, method: "fixture" })).toThrow("Context budget exceeded");

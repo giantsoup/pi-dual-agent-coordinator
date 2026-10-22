@@ -139,3 +139,89 @@ test('exposes the expected categories and units', () => {
     'celsius', 'fahrenheit', 'kelvin',
   ].sort());
 });
+
+test('same-unit conversion returns the value unchanged exactly (extremes)', () => {
+  // A conversion to the identical unit is a true identity, so values at the
+  // numeric extremes come back bit-for-bit unchanged.
+  assert.equal(convert(1e-20, 'temperature', 'kelvin', 'kelvin'), 1e-20);
+  assert.equal(convert(1e308, 'length', 'kilometers', 'kilometers'), 1e308);
+  assert.equal(convert(1e308, 'temperature', 'fahrenheit', 'fahrenheit'), 1e308);
+  assert.equal(convert(1e308, 'mass', 'ounces', 'ounces'), 1e308);
+});
+
+test('fahrenheit->celsius near MAX_VALUE stays finite instead of overflowing', () => {
+  // The old arithmetic ((value - 32) * 5) / 9 overflowed at (value - 32) * 5
+  // because 5 * 1e308 exceeds Number.MAX_VALUE. Dividing by 9 first keeps the
+  // intermediate representable, so the true result comes back finite.
+  const result = convert(1e308, 'temperature', 'fahrenheit', 'celsius');
+  assert.ok(Number.isFinite(result), `expected finite, got ${result}`);
+  assertClose(result, 5.555555555555556e307);
+});
+
+test('large length conversions stay finite when the true result is representable', () => {
+  // centimeters -> meters at 1e308 is 1e308 * 0.01 = 1e306 (finite). The
+  // ratio-based formula keeps this finite.
+  assertClose(convert(1e308, 'length', 'centimeters', 'meters'), 1e306);
+  // feet -> meters at 1e308 is 1e308 * 0.3048 = 3.048e307 (finite). The old
+  // (value * 0.3048) / 1 form was also fine here, but meters -> feet overflows
+  // while feet -> meters stays finite, which the ratio formula handles.
+  assertClose(convert(1e308, 'length', 'feet', 'meters'), 3.048e307);
+  // meters -> kilometers at MAX_VALUE is finite (true result ~1.8e305), so it
+  // must NOT be treated as overflow.
+  assert.ok(
+    Number.isFinite(convert(Number.MAX_VALUE, 'length', 'meters', 'kilometers')),
+    'meters -> kilometers at MAX_VALUE should stay finite',
+  );
+});
+
+test('genuine conversion overflow still throws RangeError', () => {
+  // meters -> centimeters multiplies the value by 100; at 1e308 the true
+  // result is 1e310, which is unrepresentable, so it must surface as a RangeError.
+  assert.throws(
+    () => convert(1e308, 'length', 'meters', 'centimeters'),
+    RangeError,
+  );
+  // kilometers -> meters at 1e308 is a genuine overflow (true result 1e311).
+  assert.throws(
+    () => convert(1e308, 'length', 'kilometers', 'meters'),
+    RangeError,
+  );
+  // meters -> inches at MAX_VALUE: true result ~3.9e310, unrepresentable.
+  assert.throws(
+    () => convert(Number.MAX_VALUE, 'length', 'meters', 'inches'),
+    RangeError,
+  );
+  // Celsius -> Fahrenheit at MAX_VALUE: (MAX/5)*9 overflows to Infinity.
+  assert.throws(
+    () => convert(Number.MAX_VALUE, 'temperature', 'celsius', 'fahrenheit'),
+    RangeError,
+  );
+});
+
+test('rejects prototype-named identifiers in category/from/to positions', () => {
+  const protoNames = ['toString', 'constructor', '__proto__', 'valueOf', 'hasOwnProperty'];
+  for (const name of protoNames) {
+    assert.throws(
+      () => convert(1, name, 'meters', 'feet'),
+      TypeError,
+      `category ${name} should throw TypeError`,
+    );
+    assert.throws(
+      () => convert(1, 'length', name, 'feet'),
+      TypeError,
+      `from unit ${name} should throw TypeError`,
+    );
+    assert.throws(
+      () => convert(1, 'length', 'meters', name),
+      TypeError,
+      `to unit ${name} should throw TypeError`,
+    );
+  }
+});
+
+test('rejects non-string category/unit identifiers', () => {
+  assert.throws(() => convert(1, {}, 'meters', 'feet'), TypeError);
+  assert.throws(() => convert(1, null, 'meters', 'feet'), TypeError);
+  assert.throws(() => convert(1, 'length', {}, 'feet'), TypeError);
+  assert.throws(() => convert(1, 'length', 'meters', 42), TypeError);
+});

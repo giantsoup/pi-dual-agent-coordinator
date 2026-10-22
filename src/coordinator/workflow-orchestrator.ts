@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { withPromptProvenance } from "../app/prompt-provenance.js";
 import { PLANNING_GUIDANCE } from "../app/trust-policy.js";
-import { createExecutionSupervisor, ExecutionCheckInError } from "./execution-supervisor.js";
+import { createExecutionSupervisor, ExecutionCheckInError, ExecutionEvidenceError } from "./execution-supervisor.js";
 import { createHandoffId } from "../handoff/handoff-id.js";
 import { applyTransition } from "./handoff-state-machine.js";
 import { deliverHandoff } from "./deliver-handoff.js";
@@ -159,7 +159,7 @@ export class WorkflowOrchestrator {
           : {
               workflowId,
               iteration: 1,
-              binding: options.bindingA,
+              binding: error instanceof ExecutionEvidenceError ? options.bindingB : options.bindingA,
               reason: error instanceof Error ? error.message : String(error)
             };
 
@@ -173,8 +173,8 @@ export class WorkflowOrchestrator {
         details: {
           ...(error instanceof ResponseRepairExhaustedError ? error.details : {}),
           reason: failure.reason,
-          role: error instanceof ResponseRepairExhaustedError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : "coordinator",
-          unexpectedError: !(error instanceof ResponseRepairExhaustedError || error instanceof ExecutionCheckInError)
+          role: error instanceof ResponseRepairExhaustedError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : error instanceof ExecutionEvidenceError ? "B" : "coordinator",
+          unexpectedError: !(error instanceof ResponseRepairExhaustedError || error instanceof ExecutionCheckInError || error instanceof ExecutionEvidenceError)
         }
       });
       state = await this.persistRecord(state, blockedRecord);
@@ -241,8 +241,8 @@ export class WorkflowOrchestrator {
         details: {
           ...(error instanceof ResponseRepairExhaustedError ? error.details : {}),
           reason: failure.reason,
-          role: error instanceof ResponseRepairExhaustedError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : "coordinator",
-          unexpectedError: !(error instanceof ResponseRepairExhaustedError || error instanceof ExecutionCheckInError)
+          role: error instanceof ResponseRepairExhaustedError ? error.details.role : error instanceof ExecutionCheckInError ? "A" : error instanceof ExecutionEvidenceError ? "B" : "coordinator",
+          unexpectedError: !(error instanceof ResponseRepairExhaustedError || error instanceof ExecutionCheckInError || error instanceof ExecutionEvidenceError)
         }
       });
       const state = await this.persistRecord(this.currentState ?? options.state, blockedRecord);
@@ -322,6 +322,7 @@ export class WorkflowOrchestrator {
     handoffId: string;
     iteration: number;
     requestId: string;
+    assertCompletionEvidence: (completion: CompletionRecord) => void;
     submit: (responseId: string) => ReturnType<RuntimeEventBridge["promptAndWaitForTurnEnd"]>;
   }): Promise<CompletionRecord> {
     return repairResponse({ bridge: this.bridge, binding: options.bindingB, kind: "completion",
@@ -331,6 +332,7 @@ export class WorkflowOrchestrator {
       onProgress: () => this.setUiState("repair", "B"),
       validate: (message) => {
         const response = resolveAgentBResponse({ ...options, message });
+        if (response.kind === "completion") options.assertCompletionEvidence(response.completion);
         return response.kind === "invalid" ? { reason: response.reason } : { value: response.completion };
       }
     });
@@ -406,6 +408,7 @@ export class WorkflowOrchestrator {
   }> {
     let state = options.state;
     let envelope = options.initialEnvelope;
+    const recoveryBudget = { redirects: 0 };
 
     while (true) {
       const iteration = envelope.iteration;
@@ -429,9 +432,10 @@ export class WorkflowOrchestrator {
         cwd: options.bindingB.cwd,
         bridge: this.bridge,
         envelope,
+        recoveryBudget,
         setUiState: this.setUiState,
         onRepair: (progress) => this.recordRepair(options.bindingA, progress),
-        logEvent: (eventType, details) => this.logWorkflowEvent(eventType, eventType === "workflow.execution_progress" ? options.bindingB : options.bindingA, options, details)
+        logEvent: (eventType, details) => this.logWorkflowEvent(eventType, eventType === "workflow.execution_progress" || eventType === "workflow.tool_recovery_redirected" ? options.bindingB : options.bindingA, options, details)
       });
       const bOutcome = await this.acceptAgentBResponse({
         bindingB: options.bindingB,
@@ -439,6 +443,7 @@ export class WorkflowOrchestrator {
         handoffId: prepared.handoffId ?? envelope.handoffId,
         iteration,
         requestId: options.requestId,
+        assertCompletionEvidence: onTurnEnd.assertCompletionEvidence,
         submit: async (responseId) => {
           const { delivered, message } = await deliverHandoff({ prepared, binding: options.bindingB, bridge: this.bridge, onTurnEnd, responseId });
           state = await this.persistRecord(state, delivered);
@@ -455,6 +460,7 @@ export class WorkflowOrchestrator {
         binding: options.bindingB,
         completion: bOutcome
       });
+      completed.details = { nativeEvidence: onTurnEnd.getNativeEvidence() };
       state = await this.persistRecord(state, completed);
       this.logWorkflowEvent("workflow.iteration_completed", options.bindingB, options, {
         workflowId: options.workflowId,
@@ -794,7 +800,8 @@ function deriveUnexpectedApprovedPlanFailure(
   const workflow = currentState?.workflows[options.initialEnvelope.workflowId];
   const latestIteration = workflow?.currentIteration ?? options.initialEnvelope.iteration;
   const binding =
-    error instanceof ExecutionCheckInError || workflow?.latestCompletion || workflow?.finalDecision ? options.bindingA : options.bindingB;
+    error instanceof ExecutionEvidenceError ? options.bindingB
+      : error instanceof ExecutionCheckInError || workflow?.latestCompletion || workflow?.finalDecision ? options.bindingA : options.bindingB;
   return {
     workflowId: options.initialEnvelope.workflowId,
     iteration: latestIteration,

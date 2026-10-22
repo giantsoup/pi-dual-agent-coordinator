@@ -71,7 +71,7 @@ async function scenario(options: { completionAt?: number; misuse?: boolean; revi
     await coordinator.start(); coordinator.subscribeEvents((event) => events.push(event));
     await coordinator.submitUserInput("Execute the approved write now.");
       const result = await coordinator.approvePendingPlan();
-    return { result, events, requests, completionAttempts, reviewAttempts, writes, content: await readFile(join(cwd, "progress.txt"), "utf8"), status: coordinator.getStatus(), restoredTools: managed.map((session) => session.piSession.getActiveToolNames()), root };
+    return { result, events, requests, completionAttempts, reviewAttempts, writes, content: await readFile(join(cwd, "progress.txt"), "utf8"), status: coordinator.getStatus(), activeTools: managed.map((session) => session.piSession.getActiveToolNames()), root };
   } finally { await coordinator.dispose(); }
 }
 
@@ -86,11 +86,11 @@ describe("response repairs through real Pi sessions with fixture providers", () 
     expect(run.events.filter((event) => event.eventType === "workflow.check_in_started")).toHaveLength(0);
     expect(run.result.userResponse).toContain("Intentional blocker preserved");
   }, 60_000);
-  it("denies hallucinated writes after protocol misuse, accepts tenth report, and restores the runtime tools", async () => {
+  it("denies hallucinated writes after protocol misuse, accepts tenth report, and preserves the runtime tools", async () => {
     const run = await scenario({ completionAt: 10, misuse: true, reviewAt: 2 });
     expect(run.completionAttempts).toBe(10); expect(run.writes).toBe(1); expect(run.content).toBe("original");
     expect(run.reviewAttempts).toBe(2);
-    expect(run.restoredTools.every((tools) => tools.length > 0)).toBe(true);
+    expect(run.activeTools.every((tools) => tools.length > 0)).toBe(true);
     expect(run.requests.filter((request) => request.role === "A").at(-1)?.tools).toBe(0);
     expect(run.requests.filter((request) => request.role === "A")[1]?.tools).toBeGreaterThan(0);
     expect(run.events.filter((event) => event.eventType === "response.rejected" && event.role === "B")).toHaveLength(9);

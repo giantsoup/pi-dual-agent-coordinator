@@ -30,9 +30,9 @@ An unavailable local model blocks startup; there is no cloud fallback.
    when updating. Do not let an agent run against this installation or its parent
    as its workspace. The copy includes source, compiled app, native helper, lockfile, dependencies, Node 24.22.0, npm 12.2.0, and `installation-manifest.json`. It verifies copied bytes and executable modes. Run `bin/node scripts/verify-installation.mjs` inside the snapshot before using credentials.
    Installation runs a fresh build and checks the copied compiled provider broker
-   with injected local streams. Active-stream, idle, and absolute-deadline results
-   are bound to the broker hash in the manifest. A failed check leaves an
-   incomplete snapshot without a success manifest. Do not activate that snapshot.
+   with injected OpenAI and LM Studio streams. Active-stream, idle, and
+   absolute-deadline results are bound to the broker hash in the manifest. A failed
+   check leaves an incomplete snapshot without a success manifest. Do not activate that snapshot.
    Rerun `bin/node scripts/verify-provider-stream-deadlines.mjs` inside a verified
    snapshot to repeat the credential-free check.
 5. Run doctor from that installation against the target workspace:
@@ -48,7 +48,8 @@ An unavailable local model blocks startup; there is no cloud fallback.
 
 1. Create or select a dedicated project in [OpenAI Platform settings](https://platform.openai.com/settings/).
 2. Create a project API key, with restricted permissions. Allow the permission
-   needed to create responses at `POST /v1/responses`, and deny unrelated endpoints.
+   needed to create responses at `POST /v1/responses` and count input tokens at
+   `POST /v1/responses/input_tokens`, and deny unrelated endpoints.
    The app filters Pi's bundled model catalog to approved IDs and does not need to list OpenAI models,
    upload files, manage assistants, or administer the organization. Ensure that
    the owning identity's project role permits model requests and Responses access.
@@ -88,6 +89,18 @@ path. `auth.json` is never written. Non-secret coordinator defaults are saved in
 `~/.pi/dual-agent-coordinator/config.json`. Existing unrelated credentials stay intact.
 
 ## Verify live access
+
+Normal A requests also require access to Responses input-token counting. From a
+verified installation, check that capability without generating model output:
+
+```sh
+bin/node scripts/verify-openai-context.mjs /absolute/credential-project
+```
+
+An optional second argument is a session JSONL path. The verifier reads a disposable
+copy, counts its projected input, and checks the A budget without inference or tool
+execution. It never changes the original archive. Counting access failure blocks
+normal A requests; it does not fall back to byte-triggered compaction.
 
 Run doctor again. Then run the bounded smoke check from the trusted installation:
 

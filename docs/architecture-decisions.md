@@ -73,6 +73,16 @@ Session resets create mode-appropriate managers explicitly; Pi's generic runtime
 are constructed before the current conversation is released. History previews
 parse and migrate only in memory, validate ancestry, and leave source bytes intact.
 
+Response formatting uses a fresh, tool-free Pi Agent for one request through the
+same role's validated broker and model. The coordinator supplies inert transcript
+evidence, the latest response, schema, and identifiers. The live role session's
+tool registry and conversation never change for formatting. Formatter messages
+persist as custom records excluded from model replay and projected as messages
+only during read-only run inspection. Admission and abort/drain ownership remain
+shared with the role runtime; formatting cannot compact its source conversation
+or restart execution. Formatter failures drain without aborting idle execution
+resources. Explicit cancellation still stops the owned role resources.
+
 The metadata catalog is synchronous and credential-free. Each role separately
 creates an asynchronous ModelRuntime containing only its selected broker model.
 Other provider authentication is disabled. Refresh remains offline after creation.
@@ -154,6 +164,19 @@ ManagedSession propagates failures after drain and rejects later dispatch. Its
 owned preflight can compact old history before a new user request. A final payload
 admission check covers late steering and tool/schema growth without replaying
 writes or redelivering a handoff. Raw session history remains intact.
+
+Budget-triggered compaction temporarily uses a zero-token retained tail and an
+inert metadata boundary after the visible history. The trusted hook summarizes
+all projected messages through that boundary, including the newest response;
+Pi still appends the checkpoint and rebuilds context. This handles serialized
+reasoning payloads that exceed serialized admission while Pi's text estimate fits the
+normal recent-history allowance. Original settings are restored after settlement,
+and admission must pass again before inference. A uses exact input-token counting
+and 16,384 output tokens, leaving its large context available. B has a 32,768-input
+soft target and an 8,192-token recent tail, with its 65,536-token hard limit unchanged.
+The counting endpoint is an A-only private broker capability. Fixture counting
+transports return conservative byte counts by default for boundary tests; policy
+tests provide realistic authoritative counts independently of serialized bytes.
 
 Compaction events correlate the source session and job separately from A's model.
 The shared activity reducer renders compaction without changing workflow role or

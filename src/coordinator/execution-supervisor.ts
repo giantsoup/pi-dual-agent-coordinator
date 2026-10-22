@@ -1,3 +1,4 @@
+import { observeNativeTurn, type NativeEvidence } from "./native-verification.js";
 import { resolveAgentBResponse } from "./review-cycle.js";
 import type { z } from "zod";
 
@@ -8,12 +9,19 @@ import { repairResponse, ResponseRepairExhaustedError, type ResponseProgress } f
 import { checkInSchema, responseShape } from "../workflow/workflow-schema.js";
 import { EXECUTION_CHECK_IN_INTERVAL, type ExecutionProgress } from "../workflow/execution-progress.js";
 import { redactText, redactValue } from "../security/redact.js";
-import type { HandoffEnvelope } from "../types/handoff.js";
+import type { CompletionRecord, HandoffEnvelope } from "../types/handoff.js";
 import type { CoordinatorUiPhase } from "../types/status.js";
 import type { RoleRuntimeBinding, SessionPromptOptions, ModelTurnEnd } from "../runtime/create-role-runtime.js";
 import { OperationStoppedError, type RuntimeEventBridge } from "./bind-runtime-events.js";
 
 export { EXECUTION_CHECK_IN_INTERVAL } from "../workflow/execution-progress.js";
+
+type ExecutionSupervisor = NonNullable<SessionPromptOptions["onTurnEnd"]> & {
+  assertCompletionEvidence(completion: CompletionRecord): void;
+  getNativeEvidence(): NativeEvidence;
+};
+
+export class ExecutionEvidenceError extends Error {}
 
 export function createExecutionSupervisor(options: {
   bindingA: RoleRuntimeBinding;
@@ -23,8 +31,14 @@ export function createExecutionSupervisor(options: {
   setUiState: (phase: CoordinatorUiPhase, role: "A" | "B") => void;
   logEvent: (eventType: string, details: Record<string, unknown>) => void;
   onRepair?: ((progress: ResponseProgress) => Promise<void>) | undefined;
-}): NonNullable<SessionPromptOptions["onTurnEnd"]> {
+  recoveryBudget?: { redirects: number };
+}): ExecutionSupervisor {
   let turnCount = 0;
+  let observedToolResults = 0;
+  let successfulToolResults = 0;
+  let redirects = 0;
+  const evidence: NativeEvidence = { schemaVersion: 1, observations: [], omitted: 0 };
+  const recoveryBudget = options.recoveryBudget ?? { redirects: 0 };
   const recentTurns: string[] = [];
   const { envelope } = options;
   const publishProgress = (checkIn: ExecutionProgress["checkIn"]) => options.logEvent("workflow.execution_progress", {
@@ -34,15 +48,72 @@ export function createExecutionSupervisor(options: {
   const nextCheckIn = () => publishProgress({ kind: "scheduled", afterTurn: (Math.floor(turnCount / EXECUTION_CHECK_IN_INTERVAL) + 1) * EXECUTION_CHECK_IN_INTERVAL });
   nextCheckIn();
 
-  return async (event, signal) => {
+  const completionEvidenceFailure = (completion: CompletionRecord): string | undefined => {
+    if (successfulToolResults === 0 && completion.changedPaths.length > 0) {
+      return "Agent B claimed changes with no successful native tool results in this handoff; completion rejected.";
+    }
+    if (observedToolResults === 0 && (completion.verification?.length ?? 0) > 0) {
+      return "Agent B claimed verification with no native tool results in this handoff; completion rejected.";
+    }
+    return undefined;
+  };
+  const assertCompletionEvidence = (completion: CompletionRecord): void => {
+    const reason = completionEvidenceFailure(completion);
+    if (reason) throw new ExecutionEvidenceError(reason);
+  };
+  const recover = (reason: "printed_tool_markup" | "unsupported_completion" | "incomplete_execution"): string => {
+    if (redirects >= 2 || recoveryBudget.redirects >= 3) throw new ExecutionEvidenceError("Agent B tool-call recovery exhausted; no completion accepted. Start a fresh B conversation before retrying the approved task.");
+    redirects++;
+    recoveryBudget.redirects++;
+    options.logEvent("workflow.tool_recovery_redirected", { workflowId: envelope.workflowId, handoffId: envelope.handoffId,
+      iteration: envelope.iteration, reason, redirect: redirects, workflowRedirects: recoveryBudget.redirects, successfulToolResults });
+    return withPromptProvenance("coordinator_control", [
+      "Coordinator tool-call recovery for Agent B.",
+      reason === "printed_tool_markup"
+        ? "Your last response printed tool-call markup. No tool call was executed by that text. Tools remain enabled."
+        : reason === "unsupported_completion"
+          ? "Your completion claimed changes or verification, but no native tool results were observed in this handoff. The completion was rejected. Tools remain enabled."
+          : "Your response ended without a completion report. Continue the remaining approved work using native tools, or report an honest blocker. Tools remain enabled.",
+      "Use native tool calls from the provided tool registry. Never print or simulate tool requests; printed arguments will not be executed.",
+      `Successful native tool results observed in this handoff: ${successfulToolResults}.`,
+      "Continue only unfinished actions authorized by the current handoff, preserving its stop condition. Do not replay completed writes or external actions, or rerun checks solely to change report wording. For a verification-only handoff whose requested check has already returned, report its observed result and stop without further tools. Continue explicitly authorized implementation and verification when that work remains.",
+      "Report only observed changes and checks. If unable to execute, emit pi-completion with changedPaths and verification empty and explain the blocker in openQuestions.",
+      `Keep workflow ${envelope.workflowId}, handoff ${envelope.handoffId}, iteration ${envelope.iteration}.`
+    ].join("\n"), { ...envelope, sessionRole: "B" });
+  };
+  const onTurnEnd: NonNullable<SessionPromptOptions["onTurnEnd"]> = async (event, signal) => {
     options.bridge.assertActive();
     signal.throwIfAborted();
     if (event.message.role !== "assistant" || event.message.stopReason === "error" || event.message.stopReason === "aborted") return;
     const calls = event.message.content.filter((part) => part.type === "toolCall");
+    for (const call of calls) {
+      const result = event.toolResults.find((item) => item.toolCallId === call.id && item.toolName === call.name);
+      if (!result) throw new ExecutionEvidenceError("Agent B tool result is unknown; execution stopped without retrying a possible write.");
+      observedToolResults++;
+      if (!result.isError) successfulToolResults++;
+    }
+    for (const observation of observeNativeTurn(event)) {
+      evidence.observations.push(observation);
+      if (evidence.observations.length > 50) { evidence.observations.shift(); evidence.omitted++; }
+    }
+    const response = calls.length === 0 ? resolveAgentBResponse({ message: event.message, workflowId: envelope.workflowId,
+      handoffId: envelope.handoffId, iteration: envelope.iteration, ...(envelope.requestId ? { requestId: envelope.requestId } : {}) }) : undefined;
+    if (response?.kind === "completion") {
+      const failure = completionEvidenceFailure(response.completion);
+      if (failure) {
+        if (observedToolResults === 0) return recover("unsupported_completion");
+        throw new ExecutionEvidenceError(failure);
+      }
+    }
+    if (response?.kind === "invalid" && /<tool_call\b|\[(?:END_)?TOOL_(?:CALL|REQUEST)\]/i.test(extractAssistantText(event.message))) {
+      return recover("printed_tool_markup");
+    }
+    if (response?.kind === "invalid" && (observedToolResults === 0 || !/```pi-completion\b/.test(extractAssistantText(event.message)))) {
+      return recover("incomplete_execution");
+    }
     const successful = event.message.stopReason !== "length" && (calls.length > 0
       ? calls.every((call) => event.toolResults.some((result) => result.toolCallId === call.id && !result.isError))
-      : resolveAgentBResponse({ message: event.message, workflowId: envelope.workflowId, handoffId: envelope.handoffId,
-          iteration: envelope.iteration, ...(envelope.requestId ? { requestId: envelope.requestId } : {}) }).kind === "completion");
+      : response?.kind === "completion");
     if (!successful) {
       options.logEvent("workflow.execution_turn_failed", { workflowId: envelope.workflowId, handoffId: envelope.handoffId,
         iteration: envelope.iteration, completedTurns: turnCount,
@@ -118,6 +189,7 @@ export function createExecutionSupervisor(options: {
       options.setUiState("execution", "B");
     }
   };
+  return Object.assign(onTurnEnd, { assertCompletionEvidence, getNativeEvidence: () => structuredClone(evidence) });
 }
 
 function parseCheckIn(message: Parameters<typeof extractAssistantText>[0], expected: {

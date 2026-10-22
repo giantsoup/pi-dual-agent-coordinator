@@ -26,6 +26,37 @@ function setup(read = vi.fn(async (): Promise<ArchiveEntry[]> => [])) {
 }
 
 describe("request transcript projection", () => {
+  it.each([
+    ["pi-plan", "Proposed plan"],
+    ["pi-execute", "Execution plan"],
+    ["pi-handoff", "Handoff"]
+  ])("separates %s steps and acceptance criteria into readable paragraphs", (kind, label) => {
+    const data = { schemaVersion: 1, workflowId: "workflow", handoffId: "handoff", iteration: 1,
+      objective: "Fix arithmetic", summary: "Keep the change focused.", relevantPaths: ["arithmetic.js"],
+      executionPlan: ["Inspect the current implementation.", "Update the calculation.\nKeep the existing rounding behavior.", "Run the existing tests."],
+      acceptanceCriteria: ["Arithmetic tests pass.", "Unrelated files stay unchanged."] };
+    const visible = readableAssistantOutput(`Context paragraph.\n\nAnother paragraph.\n\n\`\`\`${kind}\n${JSON.stringify(data)}\n\`\`\``);
+    expect(visible).toBe([
+      "Context paragraph.", "Another paragraph.", `${label}: Keep the change focused.`,
+      "Inspect the current implementation.", "Update the calculation.\nKeep the existing rounding behavior.", "Run the existing tests.",
+      "Acceptance criteria:", "- Arithmetic tests pass.", "- Unrelated files stay unchanged."
+    ].join("\n\n"));
+  });
+
+  it("spaces handoff review notes without requiring execution steps", () => {
+    const data = { schemaVersion: 1, workflowId: "workflow", handoffId: "handoff", iteration: 2,
+      objective: "Revise arithmetic", summary: "One revision is needed.", relevantPaths: [],
+      reviewNotes: ["Preserve rounding.", "Check negative inputs."], acceptanceCriteria: ["Tests pass."] };
+    expect(readableAssistantOutput(`\`\`\`pi-handoff\n${JSON.stringify(data)}\n\`\`\``)).toBe(
+      "Handoff: One revision is needed.\n\nPreserve rounding.\n\nCheck negative inputs.\n\nAcceptance criteria:\n\n- Tests pass."
+    );
+  });
+
+  it("preserves ordinary prose and code blocks", () => {
+    const text = "First paragraph.\n\nSecond paragraph.\nWrapped line.\n\n```text\nline one\nline two\n```";
+    expect(readableAssistantOutput(text)).toBe(text);
+  });
+
   it.each(["pi-execute", "pi-handoff"])("shows the validated %s summary when A supplies no surrounding prose", (kind) => {
     const data = { schemaVersion: 1, workflowId: "workflow", handoffId: "handoff", iteration: 1, objective: "Fix arithmetic", summary: "Explain the arithmetic change",
       executionPlan: ["Update arithmetic.js"], relevantPaths: ["arithmetic.js"], acceptanceCriteria: ["Arithmetic tests pass"] };

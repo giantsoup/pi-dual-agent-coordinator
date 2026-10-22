@@ -59,7 +59,7 @@ const verification = spawnSync(join(destination, 'bin/node'), [join(destination,
 assert.equal(verification.status, 0, 'Prepared provider stream verification failed; do not activate this installation');
 const providerStreams = JSON.parse(verification.stdout);
 assert.equal(providerStreams.outcome, 'passed');
-assert.deepEqual(providerStreams.checks, ['active', 'idle', 'deadline']);
+assert.deepEqual(providerStreams.checks, ['lm-studio:active', 'lm-studio:idle', 'lm-studio:deadline', 'openai:active', 'openai:idle', 'openai:deadline']);
 assert.equal(providerStreams.brokerSha256, createHash('sha256').update(readFileSync(join(destination, 'dist/src/security/provider-broker.js'))).digest('hex'));
 const record = { createdAt: new Date().toISOString(), node: process.versions.node, npm: '12.2.0', pi: manifest.dependencies['@earendil-works/pi-coding-agent'], sourceCommit: git(['rev-parse', 'HEAD']), sourceDiffSha256: createHash('sha256').update(git(['diff', '--binary', 'HEAD'])).digest('hex'), providerStreams, files: hashes(destination) };
 writeFileSync(join(destination, 'installation-manifest.json'), JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });

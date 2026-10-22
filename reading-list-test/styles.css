@@ -1,0 +1,280 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --text: #1a1a1a;
+  --muted: #555555;
+  --accent: #2b6cb0;
+  --accent-text: #ffffff;
+  --danger: #c53030;
+  --border: #d0d0cc;
+  --focus: #f6ad2b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141414;
+    --surface: #1f1f1f;
+    --text: #f0f0f0;
+    --muted: #aaaaaa;
+    --accent: #63a4e0;
+    --accent-text: #111111;
+    --danger: #fc8181;
+    --border: #444444;
+    --focus: #f6ad2b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.container {
+  max-width: 36rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 1rem;
+}
+
+.add-form {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field label,
+.filter-group legend {
+  font-weight: 600;
+}
+
+.optional {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+input[type="text"],
+input[type="checkbox"] {
+  font: inherit;
+}
+
+input[type="text"] {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.55rem 1rem;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+  justify-self: start;
+}
+
+.button:hover {
+  filter: brightness(1.1);
+}
+
+.delete-button {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.delete-button:hover {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.status-message {
+  min-height: 1.4em;
+  margin: 0.75rem 0 0;
+  font-size: 0.95rem;
+}
+
+.status-message.error {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.status-message.success {
+  color: var(--muted);
+}
+
+.search-field {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.search-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.search-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.sort-field {
+  max-width: 14rem;
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+select {
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  margin: 1rem 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.filter-group legend {
+  padding: 0 0.35rem;
+}
+
+.filter-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.book-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.book-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.book-details {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.book-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.book-author {
+  color: var(--muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.book-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-shrink: 0;
+}
+
+.status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.empty-message {
+  color: var(--muted);
+  font-style: italic;
+  padding: 0.5rem 0.25rem;
+}
+
+.empty-message:empty {
+  display: none;
+}
+
+.storage-message {
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.storage-message:empty {
+  display: none;
+}
+
+/* Visible focus styling for all interactive controls */
+input:focus-visible,
+button:focus-visible,
+select:focus-visible,
+.filter-option input:focus-visible + span,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.filter-option:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

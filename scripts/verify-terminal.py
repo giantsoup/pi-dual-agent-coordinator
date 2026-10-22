@@ -28,7 +28,7 @@ if CAPTURE:
     from wcwidth import wcswidth
 
 # Ghostty 1.3.1 `+show-config --default`. Pyte names ANSI yellow "brown".
-DEFAULT_PALETTE = {'default': 'ffffff', 'cyan': '8abeb7', 'brown': 'f0c674'}
+DEFAULT_PALETTE = {'default': 'ffffff', 'white': 'c5c8c6', 'cyan': '8abeb7', 'brown': 'f0c674'}
 DEFAULT_BACKGROUND = '282c34'
 
 
@@ -52,6 +52,9 @@ def check(condition, message):
 def stable_screen(screen):
     # The pinned clock can advance while browsing; compare all other text and geometry.
     return re.sub(r'\d+s elapsed(?: / last event \d+s ago)?', 'CLOCK', screen)
+
+def controls_visible(rows):
+    return any('Esc controls' in row or 'h help' in row or 'Letter or Up/Down' in row or 'Esc cancel' in row or 'Quit? y confirm' in row for row in rows)
 
 class Terminal:
     def __init__(self, root, mode, size=(80,24), startup_failure=False):
@@ -98,10 +101,11 @@ class Terminal:
         time.sleep(.08);self.read()
         if self.screen and role: self.wait(lambda:any('CURRENT REQUEST' in row for row in self.screen.display),'current request heading rendered before role capture')
         if self.screen:
+            self.wait(lambda:controls_visible(self.screen.display),'controls repainted before capture')
             rows = self.screen.display
             check(len(rows)==self.screen.lines,'captured screen row budget')
             check(all(wcswidth(row)<=self.screen.columns for row in rows),'captured screen display-cell budget')
-            check(any('Esc controls' in row or 'h help' in row or 'Letter or Up/Down' in row or 'Esc cancel' in row or 'Quit? y confirm' in row for row in rows),'controls remain visible in captured screen')
+            check(controls_visible(rows),'controls remain visible in captured screen')
             (EVIDENCE/(label+'.screen.txt')).write_text('\n'.join(rows)+'\n')
             cells = [self.screen.buffer[y][x] for y in range(self.screen.lines) for x in range(self.screen.columns)]
             text_cells = [cell for cell in cells if cell.data.strip()]
@@ -109,7 +113,7 @@ class Terminal:
             editor_borders = [y for y, row in enumerate(rows) if row.startswith('──')]
             editor_rows = range(editor_borders[-2] + 1, editor_borders[-1]) if len(editor_borders) >= 2 else range(0)
             check(all(not self.screen.buffer[y][x].reverse for y in range(self.screen.lines) if y not in editor_rows for x in range(self.screen.columns) if self.screen.buffer[y][x].data.strip()),'no inverse text outside the editor cursor: '+label)
-            check(all(cell.fg in DEFAULT_PALETTE for cell in text_cells),'only default text and standard role accents: '+label)
+            check(all(cell.fg in DEFAULT_PALETTE for cell in text_cells),'only default text and standard ANSI accents: '+label)
             minimum = min(contrast(DEFAULT_PALETTE[cell.fg], DEFAULT_BACKGROUND) for cell in text_cells)
             check(minimum >= 4.5, 'at least 4.5:1 text contrast against the default Ghostty background: '+label)
             prose_contrast = contrast(DEFAULT_PALETTE['default'], DEFAULT_BACKGROUND)
@@ -117,6 +121,12 @@ class Terminal:
             if role:
                 y, row = next((y, row) for y, row in enumerate(rows) if 'CURRENT REQUEST' in row)
                 check(self.screen.buffer[y][row.index('CURRENT REQUEST')].fg == ('cyan' if role == 'A' else 'brown'),'current-turn heading retains actual role accent: '+label)
+            activity_heading = next(((y, row) for y, row in enumerate(rows) if 'Current /' in row), None)
+            if activity_heading:
+                y, row = activity_heading
+                for recent_y, recent_row in enumerate(rows):
+                    if 'recent call' in recent_row:
+                        check(self.screen.buffer[recent_y][recent_row.index('recent call')].fg == self.screen.buffer[y][row.index('Current /')].fg, 'recent calls match the current agent accent: '+label)
             styles = sorted({(cell.fg, cell.bg, cell.bold, cell.reverse) for cell in cells})
             (EVIDENCE/(label+'.colors.json')).write_text(json.dumps({'palette':'Ghostty 1.3.1 defaults', 'minimumTextContrast':round(minimum,2), 'defaultProseContrast':round(prose_contrast,2), 'styles':[{'foreground':fg,'background':bg,'bold':bold,'reverse':reverse} for fg,bg,bold,reverse in styles]},indent=2)+'\n')
             rendered_rows = []
@@ -185,7 +195,7 @@ def verify_stream_failure(root):
                 for cols,rows in [(120,80),(80,24),(40,12)]:
                     terminal.size(cols,rows)
                     screen = terminal.snapshot(f'stream-failure-{cols}x{rows}')
-                    if CAPTURE: check('LM Studio request interrupted' in screen and 'Agent B' in screen,'failure role and cause visible at target size')
+                    if CAPTURE: check('LM Studio request interrupted' in screen and ('Agent B' in screen or 'B - Junior' in screen),'failure role and cause visible at target size')
                 terminal.send('\x1bOS')
                 terminal.snapshot('stream-failure-history-40x12')
             else:
@@ -196,9 +206,36 @@ def verify_stream_failure(root):
         finally:
             if terminal.process.poll() is None: terminal.process.kill();terminal.process.wait()
 
+def verify_cloud_stream_failure(root):
+    for stream_mode in ['cloud-stream-failure', 'plain-cloud-stream-failure']:
+        terminal = Terminal(root, stream_mode, (120,80))
+        try:
+            terminal.command('cloud stream failure')
+            terminal.wait(lambda:terminal.state().get('operation',{}).get('kind')=='failed','A cloud stream interruption')
+            state = terminal.state()
+            activity = state['currentActivity']
+            check(activity['owner']['role']=='A' and activity['phase']=='Planning','failure retains A planning ownership')
+            check('OpenAI request interrupted' in activity['action']['failure']['reason'],'specific cloud stream failure retained')
+            runs = [record for record in state['history']['records'] if record['kind']=='run']
+            check(len(runs)==1 and runs[0]['outcome']['kind']=='failed','cloud failure stops without repair or replay')
+            check(not state.get('pendingPlan'),'cloud failure does not create an approval plan')
+            if stream_mode == 'cloud-stream-failure':
+                for cols,rows in [(120,80),(80,24),(40,12)]:
+                    terminal.size(cols,rows)
+                    screen = terminal.snapshot(f'cloud-stream-failure-{cols}x{rows}')
+                    if CAPTURE: check('OpenAI request interrupted' in screen and ('Agent A' in screen or 'A - Senior' in screen),'cloud failure role and cause visible at target size')
+            else:
+                terminal.read()
+                check(b'Agent A / Planning: Request failed / OpenAI request interrupted' in terminal.output,'plain mode prints cloud failure role and cause')
+            check(b'private upstream detail' not in terminal.output and b'incomplete' not in terminal.output,'cloud error details and partial SSE stay private')
+            terminal.stop(via_signal=stream_mode == 'cloud-stream-failure')
+        finally:
+            if terminal.process.poll() is None: terminal.process.kill();terminal.process.wait()
+
 if sys.argv[1:] == ['--provider-stream-only']:
     with tempfile.TemporaryDirectory(prefix='pi-stream-terminal-') as directory:
         verify_stream_failure(Path(directory))
+        verify_cloud_stream_failure(Path(directory))
     print(json.dumps({'outcome':'passed','scope':'provider-stream','ptyAssertions':checks,'interfaces':['tui','plain'],'screenCapture':CAPTURE}))
     raise SystemExit(0)
 
@@ -401,7 +438,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
         repair.wait(lambda:any(record['kind']=='run' and record.get('phase')=='Repair' and record['outcome']['kind']=='running' for record in repair.state().get('history',{}).get('records',[])),'actual planning repair')
         repair.wait(lambda:repair.state().get('currentActivity',{}).get('owner',{}).get('role')=='A' and repair.state().get('currentActivity',{}).get('phase')=='Repair','honest repair role and phase')
         screen = repair.snapshot('A-repair-80x24',role='A')
-        if CAPTURE: check('Repair' in screen and 'Current activity / live' in screen and 'Active: A - Senior' in screen,'real repair step in current workspace')
+        if CAPTURE: check('Repair' in screen and 'Current / A - Senior' in screen,'real repair step in current workspace')
         repair.wait(lambda:repair.state().get('operation',{}).get('kind')=='completed','repair completion')
         check([record['phase'] for record in repair.state()['history']['records'] if record['kind']=='run']==['Planning','Repair'],'planning and repair separately inspectable')
         repair.stop()
@@ -572,7 +609,7 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
         completion.send('\x1bOS');screen = completion.snapshot('chooser-completion-80x24')
         if CAPTURE:
             check('> Current conversation' in screen and 'Enter choose' in screen,'chooser remains usable after dismissing tall editor completion')
-            check('six' in screen and 'Current activity' in screen,'multiline draft and activity remain mounted')
+            check('six' in screen and ('Current /' in screen or 'Current activity' in screen),'multiline draft and activity remain mounted')
         completion.send('\x1bOS');completion.send('sta');time.sleep(.08);completion.send('\t')
         if CAPTURE: check('/status' in completion.snapshot('chooser-completion-restored-80x24'),'completion works again after history dismisses')
         check(not any(entry['kind']=='operator_message' for entry in completion.state()['conversation']),'completion and chooser never submit the multiline draft')
@@ -592,10 +629,20 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             terminal.command('plan history stress')
             terminal.wait(lambda:bool(terminal.state().get('pendingPlan')),'stress pending plan')
             plan_turn = terminal.state()['history']['currentTurnId']
+            if history_mode != 'plain' and CAPTURE:
+                terminal.size(120,80)
+                screen = terminal.snapshot('plan-paragraph-spacing-120x80')
+                rows = screen.splitlines()
+                parts = ['Proposed plan: Ready', 'Write result.txt', 'Verify content', 'Acceptance criteria:', 'result file verified']
+                positions = [next(i for i, row in enumerate(rows) if part in row) for part in parts]
+                check(all(right == left + 2 for left, right in zip(positions, positions[1:])), 'one blank row separates plan sections and steps')
+                check(all(not rows[left + 1].strip(' |') for left in positions[:-1]), 'plan separators contain no text')
+                check('•' in rows[positions[-1]] or '- result file verified' in rows[positions[-1]], 'acceptance criteria render as bullets')
+                terminal.size(120,40)
             terminal.command('/approve')
             terminal.wait(lambda:any(record['kind']=='run' and record.get('role')=='B' and record['outcome']['kind']=='running' for record in terminal.state().get('history',{}).get('records',[])),'real B run')
             if history_mode != 'plain':
-                terminal.wait(lambda:b'Active: B - Junior' in terminal.output,'B active label')
+                terminal.wait(lambda:b'Current / B - Junior' in terminal.output,'B current activity identity')
                 terminal.snapshot('B-execution-120x40',role='B')
                 terminal.size(120,80)
                 screen = terminal.snapshot('B-execution-120x80',role='B')
@@ -610,11 +657,11 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
                 if CAPTURE:
                     check('B turns: 10 successful / A checking turn 10' in screen,'visible count matches actual senior pause')
                     rows = screen.splitlines()
-                    active = next(i for i, line in enumerate(rows) if 'Active: A - Senior' in line)
+                    active = next(i for i, line in enumerate(rows) if 'Current / A - Senior' in line)
                     check(all(i < active for i, line in enumerate(rows) if '[completed]' in line),'active line follows completed tool records')
             terminal.wait(lambda:any(record['kind']=='run' and record.get('role')=='A' and record.get('phase')=='Review' and record['outcome']['kind']=='running' for record in terminal.state().get('history',{}).get('records',[])),'real A review run')
             if history_mode != 'plain':
-                terminal.wait(lambda:b'Active: A - Senior' in terminal.output,'A active label')
+                terminal.wait(lambda:b'Current / A - Senior' in terminal.output,'A current activity identity')
                 terminal.size(120,40)
                 terminal.snapshot('A-review-120x40',role='A')
                 terminal.size(120,80)
@@ -716,8 +763,13 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             if terminal.process.poll() is None: terminal.process.kill();terminal.process.wait()
     activity = Terminal(root,'activity-narrative',size=(120,80))
     try:
+        activity.command('/config timeout-ms 60000')
+        activity.wait(lambda:activity.state().get('status',{}).get('timeoutMs')==60000,'budget for delayed multi-round activity fixture')
         activity.command('/config review-rounds 3')
         activity.wait(lambda:activity.state().get('status',{}).get('maxReviewRounds')==3,'activity review budget')
+        # Allow capture overhead across fourteen native tool turns and a check-in.
+        activity.command('/config timeout-ms 30000')
+        activity.wait(lambda:activity.state().get('status',{}).get('timeoutMs')==30000,'activity capture workflow budget')
         activity.command('plan activity narrative')
         activity.wait(lambda:bool(activity.state().get('pendingPlan')),'activity plan ready')
         check(not (activity.workspace/'result.txt').exists(),'activity scenario requires explicit approval')
@@ -731,10 +783,19 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
             activity.size(cols,rows);time.sleep(.1)
             screen = activity.snapshot(f'activity-live-{cols}x{rows}')
             if CAPTURE:
-                check('Current activity' in screen and 'draft' in screen,'live action and draft visible at target size')
+                check(('Current /' in screen or 'Current activity' in screen) and 'draft' in screen,'live action and draft visible at target size')
+                check('Ctrl+C cancel' in screen, 'cancellation remains visible alongside workflow notifications')
         activity.wait(lambda:activity.state().get('currentActivity',{}).get('phase')=='Check-in','activity A check-in')
         screen = activity.snapshot('activity-check-in-120x80',role='A')
-        if CAPTURE: check('Active: A - Senior' in screen and 'A checking turn 10' in screen,'real check-in owns the activity panel')
+        if CAPTURE:
+            check('Current / A - Senior' in screen and 'A checking turn 10' in screen,'real check-in owns the activity panel')
+            rows = screen.splitlines()
+            recent = [i for i, row in enumerate(rows) if 'recent call' in row]
+            check(len(recent) == 1, 'recent calls occupy a single summary row')
+            check(not rows[recent[0]-1].strip('| '), 'a full blank row separates current activity from recent calls')
+            clock = next(i for i, row in enumerate(rows) if 'last event' in row)
+            check(activity.screen.buffer[clock][rows[clock].index('elapsed')].fg == 'white', 'activity timing uses secondary gray')
+            check(activity.screen.buffer[recent[0]][rows[recent[0]].index('recent')].fg == 'cyan', 'recent calls use Agent A cyan during check-in')
         activity.wait(lambda:activity.state().get('currentActivity',{}).get('owner',{}).get('role')=='B','B continues after check-in')
         check(activity.state()['currentActivity']['owner']['runId']==b_run,'continued B activity retains original run identity')
         activity.wait(lambda:any('continuing after the senior check-in' in entry.get('text','') for entry in activity.state().get('conversation',[])),'continued B prose observed')
@@ -757,7 +818,40 @@ with tempfile.TemporaryDirectory(prefix='pi-terminal-pty-') as directory:
         activity.stop(via_signal=True)
     finally:
         if activity.process.poll() is None: activity.process.kill();activity.process.wait()
+    for reliability_mode in ['reliability', 'plain-reliability']:
+        reliability = Terminal(root, reliability_mode, size=(120,40))
+        try:
+            test_text = "import test from 'node:test'; import assert from 'node:assert/strict'; test('ascending assertion',()=>assert.equal(1,2));\n"
+            (reliability.workspace/'check.test.mjs').write_text(test_text)
+            reliability.command('plan reliability fixture')
+            reliability.wait(lambda:bool(reliability.state().get('pendingPlan')),'verification waits for operator approval')
+            reliability.command('/approve')
+            reliability.wait(lambda:reliability.state().get('operation',{}).get('kind')=='completed','accurate failed-check diagnostic completes')
+            reliability.wait(lambda:b'TERMINAL_FAILED_CHECK' in reliability.output,'failed-check report rendered')
+            if reliability_mode == 'reliability':
+                screen = reliability.snapshot(reliability_mode+'-failed-check-120x40')
+                if CAPTURE: check('one failed ascending assertion' in screen,'failed check remains visible after diagnostic approval')
+            else:
+                reliability.read()
+                (EVIDENCE/'plain-reliability-failed-check.txt').write_text(reliability.output.decode('utf-8','replace'))
+            calls = [record for record in reliability.state()['history']['records'] if record['kind']=='tool']
+            check([call['toolName'] for call in calls]==['read','bash'],'printed markup never becomes an additional native call')
+            check(calls[-1]['outcome']['kind']=='failed','failed native command remains failed in history')
+            check((reliability.workspace/'check.test.mjs').read_text()==test_text,'failed verification does not repair the app')
+            reliability.command('/inspect '+calls[-1]['id']+' output')
+            reliability.wait(lambda:'Observed shell exit code: 1' in reliability.state().get('modal',{}).get('content',''),'read-only inspection shows native failed exit')
+            if reliability_mode == 'reliability': reliability.snapshot(reliability_mode+'-native-history-120x40')
+            else:
+                reliability.wait(lambda:b'Observed shell exit code: 1' in reliability.output,'plain native exit rendered')
+                (EVIDENCE/'plain-reliability-native-history.txt').write_text(reliability.output.decode('utf-8','replace'))
+            log = (reliability.state_root/'logs'/'coordinator.jsonl').read_text()
+            check(log.count('workflow.tool_recovery_redirected')==1,'one bounded printed-markup recovery retained')
+            if reliability_mode == 'reliability': reliability.send('\x1b')
+            reliability.stop(via_signal=True)
+        finally:
+            if reliability.process.poll() is None: reliability.process.kill();reliability.process.wait()
     verify_stream_failure(root)
+    verify_cloud_stream_failure(root)
     for scenario in ['A', 'B', 'fail', 'cancel', 'plain']:
         compact = Terminal(root, 'plain-compaction' if scenario == 'plain' else 'compaction-' + scenario, (120,80))
         try:

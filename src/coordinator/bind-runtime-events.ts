@@ -96,7 +96,13 @@ export class RuntimeEventBridge {
         requestId: this.requestIds.get(binding.role), eventType: `compaction.${event.type}`, details: { ...event } }),
         runId: this.runIds.get(binding.role), operatorTurnId: this.operatorTurnId });
     });
-    this.subscriptions.set(binding.role, () => { unsubscribe(); unsubscribeCompaction?.(); });
+    const unsubscribeProvider = binding.subscribeProviderDiagnostics?.((event) => {
+      if (binding.session !== session) return;
+      this.logger.log({ ...normalizeLifecycleEvent({ role: binding.role, sessionId: binding.sessionId, sessionFile: binding.sessionFile,
+        requestId: this.requestIds.get(binding.role), eventType: `provider.${event.phase}`, details: { ...event, requestBudget: this.submissions.get(this.sessionKey(binding))?.formatOnly ? undefined : session.requestBudget } }),
+        runId: this.runIds.get(binding.role), operatorTurnId: this.operatorTurnId });
+    });
+    this.subscriptions.set(binding.role, () => { unsubscribe(); unsubscribeCompaction?.(); unsubscribeProvider?.(); });
   }
 
   public beginOperation(signal: AbortSignal): void {
@@ -140,7 +146,7 @@ export class RuntimeEventBridge {
     this.runIds.set(binding.role, runId);
     const tag = text.split("\n", 1)[0] ?? "";
     const attribute = (name: string) => tag.match(new RegExp(`${name}="([^"<>]+)"`))?.[1];
-    const metadata = { runId, responseId: options?.responseId, responseAttempt: options?.responseAttempt ?? 1, formatOnly: options?.formatOnly ?? false, operatorTurnId: this.operatorTurnId, requestId: this.requestIds.get(binding.role),
+    const metadata = { runId, responseId: options?.responseId, responseAttempt: options?.responseAttempt ?? 1, formatOnly: Boolean(options?.formatting), operatorTurnId: this.operatorTurnId, requestId: this.requestIds.get(binding.role),
       workflowId: attribute("workflowId"), handoffId: attribute("handoffId"), provenance: attribute("provenance") ?? "planning_user" };
     const branchId = binding.session.sessionManager?.appendCustomEntry?.("pi-dual-run", metadata) ?? binding.session.sessionManager?.getLeafId();
     const logRun = (eventType: string, details: Record<string, unknown>) => this.logger.log({
@@ -148,30 +154,38 @@ export class RuntimeEventBridge {
         requestId: metadata.requestId, eventType, details: { ...metadata, branchId, ...details } }),
       runId, operatorTurnId: this.operatorTurnId
     });
+    const startedAt = performance.now();
+    let firstNativeResultMs: number | undefined;
     logRun("runtime.run_started", {});
     this.turnIds.set(binding.role, `${this.requestIds.get(binding.role) ?? "turn"}:${++this.turnSequence}`);
     this.bufferedTurnEnds.set(sessionKey, []);
-    this.submissions.set(sessionKey, { responseId: options?.responseId ?? "unscoped", formatOnly: options?.formatOnly ?? false });
+    this.submissions.set(sessionKey, { responseId: options?.responseId ?? "unscoped", formatOnly: Boolean(options?.formatting) });
     const turnEndPromise = this.awaitNextTurnEnd(sessionKey);
     void turnEndPromise.catch(() => undefined);
     const session = binding.session;
     const prompt = Promise.resolve().then(() => session.prompt(text, { ...options, onTurnEnd: async (event, signal) => {
       if (event.message.role === "assistant" && event.message.stopReason !== "error" && event.message.stopReason !== "aborted") {
-        const misuse = event.message.content.find((part) => part.type === "toolCall" && (options?.formatOnly || PROTOCOL_TOOL_NAMES.has(part.name)));
-        if (misuse) throw new ResponseFormatError(options?.responseId ?? "unscoped", "Protocol labels are assistant text, and tools are disabled during format-only repairs.");
+        const misuse = event.message.content.find((part) => part.type === "toolCall" && (options?.formatting || PROTOCOL_TOOL_NAMES.has(part.name)));
+        if (misuse) throw new ResponseFormatError(options?.responseId ?? "unscoped", "Protocol labels are assistant text; a separate response formatter cannot invoke tools.");
       }
+      if (event.toolResults.length && firstNativeResultMs === undefined) firstNativeResultMs = performance.now() - startedAt;
       return options?.onTurnEnd?.(event, signal);
     } }));
     const pending = (async () => {
       try {
         await prompt;
-        const message = await turnEndPromise;
+        const firstMessage = await turnEndPromise;
+        await this.waitForIdle();
+        const message = this.bufferedTurnEnds.get(sessionKey)?.at(-1) ?? firstMessage;
+        if (message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted")) {
+          throw new Error(message.errorMessage ?? `Provider stopped: ${message.stopReason}`);
+        }
         this.assertActive();
-        logRun("runtime.run_finished", { outcome: "completed", leafId: binding.session.sessionManager?.getLeafId() });
+        logRun("runtime.run_finished", { elapsedMs: performance.now() - startedAt, firstNativeResultMs, requestBudget: options?.formatting ? undefined : session.requestBudget, outcome: "completed", leafId: binding.session.sessionManager?.getLeafId() });
         return message;
       } catch (error) {
-        if (!this.operationSignal?.aborted) await binding.session.abort();
-        logRun("runtime.run_finished", { outcome: this.operationSignal?.aborted ? "interrupted" : "failed",
+        if (!this.operationSignal?.aborted && !options?.formatting) await binding.session.abort();
+        logRun("runtime.run_finished", { elapsedMs: performance.now() - startedAt, firstNativeResultMs, requestBudget: options?.formatting ? undefined : session.requestBudget, outcome: this.operationSignal?.aborted ? "interrupted" : "failed",
           reason: this.operationSignal?.aborted ? undefined : safeDisplayText(error instanceof Error ? error.message : String(error)).slice(0, 1600),
           leafId: binding.session.sessionManager?.getLeafId() });
         throw this.operationSignal?.aborted ? new OperationStoppedError() : this.submissions.get(sessionKey)?.failure ?? error;
@@ -369,7 +383,7 @@ export class RuntimeEventBridge {
     const submission = this.submissions.get(sessionKey);
     if (!submission || submission.failure) return;
     const error = new ResponseFormatError(submission.responseId,
-      submission.formatOnly ? "Tools are disabled during response formatting." : `Protocol label ${toolName} must be fenced assistant text, not a tool.`, toolName);
+      submission.formatOnly ? "The response formatter has no tools; execution tools remain available in the separate session." : `Protocol label ${toolName} must be fenced assistant text, not a tool.`, toolName);
     submission.failure = error;
     const waiters = this.turnWaiters.get(sessionKey) ?? [];
     this.turnWaiters.delete(sessionKey);

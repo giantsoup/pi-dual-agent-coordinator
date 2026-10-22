@@ -45,7 +45,12 @@ export function readSessionHistory(path: string) {
 /** Complete archive, including inactive branches and messages preceding compaction. */
 export function readSessionArchive(path: string) {
   const content = readFileSync(path, "utf8");
-  const parsed = content.split("\n").filter((line) => line.trim()).map((line) => archiveEntry.parse(JSON.parse(line)));
+  const parsed = content.split("\n").filter((line) => line.trim()).map((line) => {
+    const entry = archiveEntry.parse(JSON.parse(line));
+    if (entry.type !== "custom" || entry.customType !== "pi-dual-format-message") return entry;
+    const { message } = z.object({ message: archiveEntry.shape.message.unwrap() }).parse(entry.data);
+    return { ...entry, type: "message", message };
+  });
   const header = parsed[0];
   if (!header || header.type !== "session" || !header.cwd || !header.id) throw new Error("Invalid session header.");
   const entries = parsed.slice(1);

@@ -91,6 +91,28 @@ describe("terminal QA regressions", () => {
     } finally {await coordinator.dispose();}
   });
 
+  it("persists a real Agent A stream interruption without format repair or replay and accepts explicit retry", async () => {
+    let count = 0;
+    const {coordinator} = await setup("persistent", async () => {
+      count++;
+      if (count > 1) return fixtureResponse("QA answer");
+      return new Response(new ReadableStream({ start(controller) {
+        controller.enqueue(new TextEncoder().encode(': active reasoning\n\ndata: {"private":"incomplete'));
+        setTimeout(() => controller.error(new Error("private raw upstream detail")), 20);
+      } }));
+    });
+    try {
+      await expect(coordinator.submitUserInput("interrupted planning request")).rejects.toThrow("OpenAI request interrupted");
+      expect(count).toBe(1);
+      expect(coordinator.getStatus().operation?.kind).toBe("failed");
+      const workflow = await coordinator.getWorkflowStatus();
+      expect(workflow.ledgerTail?.status).toBe("failed");
+      expect(JSON.stringify(workflow)).not.toContain("private raw upstream detail");
+      expect((await coordinator.submitUserInput("explicit retry")).userResponse).toBe("QA answer");
+      expect(count).toBe(2);
+    } finally { await coordinator.dispose(); }
+  });
+
   it("owns and aborts real post-turn Pi compaction before releasing the submission", async () => {
     let entered = () => {};
     const ready = new Promise<void>((resolve) => { entered = resolve; });
@@ -114,9 +136,13 @@ describe("terminal QA regressions", () => {
       const session = bindings.get("A")?.session;
       if (!(session instanceof ManagedSession)) throw new Error("Expected managed Pi session");
       session.piSession.sessionManager.appendMessage({ role: "user", content: "Earlier task to preserve", timestamp: 1 });
-      session.piSession.sessionManager.appendMessage({ role: "user", content: "Historical context ".repeat(6000), timestamp: 1 });
+      // Fit A's byte admission while exceeding Pi's normal retained-tail estimate.
+      session.piSession.sessionManager.appendMessage({ role: "user", content: "Historical context ".repeat(4500), timestamp: 1 });
+      const reasons: string[] = [];
+      session.subscribe((event) => { if (event.type === "compaction_start") reasons.push(event.reason); });
       const work = coordinator.submitUserInput("trigger compaction").then((result) => {settled = true; return result;});
       await ready;
+      expect(reasons).toEqual(["overflow"]);
       expect(settled).toBe(false);
       expect(coordinator.getStatus().operation?.kind).toBe("running");
       await coordinator.cancelActive();

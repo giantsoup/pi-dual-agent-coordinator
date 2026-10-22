@@ -1,0 +1,445 @@
+{
+  "date": "2026-10-22",
+  "node": "24.22.0",
+  "npm": "12.2.0",
+  "pi": "1.3.0",
+  "qualification": "incomplete",
+  "activation": false,
+  "productionRetention": "unchanged",
+  "gates": {
+    "typecheck": "passed",
+    "fullTests": 724,
+    "testFiles": 91,
+    "build": "passed",
+    "dependencyGuardSourceFiles": 249,
+    "isolationAssertions": 373,
+    "securityTests": 52,
+    "ptyAssertions": 1338,
+    "classifierSelfChecks": 9,
+    "auditedAssertions": 5,
+    "wrongExpectations": 4
+  },
+  "fixtureTrials": [
+    {
+      "name": "1-summary-only-baseline",
+      "task": "pass",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 935.5247910000003,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "1-summary-only-candidate",
+      "task": "pass",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 979.9096669999999,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "1-native-tail-baseline",
+      "task": "pass",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 934.6406670000001,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "1-native-tail-candidate",
+      "task": "pass",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 927.9171660000002,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "2-native-tail-candidate",
+      "task": "fail",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 938.6492499999995,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "2-native-tail-baseline",
+      "task": "fail",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 936.0817080000006,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "2-summary-only-candidate",
+      "task": "fail",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 935.9536669999998,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "2-summary-only-baseline",
+      "task": "fail",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 934.816417,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "3-summary-only-baseline",
+      "task": "fail",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 943.431125000001,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "3-summary-only-candidate",
+      "task": "fail",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 933.3035830000008,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "3-native-tail-baseline",
+      "task": "fail",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 943.2529999999988,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "3-native-tail-candidate",
+      "task": "fail",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 933.1303750000006,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "4-native-tail-candidate",
+      "task": "pass",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 932.0282500000012,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "4-native-tail-baseline",
+      "task": "pass",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 925.8433339999992,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "4-summary-only-candidate",
+      "task": "pass",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 931.4235829999998,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "4-summary-only-baseline",
+      "task": "pass",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 937.219708999999,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "5-summary-only-baseline",
+      "task": "fail",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 934.8989169999986,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "5-summary-only-candidate",
+      "task": "fail",
+      "historicalSeedCalls": 0,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 941.9512499999983,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "5-native-tail-baseline",
+      "task": "fail",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 942.2452919999996,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    },
+    {
+      "name": "5-native-tail-candidate",
+      "task": "fail",
+      "historicalSeedCalls": 2,
+      "currentNativeResults": 2,
+      "classification": {
+        "correlated": true,
+        "exactActions": true,
+        "observed": true,
+        "reportAccurate": true,
+        "completed": true,
+        "category": "completed",
+        "accepted": true
+      },
+      "elapsedMs": 950.8772079999981,
+      "cleanup": "drained",
+      "filesUnchanged": true
+    }
+  ],
+  "liveReadiness": {
+    "localWriteReadAndSeparateFormatting": "passed",
+    "localModel": "lm-studio/qwen/qwen3.8-27b",
+    "thinking": "off",
+    "openaiToolsDisabledSmoke": "passed",
+    "openaiModel": "gpt-6-luna",
+    "openaiThinking": "high",
+    "openaiInputCounting": "passed"
+  },
+  "liveComparison": {
+    "plannedPrimaryTrials": 20,
+    "observedPrimaryTrials": 1,
+    "candidateTrialsObserved": 0,
+    "candidateAcceptanceTargets": "not evaluated",
+    "stopReason": "baseline command deviation with status-printing suffix",
+    "trials": [
+      {
+        "name": "1-summary-only-baseline",
+        "task": "pass",
+        "nativeCommand": "node --test --test-reporter=tap passing.test.mjs; echo \"EXIT_CODE=$?\"",
+        "reportedCommand": "node --test --test-reporter=tap passing.test.mjs",
+        "nativeShellExit": 0,
+        "testTotals": {
+          "tests": 1,
+          "pass": 1,
+          "fail": 0
+        },
+        "classification": {
+          "correlated": true,
+          "exactActions": false,
+          "observed": true,
+          "reportAccurate": false,
+          "completed": false,
+          "category": "incorrect_report",
+          "accepted": false
+        },
+        "elapsedMs": 19413.103416,
+        "cleanup": "drained",
+        "filesUnchanged": true
+      }
+    ],
+    "remainingPrimaryTrialsUnrun": 19,
+    "extendedDiagnosticTrials": 0,
+    "failedTrialReplaced": false
+  },
+  "fullLiveWorkflow": {
+    "outcome": "blocked",
+    "scenariosUnrun": [
+      "passing verification",
+      "failed verification report",
+      "scoped repair",
+      "compaction and review"
+    ],
+    "prerequisite": "Private coordinator Keychain setup for a disposable benchmark workspace"
+  },
+  "limitations": [
+    "Fixture providers do not prove live inference reliability",
+    "Seven native tools; browser and external MCP catalog omitted",
+    "Original live result retained; command-accuracy scoring corrected in a separate audit",
+    "No current evidence justifies a production history-retention change"
+  ]
+}

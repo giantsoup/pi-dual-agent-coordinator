@@ -10,6 +10,7 @@ import type { CreateRoleRuntimeOptions } from "../../src/runtime/create-role-run
 import {
   assistantMessage,
   assistantTurnEnd,
+  successfulToolTurn,
   createFakeBinding,
   FakeRuntime,
   FakeSession
@@ -215,6 +216,7 @@ Proposed approach below.
                   const workflowId = extractField(promptText, "Workflow ID");
                   const handoffId = extractField(promptText, "Handoff ID");
                   const iteration = extractField(promptText, "Iteration");
+                  await session.emit(successfulToolTurn("write", { path: "src/index.ts", content: "fixture implementation" }));
                   await session.emit(
                     assistantTurnEnd(`
 \`\`\`pi-completion
@@ -331,6 +333,7 @@ Proposed approach below.
                   const workflowId = extractField(promptText, "Workflow ID");
                   const handoffId = extractField(promptText, "Handoff ID");
                   const iteration = extractField(promptText, "Iteration");
+                  await session.emit(successfulToolTurn("write", { path: "src/index.ts", content: "fixture implementation" }));
                   await session.emit(
                     assistantTurnEnd(`
 \`\`\`pi-completion
@@ -895,7 +898,7 @@ Proposed approach below.
 
     expect(result.workflow?.status).toBe("blocked");
     expect(result.userResponse).toContain(
-      "Tools are disabled during response formatting."
+      "The response formatter has no tools; execution tools remain available in the separate session."
     );
     expect(coordinator.getStatus().workflowStatus).toBe("blocked");
     expect(coordinator.getStatus().activeWorkflowId).toBeUndefined();

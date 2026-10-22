@@ -26,7 +26,7 @@ for (const [name, expected] of Object.entries(manifest.files)) {
 assert.equal(process.versions.node, manifest.node);
 if (manifest.providerStreams) {
   assert.equal(manifest.providerStreams.outcome, 'passed');
-  assert.deepEqual(manifest.providerStreams.checks, ['active', 'idle', 'deadline']);
+  assert.deepEqual(manifest.providerStreams.checks, ['lm-studio:active', 'lm-studio:idle', 'lm-studio:deadline', 'openai:active', 'openai:idle', 'openai:deadline']);
   assert.equal(manifest.providerStreams.brokerSha256, manifest.files['dist/src/security/provider-broker.js'].sha256, 'Provider stream verification does not match the installed broker');
 }
 process.stdout.write(`${JSON.stringify({ outcome: 'passed', filesVerified: Object.keys(manifest.files).length, node: manifest.node, npm: manifest.npm, pi: manifest.pi, sourceCommit: manifest.sourceCommit })}\n`);

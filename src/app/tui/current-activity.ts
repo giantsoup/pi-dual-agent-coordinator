@@ -1,7 +1,8 @@
-import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { currentActionText } from "../interactive/current-activity.js";
 import { safeDisplayText } from "../../security/display-text.js";
 import type { InteractiveUiState } from "../../types/ui.js";
+import type { HistoryRecord } from "../../types/history.js";
 import { frame, paintRole } from "./workspace.js";
 
 export interface WorkspaceViewStatus {
@@ -19,13 +20,13 @@ export function renderCurrentActivity(state: InteractiveUiState, width: number, 
   const active = !(action.kind === "compaction" && action.outcome !== "running") && !["idle", "terminal", "approval_waiting"].includes(action.kind);
   const marker = active && process.env.TERM !== "dumb" ? ["●", "○"][Math.floor(now / 500) % 2] ?? "●" : active ? "*" : "-";
   const bold = (text: string) => process.env.TERM === "dumb" ? text : `\x1b[1m${text}\x1b[22m`;
-  const inner = Math.max(1, width - 2);
-  const actionLine = `${marker} ${bold(safeDisplayText(currentActionText(action)))}`;
+  const inner = Math.max(1, width - 4);
+  const actionLine = `${marker} ${bold(safeDisplayText(action.kind === "cancelling" ? "Cancelling" : currentActionText(action)))}`;
   const failure = action.kind === "terminal" && action.outcome === "failed" ? action.failure : undefined;
   const reason = failure ? safeDisplayText(failure.reason) : undefined;
-  const roleText = role ? action.kind === "terminal" ? `Agent ${role}` : `Active: ${role === "A" ? "A - Senior" : "B - Junior"}` : "Coordinator";
-  const phase = safeDisplayText(activity.phase);
-  const model = activity.model ? truncateToWidth(safeDisplayText(activity.model), Math.max(1, inner - roleText.length - phase.length - 6), "…") : undefined;
+  const roleText = role ? role === "A" ? "A - Senior" : "B - Junior" : "Coordinator";
+  const phase = action.kind === "cancelling" ? "Cleanup" : safeDisplayText(activity.phase);
+  const model = activity.model ? safeDisplayText(activity.model).replace(/\s+\([^()]+\/[^()]+\)$/, "") : undefined;
   const identity = `${roleText}${model ? ` / ${model}` : ""} / ${phase}`;
   const returnHint = view.unread ? `${view.unread} unread / ${view.returnHint}` : view.hidden || !view.following ? view.returnHint : undefined;
   if (height < 5) {
@@ -36,26 +37,47 @@ export function renderCurrentActivity(state: InteractiveUiState, width: number, 
     return rows.slice(0, height).map((row) => truncateToWidth(row, width, "…", true));
   }
   const budget = height - 2;
-  const rows = [identity, actionLine];
+  const rows = [actionLine];
   if (reason) rows.push(...wrapTextWithAnsi(reason, inner).slice(0, Math.max(1, budget - rows.length - 1)));
+  if (action.kind === "cancelling" && rows.length < budget) rows.push(secondary("Waiting for runtime cleanup"));
   const progress = activity.progress;
   const timing = [activity.startedAt !== undefined && action.kind !== "terminal" && !(action.kind === "compaction" && action.outcome !== "running") ? `${seconds(now - activity.startedAt)}s elapsed` : undefined,
     activity.lastEventAt !== undefined && active ? `last event ${seconds(now - activity.lastEventAt)}s ago` : undefined].filter(Boolean).join(" / ");
-  const next = action.kind === "compaction" ? undefined : action.kind === "approval_waiting" ? "/approve starts B / /discard clears the plan" : active ? "Esc then x cancel / Ctrl+C cancel" : undefined;
-  const requiredTail = [progress, returnHint].filter((row): row is string => Boolean(row));
+  const next = action.kind === "approval_waiting" ? "/approve starts B / /discard clears the plan" : undefined;
+  const requiredTail = [progress, returnHint, next].filter((row): row is string => Boolean(row));
   if (action.kind === "tool_execution" && action.target) {
     const targetBudget = Math.max(1, Math.min(width >= 100 ? 2 : 1, budget - rows.length - requiredTail.length - (timing ? 1 : 0)));
     rows.push(...wrapTextWithAnsi(safeDisplayText(action.target), inner).slice(0, targetBudget));
   }
-  if (timing && rows.length + requiredTail.length < budget) rows.push(timing);
+  if (timing && rows.length + requiredTail.length < budget) rows.push(secondary(timing));
   rows.push(...requiredTail.slice(0, budget - rows.length));
-  if (next && !returnHint && rows.length < budget) rows.push(next);
-  for (const item of activity.recent) {
-    if (rows.length >= budget) break;
-    rows.push(`Recent: ${safeDisplayText(item.text)}`);
-  }
-  const label = action.kind === "compaction" && action.outcome !== "running" ? action.outcome : action.kind === "terminal" ? action.outcome.replaceAll("_", " ") : action.kind === "approval_waiting" ? "waiting approval" : active ? "live" : "ready";
-  return frame(`Current activity / ${label}`, rows.map((row, index) => index === 0 ? paintRole(row, role) : row), width, height, role);
+  const recent = recentCalls(state);
+  if (recent && rows.length + 2 <= budget) rows.push("", paintRole(recent, role));
+  const lines = frame("", rows.map((row) => ` ${row} `), width, height, role);
+  const heading = truncateToWidth(` Current / ${identity} `, Math.max(0, width - 2), "…", true);
+  lines[0] = truncateToWidth(paintRole(`+${heading}${"-".repeat(Math.max(0, width - 2 - visibleWidth(heading)))}+`, role), width, "…", true);
+  return lines;
 }
 
 function seconds(milliseconds: number): number { return Math.max(0, Math.floor(milliseconds / 1000)); }
+
+function secondary(text: string): string {
+  return process.env.NO_COLOR !== undefined || process.env.TERM === "dumb" ? text : `\x1b[37;49m${text}\x1b[39m`;
+}
+
+function recentCalls(state: InteractiveUiState): string | undefined {
+  const turnId = state.history.currentTurnId;
+  if (!turnId) return undefined;
+  const runs = new Set(state.history.records.filter((record) => record.kind === "run" && record.parentId === turnId).map((record) => record.id));
+  const calls = state.history.records.filter((record): record is Extract<HistoryRecord, { kind: "tool" }> => record.kind === "tool" && runs.has(record.parentId) && record.outcome.kind !== "running")
+    .sort((a, b) => Date.parse(b.outcome.kind === "running" ? b.timestamp : b.outcome.endedAt ?? b.timestamp) - Date.parse(a.outcome.kind === "running" ? a.timestamp : a.outcome.endedAt ?? a.timestamp) || (b.sequence ?? 0) - (a.sequence ?? 0)).slice(0, 3);
+  if (!calls.length) return undefined;
+  const outcomes = ["failed", "timed_out", "cancelled", "interrupted"] as const;
+  const counts = outcomes.flatMap((kind) => {
+    const count = calls.filter((call) => call.outcome.kind === kind).length;
+    return count ? [`${count} ${kind.replaceAll("_", " ")}`] : [];
+  });
+  const failure = calls.find((call) => call.outcome.kind === "failed");
+  const detail = failure ? `: ${safeDisplayText(failure.title).replaceAll(`${state.status.cwd.replace(/\/$/, "")}/`, "")}` : "";
+  return `${calls.length} recent call${calls.length === 1 ? "" : "s"}${counts.length ? ` / ${counts.join(" / ")}` : ""}${detail}`;
+}

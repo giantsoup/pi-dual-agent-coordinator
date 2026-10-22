@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reading List</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Reading List</h1>
+
+    <form id="add-form" class="add-form" novalidate>
+      <div class="field">
+        <label for="title-input">Title</label>
+        <input id="title-input" name="title" type="text" autocomplete="off" required />
+      </div>
+      <div class="field">
+        <label for="author-input">Author <span class="optional">(optional)</span></label>
+        <input id="author-input" name="author" type="text" autocomplete="off" />
+      </div>
+      <button type="submit" class="button">Add book</button>
+    </form>
+
+    <p id="status-message" class="status-message" role="status" aria-live="polite"></p>
+
+    <fieldset class="filter-group">
+      <legend>Filter</legend>
+      <label class="filter-option">
+        <input type="radio" name="filter" value="all" checked /> All
+      </label>
+      <label class="filter-option">
+        <input type="radio" name="filter" value="to-read" /> To read
+      </label>
+      <label class="filter-option">
+        <input type="radio" name="filter" value="finished" /> Finished
+      </label>
+    </fieldset>
+
+    <div class="field search-field">
+      <label for="search-input">Search books</label>
+      <div class="search-row">
+        <input id="search-input" type="text" autocomplete="off" placeholder="Search by title or author" />
+        <button id="clear-search-button" type="button" class="button" disabled>Clear search</button>
+      </div>
+    </div>
+
+    <div class="field sort-field">
+      <label for="sort-select">Sort by title</label>
+      <select id="sort-select">
+        <option value="asc" selected>A &rarr; Z</option>
+        <option value="desc">Z &rarr; A</option>
+      </select>
+    </div>
+
+    <ul id="book-list" class="book-list"></ul>
+    <p id="empty-message" class="empty-message"></p>
+
+    <p id="storage-message" class="storage-message"></p>
+  </main>
+
+  <template id="book-item-template">
+    <li class="book-item">
+      <div class="book-details">
+        <span class="book-title"></span>
+        <span class="book-author"></span>
+      </div>
+      <div class="book-controls">
+        <label class="status-label">
+          <input type="checkbox" class="status-toggle" />
+          <span class="status-text">Mark finished</span>
+        </label>
+        <button type="button" class="delete-button">Delete</button>
+      </div>
+    </li>
+  </template>
+
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>

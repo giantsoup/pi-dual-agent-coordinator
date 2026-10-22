@@ -151,3 +151,34 @@ settings. No private auto-compaction method or direct checkpoint append is used.
 Queued input added later still passes final payload admission. The local broker
 checks an internal admitted-instance identity and removes that marker before
 forwarding the request.
+
+Response formatting uses a fresh public Pi `Agent`, its awaited subscriptions,
+and `abort`/`waitForIdle` lifecycle. It has no executable tools, session resources,
+or active tool declarations from the source transcript. The existing role's
+ModelRuntime stream performs the same provider/model and serialized-budget
+validation. Public `SessionManager.appendCustomEntry` archives formatter messages
+without adding them to execution context. Read-only archive projection retains
+request history. Normal role registries are never emptied for formatting.
+
+Budget-driven full-history compaction uses public `SessionManager.appendCustomEntry`,
+`buildContextEntries`, `buildSessionProjection`, and `prepareBranchEntries`.
+The metadata entry supplies a real retained boundary after the summarized history;
+the trusted hook returns it in `CompactionResult`. Pi owns checkpoint persistence.
+Ordinary threshold compaction retains its normal tail. No dependency patch or
+private compaction API is used.
+
+Admission previews pass the session's effective reasoning level to `streamSimple`.
+Pi's Responses serializer can add `configuration_update` input items for that
+level and archived provider thinking levels; previewing without it undercounts
+the actual request. Public `getCurrentSystemPrompt`, `getCurrentTools`, and
+`getToolStateChanges` account for pending prompts and active declarations before
+Pi has persisted them. A changed prompt reserves its full text alongside the
+archived prompt, so new section updates can trigger compaction before submission.
+These conservative projections are preview-only and never alter archives.
+
+A now counts the same supported serialized input through OpenAI's
+`POST /v1/responses/input_tokens`, using the existing fetch transport inside the
+trusted broker. No SDK dependency or role tool is added. Model/output validation,
+abort-and-drain ownership, bounded responses, and exact-input caching are application
+owned. Only the bounded smoke path uses byte admission. A reserves 16,384 output
+tokens, while B targets 32,768 input tokens with its loaded-model tokenizer.

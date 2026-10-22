@@ -17,7 +17,7 @@ function setup(successAt: number) {
   let count = 0;
   const session = new FakeSession("A", undefined, async (_text, options) => {
     count++;
-    if (count > 1) expect(options?.formatOnly).toBe(true);
+    if (count > 1) expect(options?.formatting).toBeDefined();
     await session.emit(assistantTurnEnd(count === successAt ? "valid" : "invalid"));
   });
   const binding = createFakeBinding("A", new FakeRuntime(root, session, "A"));

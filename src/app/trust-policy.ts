@@ -49,7 +49,7 @@ export const PLANNING_GUIDANCE = [
   "Provide specific examples of expected behavior, including representative inputs and outputs, before/after behavior, and failure cases. Include code or payload examples when they resolve ambiguity. Label illustrative examples and never invent repository facts.",
   "Put all implementation-critical details and examples inside executionPlan, acceptanceCriteria, relevantPaths, or constraints in the machine block. Agent B receives these fields, not your surrounding planning prose.",
   "For each phase, name the verification command or concrete check and its expected result. Include relevant regression checks and a clear stop condition when the evidence meets the acceptance criteria.",
-  "Explain how to handle blockers and failed checks. Do not repeat an unchanged failing approach without new evidence; inspect the cause, choose a targeted next step, or report the blocker. Avoid unrelated refactors and unnecessary investigation.",
+  "Define failed-check handling within the approved scope. For verification-only tasks, recording the observed nonzero exit completes that step without authorizing diagnosis, repair, or a rerun. For implementation tasks, specify the required passing checks and report blockers when they cannot be met.",
   "Use enough detail for the task's complexity without padding. A detailed plan reduces uncertainty but does not guarantee success; do not promise unverified outcomes."
 ];
 
@@ -91,7 +91,7 @@ export function buildRolePromptAppendix(role: Role): string[] {
       "When emitting `pi-handoff`, make the next phase concrete and testable. Prefer revision notes that tell Agent B exactly what to change or verify next.",
       "Keep `pi-final.summary` short and factual.",
       "Make `pi-final.userResponse` operator-facing and specific: explain what changed, which files or areas were touched, what verification ran, and any notable caveats or follow-ups when relevant.",
-      "When finalizing after Agent B work, do not just say the task succeeded; summarize the implementation details using the normalized completion data.",
+      "When finalizing after Agent B work, compare completion claims against native observations and acceptance criteria. An accurate diagnostic task may finish with failed checks; explicitly report those failures without claiming the application is fixed.",
       "During review, act as QA: check whether Agent B implemented the plan correctly, whether the result satisfies the goal, and whether the change likely introduced regressions or missed edge cases.",
       "A coordinator process check-in is an exception to the execution review protocol: B is paused after 10 more model turns. Follow that prompt's pi-check-in response format, give brief process guidance, and preserve the approved scope and iteration. Do not emit pi-handoff or pi-final during a process check-in.",
       "During review: keep `pi-final.iteration` on the current completed iteration. Only increment iteration when emitting the next `pi-handoff`.",
@@ -113,7 +113,7 @@ export function buildRolePromptAppendix(role: Role): string[] {
     `End every coordinator handoff turn with exactly one ${COMPLETION_FENCE} JSON block and close it with triple backticks.`,
     "A `pi-completion` block must include: schemaVersion, workflowId, handoffId, iteration, summary, and changedPaths.",
     "`pi-completion` is a fenced block label in assistant text, not a tool name, command, or function call.",
-    "Make `pi-completion.summary` concrete and implementation-specific, not generic. State what you changed and the resulting outcome.",
+    "Make `pi-completion.summary` concrete about actual changes or observed verification results. If no files changed, use changedPaths: []. Follow the handoff stop condition, including after a failed verification-only check. Do not diagnose, repair, or rerun without authorization in the handoff.",
     "Populate `changedPaths` with the files you actually modified.",
     "Include `verification` with the commands or checks you actually ran whenever possible.",
     "Use `openQuestions` only for unresolved issues, blockers, or follow-up items that Agent A should review.",

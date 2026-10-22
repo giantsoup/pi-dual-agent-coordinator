@@ -7,6 +7,13 @@
   --accent: #5b8cff;
   --accent-hover: #4a7bf0;
   --error: #ff7a7a;
+  /* Swap button surface + label, tuned so the label contrast is >= 4.5:1
+     against both the default and hover backgrounds (verified by the contrast
+     check in README). White label on --swap-bg = 5.79:1; on --swap-bg-hover
+     = 6.54:1. */
+  --swap-label: #ffffff;
+  --swap-bg: #345fc9;
+  --swap-bg-hover: #2f56c0;
 }
 
 * {
@@ -65,10 +72,18 @@ select {
 }
 
 input:focus-visible,
-select:focus-visible,
-button:focus-visible {
+select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* The swap button needs a focus ring that stands out against both the card
+   and its own background. A 2px white outline (16.8:1 against the card, and
+   clearly distinct from the blue button face) is the visible keyboard
+   indicator; it is drawn on top of the general focus-visible rule. */
+.swap:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
 }
 
 .row {
@@ -82,15 +97,16 @@ button:focus-visible {
   margin-bottom: 0.1rem;
   padding: 0.55rem 0.8rem;
   font-size: 1rem;
-  color: var(--text);
-  background: var(--accent);
+  font-weight: 600;
+  color: var(--swap-label);
+  background: var(--swap-bg);
   border: none;
   border-radius: 8px;
   cursor: pointer;
 }
 
 .swap:hover {
-  background: var(--accent-hover);
+  background: var(--swap-bg-hover);
 }
 
 .result {

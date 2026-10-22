@@ -4,8 +4,8 @@ import { existsSync, mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join, resolve, relative, isAbsolute } from "node:path";
 
-import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
+import { Agent, type AgentMessage, type StreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { getCurrentSystemPrompt, getCurrentTools, getToolStateChanges, getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
 import {
   DefaultResourceLoader,
   AgentSession,
@@ -23,15 +23,18 @@ import {
 
 import { AgentASummarizer } from "./agent-a-summarizer.js";
 import { CompactionController, type SummarizeCompaction, type CompactionEvent } from "./compaction.js";
-import { assertRequestBudget, textPayloadAllowance, withOutputBudget, ContextBudgetExceededError, type PayloadCounter } from "./context-budget.js";
+import { AGENT_A_OUTPUT_TOKENS, AGENT_B_INPUT_TARGET, AGENT_B_KEEP_RECENT_TOKENS, CONTEXT_SAFETY_TOKENS, assertRequestBudget, textPayloadAllowance, withOutputBudget, ContextBudgetExceededError, type PayloadCounter, type RequestBudget } from "./context-budget.js";
+import { fixtureTokenCountRequest } from "../security/fixture-provider.js";
 import { localTokenCounter, localReplayPayload } from "../security/local-token-counter.js";
 import { ManagedSession } from "./managed-session.js";
+import { formatResponse } from "./response-formatter.js";
+import { textToolImageReplay } from "./tool-image-replay.js";
 import { readSessionHistory } from "./session-history.js";
 import { cleanupAll } from "./cleanup.js";
 
 import { defaultLocalThinking, createSecureModelCatalog, isRoleModel, SMART_MODEL, EXECUTION_MODEL, SMOKE_MAX_TOKENS } from "../security/models.js";
 import { ToolIsolation, assertStateOutsideWorkspace } from "../security/isolation.js";
-import { createProviderBroker } from "../security/provider-broker.js";
+import { createProviderBroker, type ProviderDiagnostic } from "../security/provider-broker.js";
 import { assertLmStudioModelReady } from "../security/lm-studio.js";
 import { redactText, redactValue } from "../security/redact.js";
 import { createMcpExtension } from "../mcp/extension.js";
@@ -49,7 +52,7 @@ export type SupportedThinkingLevel = ThinkingLevel;
 
 export type ModelTurnEnd = Extract<AgentSessionEvent, { type: "turn_end" }>;
 export interface SessionPromptOptions {
-  formatOnly?: boolean;
+  formatting?: { previousResponse?: AgentMessage | undefined };
   responseId?: string | undefined;
   responseAttempt?: number;
   streamingBehavior?: "steer" | "followUp";
@@ -102,6 +105,7 @@ export interface CreateRoleRuntimeOptions {
   browser?: BrowserConfiguration | undefined;
   /** Trusted test seam, never accepted from CLI, config, extensions, or model input. */
   providerTestBackend?: Parameters<typeof createProviderBroker>[0] | undefined;
+  onProviderDiagnostic?: ((event: ProviderDiagnostic) => void) | undefined;
   noTools?: boolean | undefined;
   summarizeCompaction?: SummarizeCompaction | undefined;
   summaryModel?: (() => string) | undefined;
@@ -118,6 +122,7 @@ export interface RoleRuntimeBinding {
   cwd: string;
   summarizeCompaction?: SummarizeCompaction | undefined;
   getMcpStatus?(): RoleMcpStatusSnapshot;
+  subscribeProviderDiagnostics?(listener: (event: ProviderDiagnostic) => void): () => void;
   resetBrowser?: (() => Promise<void>) | undefined;
   rebind(): Promise<void>;
   dispose(): Promise<void>;
@@ -178,6 +183,7 @@ export async function createRoleRuntime(
   const cwd = resolve(options.cwd);
   const agentDir = options.agentDir ?? getAgentDir();
   const skillsDir = join(agentDir, "skills");
+  const providerListeners = new Set<(event: ProviderDiagnostic) => void>();
   const browsers = new Set<ProjectBrowser>();
   const localServers = new Set<LocalServers>();
   const loadProjectResources =
@@ -201,9 +207,16 @@ export async function createRoleRuntime(
     const resolveLocalInstanceId = options.role === "B" && !options.providerTestBackend ? () => assertLmStudioModelReady(selected) : undefined;
     await resolveLocalInstanceId?.();
     broker = await createProviderBroker({ ...options.providerTestBackend, resolveLocalInstanceId,
+      onDiagnostic: (event) => {
+        options.onProviderDiagnostic?.(event);
+        for (const listener of providerListeners) listener(event);
+      },
+      countRequest: options.providerTestBackend ? options.providerTestBackend.countRequest ?? fixtureTokenCountRequest : undefined,
       provider: options.role === "A" ? "openai" : "lm-studio", cwd, modelIds: [selected.id],
       ...(options.noTools ? { maxRequests: 1, maxOutputTokens: SMOKE_MAX_TOKENS, timeoutMs: 40_000 } : {}) });
     const model = { ...selected, baseUrl: broker.baseUrl };
+    const outputTokens = options.noTools ? SMOKE_MAX_TOKENS : options.role === "A"
+      ? Math.min(model.maxTokens, AGENT_A_OUTPUT_TOKENS, Math.floor(model.contextWindow / 4)) : model.maxTokens;
     const ownedToken = broker.token;
     const modelRuntime = await createBrokerModelRuntime(model, ownedToken);
     let sessionManager: SessionManager;
@@ -225,12 +238,17 @@ export async function createRoleRuntime(
       summarizer ??= new AgentASummarizer({ cwd, model: selected, thinking: selected.reasoning ? (getSupportedThinkingLevels(selected).includes("low") ? "low" : "high") : "off", testBackend: options.providerTestBackend });
       return summarizer.summarize(request, signal);
     } : options.summarizeCompaction;
-    const counter: PayloadCounter = options.providerTestBackend
+    const countInputTokens = broker.countInputTokens;
+    const counter: PayloadCounter = options.providerTestBackend && options.role === "B"
       ? async (payload) => ({ tokens: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), contextWindow: model.contextWindow, method: "fixture-estimate" })
       : options.role === "B" ? localTokenCounter(() => assertLmStudioModelReady(selected))
-      : async (payload) => ({ tokens: textPayloadAllowance(payload), contextWindow: model.contextWindow, method: "text-byte-allowance" });
+      : async (payload, signal) => {
+        if (options.noTools) return { tokens: textPayloadAllowance(payload), contextWindow: model.contextWindow, method: "smoke-text-byte-allowance" };
+        if (!countInputTokens) throw new Error("Agent A input token counter unavailable");
+        return { tokens: await countInputTokens(payload, signal), contextWindow: model.contextWindow, method: options.providerTestBackend ? "fixture-counting-api" : "openai-input-tokens" };
+      };
     const preparePayload = (payload: unknown) => withOutputBudget(options.role === "B" ? localReplayPayload(payload) : payload,
-      model.api, options.noTools ? SMOKE_MAX_TOKENS : model.maxTokens);
+      model.api, outputTokens);
     const sessions = new WeakMap<AgentSession, ManagedSession>();
     const sessionBrowsers = new WeakMap<AgentSession, ProjectBrowser>();
     const sessionServers = new WeakMap<AgentSession, LocalServers>();
@@ -254,7 +272,9 @@ export async function createRoleRuntime(
       const compaction = new CompactionController(options.role, sessionManager, summarize, options.summaryModel ?? (() => selected.id));
       const settings = {
         defaultProvider: selected.provider, defaultModel: selected.id,
-        compaction: { enabled: !options.noTools, reserveTokens: Math.min(20_480, Math.floor(model.contextWindow / 2)), keepRecentTokens: Math.min(20_000, Math.floor(model.contextWindow / 3)) }, retry: { enabled: false },
+        compaction: { enabled: !options.noTools,
+          reserveTokens: options.role === "B" ? Math.max(outputTokens + CONTEXT_SAFETY_TOKENS, model.contextWindow - AGENT_B_INPUT_TARGET) : outputTokens + CONTEXT_SAFETY_TOKENS,
+          keepRecentTokens: options.role === "B" ? AGENT_B_KEEP_RECENT_TOKENS : Math.min(20_000, Math.floor(model.contextWindow / 3)) }, retry: { enabled: false },
         enableSkillCommands: false, shellPath: "/bin/bash",
         cacheWarming: "off", enableInstallTelemetry: false, enableAnalytics: false
       } satisfies Parameters<typeof SettingsManager.inMemory>[0];
@@ -290,33 +310,34 @@ export async function createRoleRuntime(
       let recordRequestBudget: (budget: import("./context-budget.js").RequestBudget) => void = () => {};
       let recordContextFailure: (error: unknown) => void = () => {};
       let assertPromptActive: () => void = () => { throw new Error("Session is not ready."); };
-      const agent = new Agent({
-        initialState: { model, thinkingLevel, tools: [] }, convertToLlm: (messages) => convertToLlm(redactValue(messages)),
-        sessionId: sessionManager.getSessionId(),
-        streamFn: async (requestModel, context, streamOptions) => {
-          try {
-            assertPromptActive();
-            if (requestModel.provider !== model.provider || requestModel.id !== model.id || requestModel.baseUrl !== model.baseUrl || requestModel.api !== model.api) {
-              throw new Error("Untrusted provider model or endpoint rejected.");
-            }
-            return await modelRuntime.streamSimple(model, redactValue(context), { ...streamOptions, apiKey: ownedToken, maxRetries: 0,
-              ...(["gpt-6-luna", "gpt-6.1-sol", "gpt-5.6-terra"].includes(model.id) ? { cacheRetention: "none" } : {}),
-              ...(options.noTools ? { maxTokens: SMOKE_MAX_TOKENS } : {}),
-              onPayload: async (payload) => {
-                try {
-                  assertPromptActive(); compaction.assertHealthy();
-                  const replay = preparePayload(payload);
-                  const counted = await counter(replay, streamOptions?.signal);
-                  recordRequestBudget(assertRequestBudget(model, replay, counted, options.noTools ? SMOKE_MAX_TOKENS : model.maxTokens));
-                  assertPromptActive();
-                  return counted.instanceId ? { ...replay, pi_dual_expected_instance: counted.instanceId } : replay;
-                }
-                catch (error) { recordContextFailure(error); throw error; }
-              } });
-          } catch (error) {
-            return failedModelStream(model, error, streamOptions?.signal?.aborted ?? false);
+      const streamModel = (formatting: boolean): StreamFn => async (requestModel, context, streamOptions) => {
+        try {
+          assertPromptActive();
+          if (requestModel.provider !== model.provider || requestModel.id !== model.id || requestModel.baseUrl !== model.baseUrl || requestModel.api !== model.api) {
+            throw new Error("Untrusted provider model or endpoint rejected.");
           }
+          return await modelRuntime.streamSimple(model, redactValue(context), { ...streamOptions, apiKey: ownedToken, maxRetries: 0,
+            ...(["gpt-6-luna", "gpt-6.1-sol", "gpt-5.6-terra"].includes(model.id) ? { cacheRetention: "none" } : {}),
+            maxTokens: outputTokens,
+            onPayload: async (payload) => {
+              try {
+                assertPromptActive(); compaction.assertHealthy();
+                const replay = preparePayload(payload);
+                const counted = await counter(replay, streamOptions?.signal);
+                const budget = assertRequestBudget(model, replay, counted, outputTokens);
+                if (!formatting) recordRequestBudget(budget);
+                assertPromptActive();
+                return counted.instanceId ? { ...replay, pi_dual_expected_instance: counted.instanceId } : replay;
+              }
+              catch (error) { if (!formatting) recordContextFailure(error); throw error; }
+            } });
+        } catch (error) {
+          return failedModelStream(model, error, streamOptions?.signal?.aborted ?? false);
         }
+      };
+      const agent = new Agent({
+        initialState: { model, thinkingLevel, tools: [] }, convertToLlm: (messages) => convertToLlm(textToolImageReplay(redactValue(messages))),
+        sessionId: sessionManager.getSessionId(), streamFn: streamModel(false)
       });
       const restored = sessionManager.buildSessionContext();
       if (restored.messages.length === 0) {
@@ -330,13 +351,25 @@ export async function createRoleRuntime(
         initialActiveToolNames: tools.map((tool) => tool.name),
         ...(sessionStartEvent ? { sessionStartEvent } : {}) });
       session.refreshContext();
-      const inspectContext = async (messages: AgentMessage[], signal?: AbortSignal): Promise<void> => {
+      const inspectContext = async (messages: AgentMessage[], signal?: AbortSignal): Promise<RequestBudget> => {
         let budgetFailure: unknown;
         let inspected = false;
-        const preview = modelRuntime.streamSimple(model, { messages: convertToLlm(redactValue(messages)) },
-          { apiKey: ownedToken, maxRetries: 0, ...(signal ? { signal } : {}), onPayload: async (payload) => {
+        let budget: RequestBudget | undefined;
+        const projected = convertToLlm(textToolImageReplay(redactValue(messages)));
+        // Reserve the full pending prompt when Pi still needs to declare or update it.
+        const currentPrompt = getCurrentSystemPrompt(projected);
+        const pendingPrompt = redactText(session.systemPrompt);
+        if (currentPrompt !== pendingPrompt) projected.splice(currentPrompt ? projected.length : 0, 0,
+          { role: "system", content: pendingPrompt, timestamp: 0 });
+        const changes = getToolStateChanges(getCurrentTools(projected), agent.state.tools);
+        if (changes.toolsAdded.length || changes.toolsRemoved.length) projected.push({ role: "system", content: "", ...changes, timestamp: 0 });
+        const preview = modelRuntime.streamSimple(model, { messages: projected },
+          { apiKey: ownedToken, maxRetries: 0,
+            // Reasoning settings add configuration items to the serialized transcript.
+            ...(session.thinkingLevel === "off" ? {} : { reasoning: session.thinkingLevel }),
+            ...(signal ? { signal } : {}), onPayload: async (payload) => {
             inspected = true;
-            try { const replay = preparePayload(payload); assertRequestBudget(model, replay, await counter(replay, signal), options.noTools ? SMOKE_MAX_TOKENS : model.maxTokens); }
+            try { const replay = preparePayload(payload); budget = assertRequestBudget(model, replay, await counter(replay, signal), outputTokens); }
             catch (error) { budgetFailure = error; }
             throw new Error("Context preview only; inference forbidden.");
           } });
@@ -344,36 +377,55 @@ export async function createRoleRuntime(
         signal?.throwIfAborted();
         if (!inspected) throw new Error("Context preflight could not inspect the provider request.");
         if (budgetFailure) throw budgetFailure;
+        if (!budget) throw new Error("Context preflight did not produce a request budget");
+        return budget;
       };
+      let softCompactionThreshold = AGENT_B_INPUT_TARGET;
+      const exceedsSoftTarget = (budget: RequestBudget) => options.role === "B" && budget.inputTokens > softCompactionThreshold;
       const preflight = options.noTools ? undefined : async (text: string, signal: AbortSignal) => {
         for (let attempt = 0; attempt < 2; attempt++) {
           session.refreshContext();
-          try { await inspectContext([...session.messages, { role: "user", content: text, timestamp: Date.now() }], signal); return; }
+          try {
+            const budget = await inspectContext([...session.messages, { role: "user", content: text, timestamp: Date.now() }], signal);
+            if (attempt || !exceedsSoftTarget(budget) || session.messages.filter(message => message.role !== "system").length < 2) {
+              if (attempt) softCompactionThreshold = Math.max(AGENT_B_INPUT_TARGET, budget.inputTokens + 4096);
+              return;
+            }
+          }
           catch (error) {
             if (!(error instanceof ContextBudgetExceededError) || attempt || session.messages.filter((message) => message.role !== "system").length < 2) throw error;
           }
-          await session.compact();
-          compaction.assertHealthy();
+          const recent = settingsManager.getCompactionKeepRecentTokens(model);
+          settingsManager.applyOverrides({ compaction: { keepRecentTokens: 0 } });
+          try {
+            await compaction.compactForBudget(() => session.compact());
+            compaction.assertHealthy();
+          } finally { settingsManager.applyOverrides({ compaction: { keepRecentTokens: recent } }); }
         }
       };
       if (!options.noTools) {
         const prepareNext = agent.prepareNextTurnWithContext;
         agent.prepareNextTurnWithContext = async (turn, signal) => {
           let force = false;
-          try { await inspectContext(turn.context.messages, signal); }
+          try { force = exceedsSoftTarget(await inspectContext(turn.context.messages, signal)); }
           catch (error) { if (error instanceof ContextBudgetExceededError) force = true; else { recordContextFailure(error); throw error; } }
           const reserve = settingsManager.getCompactionReserveTokens(model);
           const recent = settingsManager.getCompactionKeepRecentTokens(model);
-          // Ask Pi's existing next-turn hook to compact, retaining its preparation and persistence.
-          if (force) settingsManager.applyOverrides({ compaction: { reserveTokens: model.contextWindow, keepRecentTokens: Math.min(recent, 4096) } });
+          // Use Pi's next-turn compaction and checkpoint lifecycle.
+          if (force) settingsManager.applyOverrides({ compaction: { reserveTokens: model.contextWindow, keepRecentTokens: 0 } });
           try {
-            const next = await prepareNext?.(turn, signal);
+            const next = force ? await compaction.compactForBudget(async () => prepareNext?.(turn, signal)) : await prepareNext?.(turn, signal);
             compaction.assertHealthy();
+            if (force && next?.context) {
+              const budget = await inspectContext([...next.context.messages, ...(next.messages ?? [])], signal);
+              softCompactionThreshold = Math.max(AGENT_B_INPUT_TARGET, budget.inputTokens + 4096);
+            }
             return next;
           } finally { if (force) settingsManager.applyOverrides({ compaction: { reserveTokens: reserve, keepRecentTokens: recent } }); }
         };
       }
-      const managed = new ManagedSession(session, servers ? () => servers.reset() : undefined, compaction, preflight);
+      const managed = new ManagedSession(session, (input) => formatResponse({ ...input, model, thinkingLevel, streamFn: streamModel(true) }),
+        servers ? () => servers.reset() : undefined, compaction, preflight);
       assertPromptActive = () => { managed.assertActive(); compaction.assertHealthy(); };
       recordContextFailure = (error) => managed.failContext(error);
       recordRequestBudget = (budget) => { managed.requestBudget = budget; compaction.recordBudget(budget); };
@@ -428,7 +480,11 @@ export async function createRoleRuntime(
         () => isolation.dispose(), () => rmSync(resourceRoot, { recursive: true, force: true })]);
     }, async () => { for (const browser of browsers) await browser.reset(); });
     await binding.rebind();
-    return Object.assign(binding, { summarizeCompaction: summarize });
+    return Object.assign(binding, { summarizeCompaction: summarize,
+      subscribeProviderDiagnostics: (listener: (event: ProviderDiagnostic) => void) => {
+        providerListeners.add(listener); return () => { providerListeners.delete(listener); };
+      }
+    });
   } catch (error) {
     await cleanupAll([async () => runtime?.session.abort(), () => runtime?.session.dispose(), async () => runtime?.dispose(), async () => mcpRuntime?.dispose(),
       ...Array.from(localServers, servers => () => servers.dispose()), ...Array.from(browsers, browser => () => browser.dispose()), async () => summarizer?.dispose(), async () => broker?.close(), () => isolation.dispose(), () => rmSync(resourceRoot, { recursive: true, force: true })]).catch(() => undefined);

@@ -1,5 +1,9 @@
 # Bounded response repair verification
 
+The 2026-10-18 results below describe the original implementation. For the current
+separate formatter and preserved execution tools, see
+[execution recovery verification](execution-tool-recovery-verification.md).
+
 Implemented 2026-10-18 in the existing working tree. Existing uncommitted work
 and the calculator directories were preserved. No dependency, provider, or model
 changes were added by this task.

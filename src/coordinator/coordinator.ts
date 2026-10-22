@@ -731,9 +731,10 @@ export class Coordinator {
       const binding = this.requireBinding("A");
       this.logger.log({ ...normalizeLifecycleEvent({ role: "A", sessionId: binding.sessionId, sessionFile: binding.sessionFile, eventType, details }), operatorTurnId: this.operatorTurnId });
     };
-    logTurn("ui.turn_started", { objective: safeDisplayText(objective) });
-    this.eventBridge.beginOperation(controller.signal);
+    const startedAt = performance.now();
     const timeoutMs = this.options.timeoutMs ?? 600_000;
+    logTurn("ui.turn_started", { objective: safeDisplayText(objective), deadlineMs: timeoutMs });
+    this.eventBridge.beginOperation(controller.signal);
     const timer = timeoutMs > 0 ? setTimeout(() => { void this.cancelActive("timed_out"); }, timeoutMs) : undefined;
     try {
       const result = await run();
@@ -768,7 +769,7 @@ export class Coordinator {
       if (timer) clearTimeout(timer);
       this.setUiState("planning", "A");
       this.clearAllActivity();
-      logTurn("ui.turn_finished", { outcome: this.pendingPlan ? "waiting_approval" : this.operationKind });
+      logTurn("ui.turn_finished", { outcome: this.pendingPlan ? "waiting_approval" : this.operationKind, elapsedMs: performance.now() - startedAt, deadlineMs: timeoutMs });
       this.activeOperation = undefined;
       operation.finish();
     }

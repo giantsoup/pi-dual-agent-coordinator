@@ -8,6 +8,7 @@ import { Coordinator } from "../../src/coordinator/coordinator.js";
 import type { CreateRoleRuntimeOptions } from "../../src/runtime/create-role-runtime.js";
 import {
   assistantTurnEnd,
+  successfulToolTurn,
   createFakeBinding,
   FakeRuntime,
   FakeSession
@@ -67,6 +68,7 @@ Plan draft below.
                   const workflowId = extractField(promptText, "Workflow ID");
                   const handoffId = extractField(promptText, "Handoff ID");
                   const iteration = extractField(promptText, "Iteration");
+                  await session.emit(successfulToolTurn("write", { path: "src/index.ts", content: "fixture implementation" }));
                   await session.emit(
                     assistantTurnEnd(`
 \`\`\`pi-completion
@@ -165,6 +167,7 @@ Plan draft below.
                   const workflowId = extractField(promptText, "Workflow ID");
                   const handoffId = extractField(promptText, "Handoff ID");
                   const iteration = extractField(promptText, "Iteration");
+                  await session.emit(successfulToolTurn("write", { path: "src/index.ts", content: "fixture implementation" }));
                   await session.emit(
                     assistantTurnEnd(`
 \`\`\`pi-completion
@@ -272,6 +275,7 @@ Plan draft below.
                   const workflowId = extractField(promptText, "Workflow ID");
                   const handoffId = extractField(promptText, "Handoff ID");
                   const iteration = extractField(promptText, "Iteration");
+                  await session.emit(successfulToolTurn("write", { path: "src/index.ts", content: "fixture implementation" }));
                   await session.emit(
                     assistantTurnEnd(`
 \`\`\`pi-completion
@@ -344,6 +348,7 @@ Plan draft below.
                   const handoffId = extractField(promptText, "Handoff ID");
                   const iteration = extractField(promptText, "Iteration");
                   await bGate.promise;
+                  await session.emit(successfulToolTurn("write", { path: "src/index.ts", content: "fixture implementation" }));
                   await session.emit(
                     assistantTurnEnd(`
 \`\`\`pi-completion
@@ -446,6 +451,7 @@ Plan draft below.
                   const handoffId = extractField(promptText, "Handoff ID");
                   const iteration = extractField(promptText, "Iteration");
                   if (bPromptCount === 1) {
+                    await session.emit(successfulToolTurn("write", { path: "src/index.ts", content: "fixture implementation" }));
                     await session.emit(assistantTurnEnd("This is not a valid completion block."));
                     return;
                   }

@@ -268,7 +268,7 @@ export class CoordinatorTuiApp implements Component, Focusable {
       : renderFooter(state, width, this.transientHint, this.paneFocus);
     const editorLines = this.renderEditor(width, Math.max(1, this.terminal.rows - 6));
     const available = Math.max(0, this.terminal.rows - headerLines.length - footerLines.length - editorLines.length);
-    const panelHeight = Math.min(width >= 100 && this.terminal.rows >= 30 ? 10 : width >= 80 && this.terminal.rows >= 24 ? 7 : 3, available);
+    const panelHeight = Math.min(width >= 100 && this.terminal.rows >= 30 ? 8 : width >= 80 && this.terminal.rows >= 24 ? 7 : 3, available);
     const bodyHeight = Math.max(0, available - panelHeight);
     const diagnosticsHeight = this.showActivity && !this.controls && state.modal.kind === "none" ? Math.min(8, Math.max(0, bodyHeight - 4)) : 0;
     const narrativeHeight = bodyHeight - diagnosticsHeight;
@@ -568,15 +568,17 @@ function renderFooter(
       : state.modal.kind === "model_loading" ? "Esc cancel | q quit with confirmation"
       : state.modal.choices?.length && state.modal.kind !== "history" ? "Esc back | h help | Up/Down choose | Enter apply"
       : "Esc back | h help | Up/Down scroll | u/d page | g/l edges", width),
-      padLine("Your draft is preserved while browsing.", width)];
+      padLine(["running", "cancelling"].includes(state.operation.kind) ? "Ctrl+C cancel | Your draft is preserved while browsing." : "Your draft is preserved while browsing.", width)];
   }
   const baseHint = footerBindings(paneFocus);
   const statusHint = transientHint ?? state.lastError?.message ?? state.notification?.message ??
-    (paneFocus === "editor" ? "Esc then: w workspace | r history | l latest | n newline | x cancel"
+    (["running", "cancelling"].includes(state.operation.kind) ? "Esc then x cancel"
+      : paneFocus === "editor" ? "Esc then: w workspace | r history | l latest | n newline | x cancel"
       : paneFocus === "transcript" ? "u/d page | g beginning | l follow | Space fold | Left/Right expand/collapse"
       : paneFocus === "inspector" || paneFocus === "activity" ? "Up/Down scroll | u/d page | g/l edges | Esc back"
       : "u/d page | g beginning | l latest | Esc back");
-  return [padLine(baseHint, width), padLine(safeDisplayText(statusHint), width)];
+  const cancellation = ["running", "cancelling"].includes(state.operation.kind) ? "Ctrl+C cancel | " : "";
+  return [padLine(baseHint, width), padLine(`${cancellation}${safeDisplayText(statusHint)}`, width)];
 }
 
 function renderActivity(state: InteractiveUiState, width: number): string[] {

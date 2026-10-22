@@ -1,4 +1,4 @@
-import { estimateTokens } from "@earendil-works/pi-coding-agent";
+import { estimateTokens, prepareBranchEntries } from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
 import { redactText } from "../security/redact.js";
 import { randomUUID } from "node:crypto";
@@ -22,6 +22,13 @@ export class CompactionController {
   private readonly generation = randomUUID();
   private readonly listeners = new Set<(event: CompactionEvent) => void>();
   private budget: RequestBudget | undefined;
+  private budgetBoundary: string | undefined;
+  public async compactForBudget<T>(work: () => Promise<T>): Promise<T> {
+    // A metadata boundary lets Pi replace even the newest oversized response.
+    this.budgetBoundary = this.manager.appendCustomEntry("pi-dual-compaction-boundary", {});
+    try { return await work(); }
+    finally { this.budgetBoundary = undefined; }
+  }
   public recordBudget(budget: RequestBudget): void { this.budget = budget; }
   private failure: ContextManagementError | undefined;
   private job: { event: CompactionEvent; controller: AbortController } | undefined;
@@ -48,12 +55,22 @@ export class CompactionController {
         if (!this.summarize) throw new ContextManagementError("Trusted Agent A summarizer is unavailable.");
         const previous = this.manager.getBranch().slice().reverse().find((entry) => entry.type === "compaction");
         const inherited = z.object({ schema: z.literal(1), readFiles: z.array(z.string()), modifiedFiles: z.array(z.string()) }).safeParse(previous?.type === "compaction" ? previous.details : undefined);
-        const fileOps = { read: new Set(event.preparation.fileOps.read), written: new Set(event.preparation.fileOps.written), edited: new Set(event.preparation.fileOps.edited) };
+        const fileOps = this.budgetBoundary
+          ? prepareBranchEntries(this.manager.buildContextEntries()).fileOps
+          : { read: new Set(event.preparation.fileOps.read), written: new Set(event.preparation.fileOps.written), edited: new Set(event.preparation.fileOps.edited) };
         if (inherited.success) {
           for (const path of inherited.data.readFiles) fileOps.read.add(path);
           for (const path of inherited.data.modifiedFiles) fileOps.edited.add(path);
         }
-        const result = await this.summarize({ target, preparation: { ...event.preparation, fileOps } }, signal);
+        const preparation = this.budgetBoundary ? {
+          ...event.preparation,
+          firstKeptEntryId: this.budgetBoundary,
+          messagesToSummarize: this.manager.buildSessionProjection().messages.filter((message) => message.role !== "compactionSummary"),
+          turnPrefixMessages: [],
+          isSplitTurn: false,
+          fileOps
+        } : { ...event.preparation, fileOps };
+        const result = await this.summarize({ target, preparation }, signal);
         signal.throwIfAborted();
         if (this.manager.getLeafId() !== leafId) throw new ContextManagementError("Conversation changed during history compaction.");
         return { compaction: result };
@@ -71,7 +88,7 @@ export class CompactionController {
       } catch { this.fail("Compaction status delivery failed."); ctx.abort(); }
     });
     pi.on("session_compact_failed", (event, ctx) => {
-      if (!event.aborted || this.failure) this.fail("Summary generation or checkpoint persistence failed.");
+      if (!event.aborted || this.failure) this.fail(event.errorMessage ? redactText(event.errorMessage).slice(0, 1600) : "Summary generation or checkpoint persistence failed.");
       const job = this.job; this.job = undefined;
       try { if (job) this.emit({ ...job.event, type: this.failure ? "failed" : "cancelled", ...(this.failure ? { error: this.failure.message } : {}) }); }
       catch { this.fail("Compaction status delivery failed."); }

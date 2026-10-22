@@ -46,8 +46,14 @@ try {
     let snapshot;
     const binding = await createRoleRuntime({ role, cwd, agentDir: join(root, 'agent'), sessionRoot: join(root, role), sessionMode: 'memory',
       browser: { workspace: cwd, allowedOrigins: [httpOrigin, origin] },
-      providerTestBackend: { cwd, modelIds: [], load: async () => 'dummy-local-browser-proof', request: async () => {
+      providerTestBackend: { cwd, modelIds: [], load: async () => 'dummy-local-browser-proof', request: async (_url, init) => {
         calls++;
+        if (calls >= 3) {
+          const body = String(init?.body);
+          assert.ok(body.includes('Image evidence retained in the session archive'));
+          assert.ok(body.includes('Do not claim visual verification'));
+          assert.ok(!body.includes('"image_url"') && !body.includes('"input_image"'), 'Screenshot pixels escaped text-only replay');
+        }
         const call = args => role === 'A' ? fixtureToolResponse('browser', args) : fixtureChatToolResponse('browser', args);
         if (calls === 1) return call({ action: 'navigate', url: role === 'A' ? httpOrigin : `${origin}/?role=${role}` });
         if (calls === 2) {
@@ -74,6 +80,7 @@ try {
       for (const result of results) assert.equal(result.isError, false, JSON.stringify(result.result));
       const screenshot = results[1].result.content.find(c => c.type === 'image' && c.mimeType === 'image/jpeg');
       assert.ok(screenshot);
+      assert.ok(binding.session.messages.some(message => message.role === 'toolResult' && message.content.some(part => part.type === 'image' && part.data === screenshot.data)), 'Original screenshot was not archived');
       if (process.env.PI_BROWSER_EVIDENCE_DIR) { await mkdir(process.env.PI_BROWSER_EVIDENCE_DIR, { recursive: true }); await writeFile(join(process.env.PI_BROWSER_EVIDENCE_DIR, `agent-${role}.jpeg`), Buffer.from(screenshot.data, 'base64')); }
       if (role === 'A') {
         calls = 0; results.length = 0;
@@ -101,10 +108,12 @@ try {
   } finally { await uncertain.dispose(); }
   const cancellation = await createRoleRuntime({ role: 'A', cwd, agentDir: join(root, 'agent'), sessionRoot: join(root, 'cancel'), sessionMode: 'memory', browser: { workspace: cwd, allowedOrigins: [origin] }, providerTestBackend: { cwd, modelIds: [], load: async () => 'dummy-cancel-proof', request: async () => fixtureToolResponse('browser', { action: 'navigate', url: `${origin}/hang` }) } });
   try {
-    const prompt = cancellation.session.prompt('Open the slow local fixture.');
+    const prompt = cancellation.session.prompt('Open the slow local fixture.').then(
+      () => ({ status: 'fulfilled' }), error => ({ status: 'rejected', error }));
     await Promise.race([hanging, new Promise((_resolve, reject) => { const timer = setTimeout(() => reject(new Error('Slow browser did not reach fixture')), 20_000); timer.unref(); })]);
     await cancellation.session.abort();
-    await prompt;
+    const settled = await prompt;
+    if (settled.status === 'rejected') assert.ok(settled.error instanceof Error && settled.error.name === 'AbortError', 'Browser cancellation failed for an unexpected reason');
     await disconnected;
   } finally { await cancellation.dispose(); }
   assert.ok(initialCookies.length >= 3);

@@ -90,7 +90,8 @@ waiting, cancellation and terminal results have separate labels. Inspecting olde
 work never changes that live identity.
 
 **Current activity** stays immediately above the composer. The panel shows the
-active role, model, phase, and a bold action on its own steady row. A small marker
+role, short model name, and phase in the border. The bold current action occupies
+the first body row, followed by its target or cleanup detail and a gray clock. A small marker
 animates during work. Thinking, response writing, tool-call preparation, provider
 waiting, native tool execution, approval waiting, model setup, and cancellation
 cleanup have distinct labels. The labels describe observed events. They do not
@@ -98,12 +99,19 @@ expose reasoning or guess model intentions. Safe commands and targets wrap withi
 the panel budget. Elapsed time keeps its action start across deltas; event age
 reports silence without declaring a hang or triggering a retry.
 
-The panel reserves ten rows at larger sizes and seven at 80x24 with a short draft.
+The panel reserves eight rows at larger sizes and seven at 80x24 with a short draft.
 Pi's actual editor output determines the remaining body space. A tall draft or
 completion menu takes space from the narrative first. Compact mode keeps a short
 action summary, draft, cursor, and two contextual footer rows. Recent activity,
-operator hints, and secondary metrics yield space before the action. Up to three
-recent entries come from the current request. Hidden or paused narrative keeps an
+operator hints, and secondary metrics yield space before the action. One summary
+counts up to three recently settled tool calls from the current request and uses
+the panel's current agent color. It includes failed, timed-out, cancelled, and
+interrupted outcomes, with the latest failure's safe title and workspace-relative
+paths. A full blank row separates the summary from the current action, clock,
+and required progress.
+If both the blank row and summary cannot fit, the summary is hidden. Individual
+calls remain available in the workspace and read-only inspector. Cancellation
+controls stay in the footer. Hidden or paused narrative keeps an
 unread count and a return hint in the panel. Optional Activity diagnostics use
 body space above the panel and contain session and health details.
 The body shows both agents' readable responses in order, including planning,
@@ -111,6 +119,9 @@ execution updates, check-ins, review, and repair. Earlier responses remain visib
 when another role starts. Committed responses reload from the read-only Pi archive.
 Private reasoning and raw workflow blocks stay hidden; validated plan, check-in,
 completion, and review fields use the existing readable summaries.
+Displayed plans separate the summary, execution steps, and review notes with one
+blank line. Acceptance criteria appear as spaced bullets in their own section.
+This display formatting preserves stored responses and workflow data.
 
 Uninterrupted tool activity is collapsed into one totals row beneath the response.
 A new response, role run, or check-in starts a separate group. Failures, cancellation,
@@ -283,7 +294,8 @@ out of prose. Validated completion/review fields appear as reported results and
 reported verification, rather than inferred test success.
 
 Role labels, activity labels, headings and borders use standard ANSI cyan for A and
-yellow/amber for B. Workspace and inspector prose use the terminal's default
+yellow/amber for B. The activity clock uses ANSI white for secondary gray text,
+and the recent-call summary uses amber. Workspace and inspector prose use the terminal's default
 colors. These styles work with the basic 16-color palette and need no truecolor
 support or `COLORFGBG` guess. `NO_COLOR` and `TERM=dumb` disable role color. `TERM=dumb` also uses a static
 activity marker.

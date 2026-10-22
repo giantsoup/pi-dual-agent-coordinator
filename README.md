@@ -99,6 +99,9 @@ After verifying a trusted installation, run its `bin/node scripts/verify-local-e
 from that installation to exercise Agent B's live LM Studio inference and sandboxed
 write/read tools in a temporary workspace. It uses the saved, already-loaded model
 and makes local inference requests without loading or downloading models.
+Add `--with-format-repair` to verify separate completion formatting, an unchanged
+execution conversation and tool registry, and a subsequent native read without
+repeating the write. The verifier retains its two-minute total bound.
 
 ## REPL basics
 
@@ -119,10 +122,15 @@ new prompts continue the current conversation. Use
 
 The **Current activity** panel stays immediately above your draft, including while
 you browse history, inspect a record, or open help. It shows the observed action,
-role, model, phase, safe tool target, elapsed time, event age, and available progress.
+role, model, and phase in the border, with the bold current action first and its
+safe tool target, elapsed time, event age, and available progress below it.
 The action text stays steady while a small marker animates. `TERM=dumb` uses a
 static marker, and `NO_COLOR` disables role colors. Recent activity belongs to the
-current request. Hidden output remains unread until you return to visible output.
+current request. Up to three settled calls appear as one amber summary, separated
+from the current activity by a full blank row. The summary yields space before
+the action, failure reason, and required progress. Inspect individual calls in the
+workspace; cancellation controls remain in the footer. Hidden output remains
+unread until you return to visible output.
 
 The narrative retains planning, operator approval, execution, check-ins,
 continuation, revisions, and review in event order. Tool groups start folded.
@@ -139,6 +147,34 @@ its tool results. A checks progress, repeated attempts, and drift against the
 approved plan, then tells B to continue, gives specific next steps, or blocks
 execution. Guidance reaches B before its next model request. A final response
 on turn 10 goes directly to the normal completion review.
+
+If B prints tool-call markup instead of making a native call, ends with unfinished
+prose instead of a completion report, or claims changes or verification without
+any native results in the current handoff, the coordinator
+keeps tools enabled and redirects B to inspect current files and finish the
+remaining work. Recovery stops after two redirects per handoff or three per
+workflow. Printed arguments are never executed, and unknown native results stop
+recovery rather than risk repeating a write. Claims of changes require a successful
+native tool result from the current handoff. Verification requires an observed
+result, including a reported failure. A malformed completion report after native
+execution goes to a separate formatter using the same role's selected model.
+The formatter has no tools and cannot replay actions. The live role session
+keeps its tool registry and conversation throughout formatting, cancellation,
+and formatter failures. Unsupported claims introduced by formatting stop the
+workflow without replay. A still checks the actual artifacts before approval.
+
+Verification-only handoffs can finish by accurately reporting a failed check.
+They do not authorize repair or a rerun. Agent A receives bounded native results,
+including retained shell exits when available, separately from B's claims.
+A shell pipeline can mask a failed check, and a valid completion does not prove
+its explanation. Read-only history shows retained native shell exits. Older
+records without native metadata remain unknown. See
+[Agent B reliability verification](docs/agent-b-reliability-verification.md) for
+repeatable fixtures, live gates, and qualification limits.
+
+Each required response retains its ten-total-attempt limit. Formatting records
+remain available in request history, but repair instructions and tool-free
+formatter responses do not become the execution agent's conversation context.
 
 Check-ins keep the current handoff and iteration. A normal completion review
 resets the counter for the next handoff. Check-ins use the existing operation
@@ -390,6 +426,18 @@ to `false` to disable it. `--no-mcp` controls globally configured MCP servers;
 the local browser has its separate project policy. No-tools smoke runtimes omit it.
 Doctor checks configuration and installation, but does not claim browser connectivity.
 
+Screenshots remain available as image evidence in the session archive. Both roles'
+model requests replace tool images with an explicit notice while image token
+accounting is unavailable. Use browser snapshots and console output for text
+verification. Capturing a screenshot does not prove that the model inspected its
+pixels. This also applies to images returned by read and MCP tools, including
+saved sessions. Direct image inputs still require verified image accounting.
+From a verified trusted installation, run
+`bin/node scripts/verify-local-executor.mjs --with-tool-image` to check live local
+continuation after a synthetic archived image read. It uses the saved loaded
+executor and writes only in a disposable workspace. Real Chrome screenshot
+continuation is covered separately by `npm run verify:browser` with fixture inference.
+
 ```bash
 npm run verify:browser
 npm run verify:local-servers
@@ -428,15 +476,16 @@ Cancellation and timeout preserve completed file changes. Inspect those changes
 before submitting another request. Project `AGENTS.md` instructions load when a
 role runtime is created. Use `/new` or restart Pi after adding or editing them.
 
-Agent B's local provider stops after 120 seconds without upstream data. An active
-stream can continue for up to 30 minutes per request, subject to the outer
-operation deadline. Streaming tool arguments count as activity. A's provider
-keeps its 120-second absolute request limit. Provider failure stops the workflow
-without replaying tools or a handoff. The terminal shows the safe stopping cause.
+Both providers stop after 120 seconds without upstream data. Active reasoning
+and tool-argument streams can continue for up to 30 minutes per request, subject
+to the coordinator's shorter operation deadline and cancellation. Provider failure
+stops the workflow without replaying tools or a handoff. The terminal shows a safe
+stopping cause for upstream silence, an absolute deadline, or an interrupted
+connection.
 
 Run `bin/node scripts/verify-provider-stream-deadlines.mjs` inside a trusted
-installation to check its compiled broker with injected streams and scaled
-deadlines. This check makes no live inference requests.
+installation to check both provider paths in its compiled broker with injected
+streams and scaled deadlines. This check makes no live inference requests.
 For a separate bounded live check, run `bin/node scripts/verify-local-stream.mjs`
 inside a verified trusted installation. It uses the saved already-loaded local
 model, permits only native write and read tools, and checks a response lasting
@@ -481,16 +530,44 @@ prints the start and outcome once.
 Compaction preserves the full archive and completed file changes. If summary
 creation, persistence, or request-budget verification fails, execution stops;
 submit explicitly to continue. A summary never grants execution approval.
+When serialized request admission triggers compaction, the checkpoint summarizes
+all visible history, including the latest response. This avoids retaining an
+oversized response or encrypted reasoning payload. Ordinary threshold compaction
+keeps its recent-history tail. Both paths verify the rebuilt request before inference.
 
-B's complete text/tool request is counted with the loaded LM Studio model's
-prompt template and tokenizer before inference. Its selected window remains
-65,536 tokens, with output headroom and a 4,096-token safety margin. Tokenizer
-unavailability and unsupported image formats fail before inference. Private B
-reasoning remains archived and is omitted from provider replay. A's text requests use a conservative byte allowance. Summary requests
-use low reasoning where supported and a separate bounded output budget.
+Admission previews include the effective reasoning level, pending system prompt,
+and active tool declarations. Changed prompts receive a conservative full-prompt
+allowance before Pi applies their section updates. Reasoning configuration items
+count toward the same budget as history and tool results, so a review can compact
+before its next request even when provider-reported usage is low. Final serialized
+admission remains required.
+
+A uses OpenAI's input-token counting endpoint for its complete serialized request,
+including reasoning replay and tools. Normal A responses allow up to 16,384 output
+tokens, including reasoning, rather than reserving the model's maximum output.
+For the default 272,000-token model window this leaves up to 251,520 input tokens
+after the 4,096-token safety margin. A compacts near that limit, rather than treating
+serialized bytes as tokens. Counting failure stops before inference without
+attempting compaction. Identical counts are cached by input hash.
+
+B uses the loaded LM Studio model's prompt template and tokenizer. It targets
+32,768 input tokens, retains an 8,192-token recent tail during ordinary compaction,
+and keeps the hard 65,536-token window with 16,384 output tokens and 4,096 safety
+tokens. A large fixed prompt can exceed the soft target if it still fits the hard
+limit; a 4,096-token growth allowance prevents immediate repeated soft compaction.
+Private B reasoning remains archived and is omitted from provider replay. No cloud
+counting capability is granted to B.
+
+Summary requests use low reasoning where supported and allow 4,096 output tokens.
+Summaries preserve workflow identifiers, iteration numbers, and required response
+fields alongside the objective and observed work. Partial summaries still fail closed.
+The separately bounded, one-request API smoke
+test retains its byte allowance and 1,024-token output cap.
 
 From a verified trusted installation, `bin/node scripts/verify-context-budget.mjs`
 checks the saved local executor's tokenizer without inference.
+`bin/node scripts/verify-openai-context.mjs /absolute/credential-project [session.jsonl]`
+checks A's real counting endpoint and optionally an archived session without inference.
 `bin/node scripts/verify-compaction.mjs /absolute/credential-project` separately
 checks real A summaries and B tool continuation across two compactions in a
 throwaway workspace. Both require the saved executor to be already loaded;

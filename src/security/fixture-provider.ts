@@ -1,3 +1,11 @@
+import { textPayloadAllowance } from "../runtime/context-budget.js";
+
+// Conservative fixture counts keep boundary tests independent of live credentials.
+export const fixtureTokenCountRequest: typeof fetch = async (_url, init) => {
+  if (typeof init?.body !== "string") throw new Error("Expected a serialized fixture counting request");
+  return Response.json({ object: "response.input_tokens", input_tokens: textPayloadAllowance(JSON.parse(init.body)) });
+};
+
 // Deterministic Responses SSE used by isolation verification. Never selected by config.
 export function fixtureResponse(text: string): Response {
   const item = { type: "message", id: "msg_fixture", role: "assistant", content: [{ type: "output_text", text, annotations: [] }] };

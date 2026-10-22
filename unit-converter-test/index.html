@@ -23,7 +23,7 @@
       <div class="row">
         <div class="field">
           <label for="value">Value</label>
-          <input id="value" name="value" type="text" inputmode="decimal" autocomplete="off" placeholder="Enter a number" />
+          <input id="value" name="value" type="text" inputmode="decimal" autocomplete="off" placeholder="Enter a number" aria-describedby="status" />
         </div>
 
         <div class="field">
@@ -45,6 +45,11 @@
       </div>
 
       <p id="status" class="status" role="status" aria-live="polite"></p>
+      <!--
+        The value input references this status element via aria-describedby so
+        that error/status text is announced with the input. aria-invalid is set
+        on the input by app.js for invalid values and cleared for empty/valid.
+      -->
     </form>
   </main>
 

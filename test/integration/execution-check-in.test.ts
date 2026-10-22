@@ -8,6 +8,7 @@ import { Coordinator } from "../../src/coordinator/coordinator.js";
 import { createRoleRuntime } from "../../src/runtime/create-role-runtime.js";
 import { fixtureResponse, fixtureChatResponse, fixtureChatToolResponse } from "../../src/security/fixture-provider.js";
 import type { NormalizedTelemetryEvent } from "../../src/types/telemetry.js";
+import { SUMMARY_OUTPUT_TOKENS } from "../../src/runtime/context-budget.js";
 import { HistoryIndex } from "../../src/app/interactive/history.js";
 
 const roots: string[] = [];
@@ -32,6 +33,7 @@ function field(text: string, name: string): string {
 
 async function scenario(options: {
   toolTurns: number;
+  oversizedPlanningHistory?: boolean;
   failedRequests?: number[];
   decision?: "redirect" | "blocked";
   checkIn?: (turnCount: number, coordinator: Coordinator) => Promise<string | undefined>;
@@ -70,6 +72,11 @@ async function scenario(options: {
             }) + "\n```");
           }
           plannerRequests += 1;
+          if (body && typeof body === "object" && "max_output_tokens" in body && body.max_output_tokens === SUMMARY_OUTPUT_TOKENS) {
+            order.push("A-summary");
+            expect(text).not.toContain("opaque-reasoning-");
+            return fixtureResponse("Approved objective: write progress.txt, then report the observed result. Only change progress.txt.");
+          }
           // The last input item is the current coordinator prompt; earlier check-ins remain in history.
           if (!body || typeof body !== "object" || !("input" in body) || !Array.isArray(body.input)) throw new Error("Missing Responses input");
           const prompt = allText(responsesInput(body).prompt);
@@ -92,11 +99,17 @@ async function scenario(options: {
             decision: "approved", summary: "Verified progress.txt", userResponse: "Completed the approved work.", changedPaths: ["progress.txt"]
           }) + "\n```");
           expect(prompt).toContain("specific examples of expected behavior");
-          return fixtureResponse("```pi-execute\n" + JSON.stringify({
+          const response = fixtureResponse("```pi-execute\n" + JSON.stringify({
             schemaVersion: 1, objective: "Write progress.txt", summary: "Write the requested step.",
             acceptanceCriteria: ["progress.txt contains the requested step."], relevantPaths: ["progress.txt"],
             executionPlan: ["Write progress.txt, for example step 1, then report the result."], constraints: ["Only change progress.txt."]
           }) + "\n```");
+          if (!options.oversizedPlanningHistory) return response;
+          const item = { type: "reasoning", id: "rs_fixture", summary: [], encrypted_content: "opaque-reasoning-" + "a".repeat(320000) };
+          const reasoning = ["response.output_item.added", "response.output_item.done"].map((type) =>
+            `event: ${type}\ndata: ${JSON.stringify({ type, output_index: 0, item })}\n\n`).join("");
+          const events = (await response.text()).replaceAll('"output_index":0', '"output_index":1');
+          return new Response(events.replace("event: response.output_item.added\n", reasoning + "event: response.output_item.added\n"), { headers: response.headers });
         }
       }
     })
@@ -137,6 +150,16 @@ describe("execution process check-ins through real Pi sessions and tools", () =>
     expect(history.snapshot().records.find((record) => record.kind === "turn")).toMatchObject({
       execution: { completedTurns: 21, checkIn: { kind: "final_review" } }
     });
+  }, 120_000);
+
+  it("compacts A's oversized latest planning response before the ten-turn check-in and resumes B once", async () => {
+    const run = await scenario({ toolTurns: 10, oversizedPlanningHistory: true });
+    expect(run.result.workflow?.status).toBe("completed");
+    expect(run.checkIns).toEqual([10]);
+    expect(run.workerRequests).toBe(11);
+    expect(run.order.slice(9, 13)).toEqual(["B10", "A-summary", "A10", "B11"]);
+    expect(run.events.filter((event) => event.eventType === "compaction.completed")).toHaveLength(1);
+    expect(run.events.some((event) => event.eventType === "workflow.check_in_failed")).toBe(false);
   }, 120_000);
 
   it("does not count a real failed B tool call toward the ten successful turns", async () => {

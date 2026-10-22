@@ -8,13 +8,14 @@ import { HeadlessInteractiveCoordinatorService } from '../../dist/src/app/intera
 import { createRoleRuntime } from '../../dist/src/runtime/create-role-runtime.js';
 import { LmStudioModels } from '../../dist/src/security/lm-studio.js';
 import { fixtureResponse, fixtureToolResponse, fixtureChatResponse, fixtureChatToolResponse } from '../../dist/src/security/fixture-provider.js';
+import { SUMMARY_OUTPUT_TOKENS } from '../../dist/src/runtime/context-budget.js';
 
 const [workspace, stateRoot, mode] = process.argv.slice(2);
 if (!workspace || !stateRoot) throw new Error('Supply isolated workspace and state paths.');
 const block = (name, data) => `\`\`\`${name}\n${JSON.stringify(data)}\n\`\`\``;
 const field = (text, name) => { const value = text.match(new RegExp(`${name}: ([^\\n]+)`))?.[1]; if (!value) throw new Error(`Missing ${name}`); return value; };
 const toolResponse = fixtureChatToolResponse;
-const options = {command:'repl',cwd:workspace,sessionRoot:stateRoot,sessionMode:'persistent',mcpEnabled:false,jsonLogs:false,verbose:false,maxReviewRounds:2,timeoutMs:15000,plainUi:mode === 'plain' || mode === 'plain-repair' || mode === 'plain-compaction' || mode === 'plain-stream-failure'};
+const options = {command:'repl',cwd:workspace,sessionRoot:stateRoot,sessionMode:'persistent',mcpEnabled:false,jsonLogs:false,verbose:false,maxReviewRounds:2,timeoutMs:15000,plainUi:mode.startsWith('plain')};
 const skillDir = join(stateRoot, 'agent', 'skills', 'terminal-fixture');
 mkdirSync(skillDir, {recursive:true});
 writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: terminal-fixture\ndescription: Terminal skill fixture\n---\nTERMINAL_SKILL_INSTRUCTIONS_OK\n');
@@ -42,12 +43,17 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
   const body = JSON.parse(String(init.body));
   const promptContent = (body.input ?? body.messages).filter(item => item.role === 'user').at(-1)?.content;
   const prompt = typeof promptContent === 'string' ? promptContent : promptContent?.map(item => item.text ?? '').join('\n') ?? '';
-  if (input.role === 'A' && body.max_output_tokens === 1536) {
+  if (input.role === 'A' && body.max_output_tokens === SUMMARY_OUTPUT_TOKENS) {
     await new Promise((resolve,reject) => {
       const timer = setTimeout(resolve,1600);
       init.signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(new Error('fixture summary cancelled'));},{once:true});
     });
-    return compactionScenario.includes('\nOperator turn:\nfail compaction fixture') ? new Response('fixture summary failure',{status:503}) : fixtureResponse('Retained objective, constraints, completed writes, and next steps.');
+    const marker = prompt.lastIndexOf('Coordinator handoff for Agent B.');
+    const handoff = marker < 0 ? '' : prompt.slice(marker);
+    const retained = handoff ? ['Coordinator handoff for Agent B.',
+      `Workflow ID: ${field(handoff,'Workflow ID')}`, `Handoff ID: ${field(handoff,'Handoff ID')}`,
+      `Iteration: ${field(handoff,'Iteration')}`, `Objective: ${field(handoff,'Objective')}`].join('\n') : '';
+    return compactionScenario.includes('\nOperator turn:\nfail compaction fixture') ? new Response('fixture summary failure',{status:503}) : fixtureResponse(`${retained}\nRetained objective, constraints, completed writes, and next steps.`);
   }
   if (input.role === 'A' && prompt.includes('compaction fixture') && !prompt.includes('\nOperator turn:\nplan ') && !prompt.includes('provenance="coordinator_review"')) {
     const response = fixtureResponse('COMPACTION_DISCUSSION_OK');
@@ -80,12 +86,27 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
     if (repairScenario === 'exhaust' || repairScenario === 'bounded' && attempt < 10) return fixtureResponse('```pi-plan\n{}\n```');
     return fixtureResponse('TERMINAL_REPAIR_OK');
   }
+  if (input.role === 'A' && prompt.includes('cloud stream failure')) {
+    return new Response(new ReadableStream({start(controller) {
+      controller.enqueue(new TextEncoder().encode(': active reasoning\n\ndata: {"private":"incomplete'));
+      const timer = setTimeout(()=>controller.error(new Error('private upstream detail')),250);
+      init.signal?.addEventListener('abort',()=>{clearTimeout(timer);try{controller.error(new Error('cancelled'));}catch{}},{once:true});
+    }}));
+  }
   if (prompt.includes('provider failure')) return new Response('fixture failure',{status:503});
   if (input.role === 'B') {
     const handoff = body.messages.filter(item => item.role === 'user').map(item => typeof item.content === 'string' ? item.content : item.content?.map(part => part.text ?? '').join('\n') ?? '').findLast(text => text.includes('Coordinator handoff for Agent B.')) ?? prompt;
     const workflowId = field(handoff,'Workflow ID');
     const handoffId = field(handoff,'Handoff ID');
     const iteration = Number(field(handoff,'Iteration'));
+    if (handoff.includes('reliability fixture')) {
+      const count = activityCalls.get(handoffId) ?? 0; activityCalls.set(handoffId, count + 1);
+      await new Promise(resolve => setTimeout(resolve, 450));
+      if (count === 0) return fixtureChatResponse('[TOOL_CALL]{"name":"read","path":"check.test.mjs"}[END_TOOL_CALL]');
+      if (count === 1) return toolResponse('read', {path:'check.test.mjs'}, 'reliability-read');
+      if (count === 2) return toolResponse('bash', {command:'node --test --test-reporter=tap check.test.mjs'}, 'reliability-check');
+      return fixtureChatResponse(block('pi-completion',{schemaVersion:1,workflowId,handoffId,iteration,summary:'Verification completed with one failed ascending assertion. Causes unresolved.',changedPaths:[],verification:['node --test --test-reporter=tap check.test.mjs: exit 1, tests 1, pass 0, fail 1'],openQuestions:['No repair requested.']}));
+    }
     if (handoff.includes('stream failure')) {
       const count = activityCalls.get(handoffId) ?? 0;
       activityCalls.set(handoffId, count + 1);
@@ -128,6 +149,10 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
   const capped = prompt.match(/Workflow (\S+) has reached the review cap at iteration (\d+)/);
   if (capped) return fixtureResponse(block('pi-final',{schemaVersion:1,workflowId:capped[1],iteration:Number(capped[2]),decision:'blocked',summary:'Review cap',userResponse:'TERMINAL_REVIEW_CAP',changedPaths:['result.txt']}));
   if (prompt.includes('Coordinator review prompt')) {
+    if (prompt.includes('reliability fixture')) {
+      if (!prompt.includes('"exitCode":1')) throw new Error('Native failed-check facts absent from review');
+      return fixtureResponse(block('pi-final',{schemaVersion:1,workflowId:field(prompt,'Workflow ID'),iteration:Number(field(prompt,'Current iteration')),decision:'approved',summary:'Accurate verification report',userResponse:'TERMINAL_FAILED_CHECK: one failed ascending assertion, exit 1. Application correctness remains unresolved.',changedPaths:[]}));
+    }
     if (prompt.includes('activity narrative')) {
       await new Promise(resolve => setTimeout(resolve, 1200));
       const iteration = Number(field(prompt,'Current iteration'));
@@ -156,6 +181,7 @@ const coordinator = new Coordinator({...options, localModels, createRoleRuntime:
   }
   const operator = prompt.split('\nOperator turn:\n')[1] ?? prompt;
   if (operator.includes('scroll fixture')) return fixtureResponse(Array.from({length:60},(_,i)=>`SCROLL_LINE_${i}`).join('\n'));
+  if (operator.includes('plan reliability fixture')) return fixtureResponse(block('pi-plan',{schemaVersion:1,objective:'reliability fixture',summary:'Record the check without repair',acceptanceCriteria:['Observed failed-check result reported accurately'],relevantPaths:['check.test.mjs'],executionPlan:['Read check.test.mjs once. Run node --test --test-reporter=tap check.test.mjs once. Report and stop including on failure.'],constraints:['No writes, repair, diagnosis, or reruns']}));
   if (operator.includes('plan')) return fixtureResponse('Plan prose retained.\n' + block('pi-plan',{schemaVersion:1,objective:prompt.includes('stream failure')?'stream failure':prompt.includes('B compaction fixture')?'B compaction fixture':prompt.includes('activity narrative')?'activity narrative':prompt.includes('history stress')?'history stress':prompt.includes('tool failure')?'tool failure':prompt.includes('cancel-execution')?'cancel-execution':prompt.includes('cancel-review')?'cancel-review':prompt.includes('review cap')?'review cap':'Write fixture result',summary:'Ready',acceptanceCriteria:['result file verified'],relevantPaths:['result.txt'],executionPlan:['Write result.txt','Verify content']}));
   return fixtureResponse('## Discussion\nUnicode 界 😀\n```ts\nconst result = "ok";\n```\nTERMINAL_DISCUSSION_OK');
 }}});

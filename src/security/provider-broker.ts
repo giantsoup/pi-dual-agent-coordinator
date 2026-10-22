@@ -6,6 +6,7 @@ import { protectSecret, redactText } from "./redact.js";
 import { loadCredential } from "./credentials.js";
 import { LM_STUDIO_BASE_URL, QWEN38_MODEL_ID } from "./models.js";
 import { providerBrokerPorts } from "./local-network.js";
+import { OpenAiTokenCounter } from "./openai-token-counter.js";
 
 export const trustedProviderEndpoint = "https://api.openai.com/v1/responses";
 export function assertProviderEndpoint(value: string): void {
@@ -17,9 +18,22 @@ export function assertSafeProviderEnvironment(): void {
   }
 }
 
+export interface ProviderDiagnostic {
+  phase: "request_started" | "first_body_chunk" | "settled";
+  providerRequestId: string;
+  elapsedMs: number;
+  deadlineMs: number;
+  idleDeadlineMs: number;
+  activeToolCount: number;
+  chunks: number;
+  bytes: number;
+  outcome?: "completed" | "idle" | "deadline" | "client_disconnect" | "shutdown" | "upstream_rejected" | "transport_or_validation_failure";
+}
+
 export interface ProviderBroker {
   baseUrl: string;
   token: string;
+  countInputTokens?(payload: unknown, signal?: AbortSignal): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -27,12 +41,15 @@ type BrokerStop = { kind: "idle" | "deadline"; milliseconds: number }
   | { kind: "client_disconnect" | "shutdown" };
 
 export async function createProviderBroker(options: {
+  onDiagnostic?: ((event: ProviderDiagnostic) => void) | undefined;
   provider?: "openai" | "lm-studio" | undefined;
   cwd: string;
   modelIds: string[];
   resolveLocalInstanceId?: (() => Promise<string>) | undefined;
   load?: (() => Promise<string>) | undefined;
   request?: typeof fetch | undefined;
+  /** Trusted fixture transport for token counting; never exposed through config or role tools. */
+  countRequest?: typeof fetch | undefined;
   maxRequests?: number | undefined;
   maxOutputTokens?: number | undefined;
   timeoutMs?: number | undefined;
@@ -40,8 +57,8 @@ export async function createProviderBroker(options: {
 }): Promise<ProviderBroker> {
   assertSafeProviderEnvironment();
   const local = options.provider === "lm-studio";
-  const timeoutMs = options.timeoutMs ?? (local ? 30 * 60_000 : 120_000);
-  const idleTimeoutMs = local ? options.idleTimeoutMs ?? 120_000 : undefined;
+  const timeoutMs = options.timeoutMs ?? 30 * 60_000;
+  const idleTimeoutMs = options.idleTimeoutMs ?? 120_000;
   for (const value of [timeoutMs, options.idleTimeoutMs]) {
     if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647)) throw new Error("Provider timeout must be a positive whole number within the supported timer range.");
   }
@@ -53,6 +70,10 @@ export async function createProviderBroker(options: {
   const releaseKey = local ? () => {} : protectSecret(key);
   const releaseToken = protectSecret(token);
   const request = options.request ?? fetch;
+  const tokenCounter = !local && options.maxOutputTokens === undefined ? new OpenAiTokenCounter(options.modelIds, (body, signal) =>
+    (options.countRequest ?? request)(`${trustedProviderEndpoint}/input_tokens`, {
+      method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, redirect: "error", signal
+    })) : undefined;
   let requests = 0;
   const controllers = new Map<AbortController, (reason: BrokerStop) => void>();
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
@@ -66,6 +87,16 @@ export async function createProviderBroker(options: {
     if (req.method !== "POST" || req.url !== operation) {
       res.writeHead(400).end('{"error":{"message":"Provider operation rejected"}}'); return;
     }
+    const started = performance.now();
+    const providerRequestId = randomBytes(12).toString("hex");
+    let activeToolCount = 0; let chunks = 0; let receivedBytes = 0;
+    let outcome: NonNullable<ProviderDiagnostic["outcome"]> = "transport_or_validation_failure";
+    const diagnostic = (phase: ProviderDiagnostic["phase"]) => {
+      // Diagnostics cannot affect request, cancellation, or SSE ownership.
+      try { options.onDiagnostic?.({ phase, providerRequestId, elapsedMs: performance.now() - started,
+        deadlineMs: timeoutMs, idleDeadlineMs: idleTimeoutMs, activeToolCount, chunks, bytes: receivedBytes,
+        ...(phase === "settled" ? { outcome } : {}) }); } catch { /* Observers are best effort. */ }
+    };
     const controller = new AbortController();
     let stopped: BrokerStop | undefined;
     const stop = (reason: BrokerStop) => {
@@ -93,6 +124,8 @@ export async function createProviderBroker(options: {
         if (typeof limit !== "number" || limit > options.maxOutputTokens) throw new Error("Output budget required");
         if ("tools" in parsed && Array.isArray(parsed.tools) && parsed.tools.length > 0) throw new Error("Smoke test tools forbidden");
       }
+      activeToolCount = "tools" in parsed && Array.isArray(parsed.tools) ? parsed.tools.length : 0;
+      diagnostic("request_started");
       requests++;
       if (local) {
         const instanceId = await options.resolveLocalInstanceId?.();
@@ -106,7 +139,7 @@ export async function createProviderBroker(options: {
       }
       if (!local) assertProviderEndpoint(endpoint);
       controller.signal.throwIfAborted();
-      if (idleTimeoutMs !== undefined) idleTimer = setTimeout(() => stop({ kind: "idle", milliseconds: idleTimeoutMs }), idleTimeoutMs);
+      idleTimer = setTimeout(() => stop({ kind: "idle", milliseconds: idleTimeoutMs }), idleTimeoutMs);
       const upstream = await request(endpoint, {
         method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body, redirect: "error", signal: controller.signal
@@ -114,6 +147,7 @@ export async function createProviderBroker(options: {
       idleTimer?.refresh();
       controller.signal.throwIfAborted();
       if (!upstream.ok || !upstream.body || upstream.redirected) {
+        outcome = "upstream_rejected";
         const overflow = await isProviderContextOverflow(upstream) && !upstream.redirected;
         res.writeHead(upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502,
           { "Content-Type": "application/json" }).end(JSON.stringify({ error: overflow ? { code: "context_length_exceeded", message: "Model context limit exceeded" } : { message: local ? "LM Studio request failed; start the local server and load the selected model with 65536 context tokens." : "OpenAI request failed; check credential, permissions, quota, and model access." } }));
@@ -126,7 +160,10 @@ export async function createProviderBroker(options: {
       let bytes = 0;
       for await (const chunk of Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream)) {
         controller.signal.throwIfAborted();
-        if (chunk.length > 0) idleTimer?.refresh();
+        if (chunk.length > 0) {
+          idleTimer?.refresh(); receivedBytes += chunk.length; chunks++;
+          if (chunks === 1) diagnostic("first_body_chunk");
+        }
         bytes += chunk.length;
         if (bytes > 16 * 1024 * 1024) throw new Error("Response limit");
         pending += decoder.decode(chunk, { stream: true });
@@ -137,19 +174,20 @@ export async function createProviderBroker(options: {
       }
       clearTimers();
       res.end(redactText(pending + decoder.decode()));
+      outcome = "completed";
     } catch {
       clearTimers();
       if (res.destroyed) return;
-      const message = stopped?.kind === "idle" ? `LM Studio response stalled: no upstream data for ${stopped.milliseconds / 1000} seconds. No automatic replay was attempted.`
+      const message = stopped?.kind === "idle" ? `${local ? "LM Studio" : "OpenAI"} response stalled: no upstream data for ${stopped.milliseconds / 1000} seconds. No automatic replay was attempted.`
         : stopped?.kind === "deadline" ? `${local ? "LM Studio" : "OpenAI"} response exceeded the ${stopped.milliseconds / 1000}-second request deadline. No automatic replay was attempted.`
         : stopped?.kind === "shutdown" ? "Provider broker shut down. No automatic replay was attempted."
-        : local ? "LM Studio request interrupted, unavailable or rejected. Check the local server and model. No cloud fallback or automatic replay." : "Trusted provider request unavailable or rejected.";
+        : local ? "LM Studio request interrupted, unavailable or rejected. Check the local server and model. No cloud fallback or automatic replay." : "OpenAI request interrupted, unavailable or rejected. Check the connection and provider status. No automatic replay was attempted.";
       if (res.headersSent) {
-        // Pending partial SSE lines stay private. Pi's Chat Completions SDK accepts an error frame.
+        // Discard pending partial lines and return the provider's native SSE error shape.
         if (local) res.end(`\ndata: ${JSON.stringify({ error: { message } })}\n\n`);
-        else res.destroy();
+        else res.end(`\nevent: error\ndata: ${JSON.stringify({ type: "error", code: "provider_stream_interrupted", message, param: null, sequence_number: 0 })}\n\n`);
       } else res.writeHead(stopped?.kind === "idle" || stopped?.kind === "deadline" ? 504 : 502, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message } }));
-    } finally { clearTimers(); controllers.delete(controller); }
+    } finally { outcome = stopped?.kind ?? outcome; diagnostic("settled"); clearTimers(); controllers.delete(controller); }
   };
   const server = createServer((req, res) => { void handle(req, res); });
   server.requestTimeout = 125_000;
@@ -177,12 +215,14 @@ export async function createProviderBroker(options: {
     if (!address || typeof address === "string") throw new Error("Broker startup failed");
     return {
       baseUrl: `http://127.0.0.1:${address.port}/v1`, token,
+      ...(tokenCounter ? { countInputTokens: (payload: unknown, signal?: AbortSignal) => tokenCounter.count(payload, signal) } : {}),
       close: async () => {
         for (const stop of controllers.values()) stop({ kind: "shutdown" });
+        await tokenCounter?.close();
         server.closeAllConnections();
         await new Promise<void>((resolve) => server.close(() => resolve()));
         releaseKey(); releaseToken();
       }
     };
-  } catch { server.close(); releaseKey(); releaseToken(); throw new Error("Trusted provider broker could not start."); }
+  } catch { await tokenCounter?.close(); server.close(); releaseKey(); releaseToken(); throw new Error("Trusted provider broker could not start."); }
 }

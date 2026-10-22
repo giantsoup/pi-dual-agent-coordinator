@@ -8,7 +8,7 @@ import { createExecutionSupervisor, ExecutionCheckInError } from "../../src/coor
 import { TelemetryLogger } from "../../src/telemetry/logger.js";
 import { Metrics } from "../../src/telemetry/metrics.js";
 import { protectSecret } from "../../src/security/redact.js";
-import type { HandoffEnvelope } from "../../src/types/handoff.js";
+import type { CompletionRecord, HandoffEnvelope } from "../../src/types/handoff.js";
 import { assistantMessage, assistantTurnEnd, createFakeBinding, FakeRuntime, FakeSession } from "../helpers/fakes.js";
 import type { ModelTurnEnd } from "../../src/runtime/create-role-runtime.js";
 
@@ -26,7 +26,7 @@ function toolTurn(text = "Inspecting parser"): ModelTurnEnd {
   return { type: "turn_end", message, toolResults: [{ role: "toolResult", toolCallId: "read", toolName: "read", content: [{ type: "text", text: "OK" }], isError: false, timestamp: Date.now() }] };
 }
 
-async function setup(response: (count: number) => Record<string, unknown> | string = () => ({ decision: "continue", nextSteps: [] }), iteration = 1) {
+async function setup(response: (count: number) => Record<string, unknown> | string = () => ({ decision: "continue", nextSteps: [] }), iteration = 1, recoveryBudget = { redirects: 0 }) {
   const root = await mkdtemp(join(tmpdir(), "pi-supervisor-")); roots.push(root);
   const bridge = new RuntimeEventBridge(new TelemetryLogger({ filePath: join(root, "events"), jsonLogs: false, verbose: false }), new Metrics());
   const session = new FakeSession("A", undefined, async (text) => {
@@ -41,7 +41,7 @@ async function setup(response: (count: number) => Record<string, unknown> | stri
   await bridge.bind(bindingA);
   const events: string[] = [];
   const progress: Record<string, unknown>[] = [];
-  const supervisor = createExecutionSupervisor({ bindingA, bridge, envelope: { ...envelope, iteration }, cwd: root,
+  const supervisor = createExecutionSupervisor({ bindingA, bridge, envelope: { ...envelope, iteration }, cwd: root, recoveryBudget,
     setUiState: () => {}, logEvent: (type, details) => {
       if (type === "workflow.execution_progress") progress.push(details);
       else events.push(type);
@@ -59,6 +59,83 @@ async function setup(response: (count: number) => Record<string, unknown> | stri
 }
 
 describe("execution supervisor", () => {
+  it.each([
+    '[TOOL_CALL]{"name":"read","path":"reading-list-test/README.md"}[END_TOOL_CALL]',
+    '[tool_call]{"name":"write","path":"parser.ts","content":"UNTRUSTED"}[end_tool_call]',
+    '[TOOL_CALL]{"name":"read","path":"parser.ts"',
+    '[END_TOOL_CALL]',
+    '[TOOL_REQUEST]{"name":"read","path":"parser.ts"}[END_TOOL_REQUEST]'
+  ])("recovers bracketed tool text without interpreting its arguments: %s", async (printed) => {
+    const run = await setup();
+    try {
+      const steering = await run.supervisor({ type: "turn_end", message: assistantMessage(printed), toolResults: [] }, run.signal);
+      expect(steering).toContain("No tool call was executed by that text");
+      expect(steering).toContain("Tools remain enabled");
+      expect(steering).toContain("preserving its stop condition");
+      expect(steering).toContain("stop without further tools");
+      expect(steering).toContain("For a verification-only handoff");
+      expect(steering).toContain("Continue explicitly authorized implementation and verification");
+      expect(steering).not.toContain("UNTRUSTED");
+      expect(run.events).toEqual(["workflow.tool_recovery_redirected"]);
+      expect(run.progress.at(-1)?.completedTurns).toBe(0);
+    } finally { run.bridge.dispose(); }
+  });
+
+  it("does not treat marker text inside a valid completion as a tool request", async () => {
+    const run = await setup();
+    try {
+      const completion: CompletionRecord = { schemaVersion: 1, workflowId: "workflow", handoffId: "handoff", iteration: 1,
+        summary: "The provider printed [TOOL_CALL] instead of executing", changedPaths: [], verification: [], openQuestions: ["Unable to execute"] };
+      const steering = await run.supervisor({ type: "turn_end", message: assistantMessage("```pi-completion\n" + JSON.stringify(completion) + "\n```"), toolResults: [] }, run.signal);
+      expect(steering).toBeUndefined();
+      expect(run.events).toEqual([]);
+      expect(run.progress.at(-1)?.checkIn).toEqual({ kind: "final_review" });
+    } finally { run.bridge.dispose(); }
+  });
+
+  it("shares the three-redirect budget across workflow handoffs", async () => {
+    const budget = { redirects: 0 };
+    const first = await setup(undefined, 1, budget);
+    const second = await setup(undefined, 2, budget);
+    const malformed = { type: "turn_end", message: assistantMessage("<tool_call>\n[]\n[END_TOOL_REQUEST]"), toolResults: [] } satisfies ModelTurnEnd;
+    try {
+      await first.supervisor(malformed, first.signal);
+      await first.supervisor(malformed, first.signal);
+      await second.supervisor(malformed, second.signal);
+      await expect(second.supervisor(malformed, second.signal)).rejects.toThrow("tool-call recovery exhausted");
+      expect(budget.redirects).toBe(3);
+    } finally { first.bridge.dispose(); second.bridge.dispose(); }
+  });
+  it("never interprets printed tool arguments and does not recover an unknown native result", async () => {
+    const run = await setup();
+    try {
+      const printed = '<tool_call>{"name":"write","arguments":{"path":"parser.ts","content":"UNTRUSTED"}}</tool_call>';
+      const steering = await run.supervisor({ type: "turn_end", message: assistantMessage(printed), toolResults: [] }, run.signal);
+      expect(steering).toContain("No tool call was executed by that text");
+      expect(steering).not.toContain("UNTRUSTED");
+      expect(run.progress.at(-1)?.completedTurns).toBe(0);
+      const unknown = toolTurn(); unknown.toolResults = [];
+      await expect(run.supervisor(unknown, run.signal)).rejects.toThrow("without retrying a possible write");
+      expect(run.events.filter((event) => event === "workflow.tool_recovery_redirected")).toHaveLength(1);
+    } finally { run.bridge.dispose(); }
+  });
+
+  it("requires native evidence from the current handoff, while permitting an honest no-action blocker", async () => {
+    const run = await setup();
+    const completion: CompletionRecord = { schemaVersion: 1, workflowId: "workflow", handoffId: "handoff", iteration: 1,
+      summary: "Unable to execute", changedPaths: [], verification: [], openQuestions: ["Tool unavailable"] };
+    try {
+      expect(() => run.supervisor.assertCompletionEvidence(completion)).not.toThrow();
+      expect(() => run.supervisor.assertCompletionEvidence({ ...completion, verification: ["Tests passed"] })).toThrow("no native tool results");
+      const failed = toolTurn(); failed.toolResults.forEach((result) => { result.isError = true; });
+      await run.supervisor(failed, run.signal);
+      expect(() => run.supervisor.assertCompletionEvidence({ ...completion, changedPaths: ["parser.ts"] })).toThrow("no successful native tool results");
+      expect(() => run.supervisor.assertCompletionEvidence({ ...completion, verification: ["Read parser.ts failed"] })).not.toThrow();
+      await run.advance(1);
+      expect(() => run.supervisor.assertCompletionEvidence({ ...completion, verification: ["Read parser.ts"] })).not.toThrow();
+    } finally { run.bridge.dispose(); }
+  });
+
   it("publishes the same completed-turn counter for multi-tool turns and senior check-ins", async () => {
     const run = await setup();
     try {
@@ -107,7 +184,8 @@ describe("execution supervisor", () => {
         if (failure === "truncated response") event.message.stopReason = "length";
         if (failure === "invalid completion") { event.message = assistantMessage("Done without a completion block"); event.toolResults = []; }
       }
-      await run.supervisor(event, run.signal);
+      if (failure === "missing tool result") await expect(run.supervisor(event, run.signal)).rejects.toThrow("tool result is unknown");
+      else await run.supervisor(event, run.signal);
       expect(run.session.prompts).toHaveLength(0);
       expect(run.progress.at(-1)?.completedTurns).toBe(9);
     } finally { run.bridge.dispose(); }

@@ -18,8 +18,9 @@ no credential values. There is no public credential-export command.
 The trusted broker holds the project key in memory. Pi receives a fresh random
 broker capability in an asynchronous `ModelRuntime` with an in-memory credential store, never the project key. Its
 built-in OpenAI Responses provider sends requests to the broker. The broker
-replaces authentication, constructs its own headers, and forwards only
+replaces authentication, constructs its own headers, and its inference route forwards only
 `POST https://api.openai.com/v1/responses` for Agent A's selected approved model.
+The separate private A-only input-counting capability is described below.
 Redirects are forbidden. Endpoint, proxy, TLS, and Node injection overrides fail
 closed. Neither `auth.json` nor `models.json` is evaluated for authentication.
 
@@ -36,13 +37,14 @@ later by another role or replacement runtime. Startup fails when the range is fu
 Treat LM Studio and its loaded model as trusted inference software; do not attach
 external execution integrations to this server for coordinator requests.
 
-B's broker has a 120-second upstream inactivity limit and a separate 30-minute
-absolute request limit. Headers and nonempty upstream chunks refresh only the
-inactivity timer. A keeps its 120-second absolute limit. The coordinator's total
-operation deadline and cancellation still take precedence. Local streaming errors
-use fixed, safe SSE messages rather than raw upstream exceptions. Pending partial
-SSE lines are discarded on failure. Neither timeout nor transport failure grants
-permission to replay tools or handoffs.
+Both brokers have a 120-second upstream inactivity limit and a separate
+30-minute absolute request limit. Headers and nonempty upstream chunks refresh
+only the inactivity timer. The coordinator's total operation deadline and
+cancellation still take precedence. Explicitly shorter request limits, including
+the no-tools live smoke check, remain enforced. Streaming errors use the selected
+provider's SSE error format with fixed, safe messages rather than raw upstream
+exceptions. Pending partial SSE lines are discarded on failure. Neither timeout
+nor transport failure grants permission to replay tools or handoffs.
 
 The broker discards upstream error bodies and response headers. Whole SSE lines
 are redacted before returning to Pi, including credential strings split across
@@ -184,6 +186,16 @@ block labels (`pi-plan` and legacy `pi-execute`) wait for explicit operator
 blocks affect workflow state only at stable `turn_end` boundaries. Rendering
 never triggers transitions. Persistence and session subscriptions remain
 coordinator-owned.
+
+Report formatting never removes tools from a live role session. A separate Pi
+Agent has an empty executable registry and receives source history as inert text,
+with private reasoning omitted and tool images replaced by explicit notices.
+Native calls from that formatter are rejected before execution. It uses only
+the same role's selected model and broker, with normal input/output admission,
+no provider retries, and the active operation's cancellation signal. Its records
+are archived outside model replay. Execution recovery keeps authorized tools;
+unknown native outcomes still stop without automatic replay. Tools remain absent
+from the separate compaction summarizer and bounded authentication smoke jobs.
 
 ## Verification and failure policy
 
@@ -342,10 +354,23 @@ metadata calls at `ws://127.0.0.1:1234`. Automatic endpoint discovery and model
 loading are not used. This adds no role tool or sandbox network grant. The same
 verified loaded instance is checked before and after counting. Unsupported
 formats, including images without verified accounting, stop before inference.
+Tool images remain in the archive but become explicit text notices in both roles'
+provider projections before preflight and final admission. The same projection
+applies to restored sessions. Image-only results cannot inject uncounted pixels
+or silently stand in for visual verification. Direct image inputs still fail
+closed. No vision estimate, cloud fallback, or tool replay is introduced.
 Private B reasoning remains archived but is stripped from the replay payload
 before counting and inference. The final request must fit the selected window with output allowance and safety
-margin. A text requests use a conservative byte allowance, which can reject
-requests earlier than a tokenizer would.
+margin. A's trusted broker also owns a private counting method pinned to
+`POST https://api.openai.com/v1/responses/input_tokens`. It accepts only approved
+models and the supported serialized input fields, rejects conversation references
+and redirects, bounds replies to 8 KiB and calls to 15 seconds, and validates the
+returned integer. Failures produce a fixed diagnostic and never trigger compaction
+or inference retries. Four input hashes/counts are cached; raw input is not cached.
+Broker disposal aborts and drains pending counts. The method has no HTTP broker
+route or role-tool exposure and is absent from B and bounded smoke brokers.
+Only explicit fixture backends can replace the counting transport. Smoke requests
+retain conservative byte admission to preserve their single-upstream-request bound.
 
 The broker reads at most 8 KiB of known error-status bodies to classify context
 overflow. Only a fixed error category/message crosses the boundary; arbitrary

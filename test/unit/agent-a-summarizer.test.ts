@@ -22,7 +22,7 @@ it("bounds a giant previous summary and accounts for every chunk's usage", async
   let calls = 0;
   const summarizer = new AgentASummarizer({ cwd: "/fixture", model, thinking: "low", testBackend: { cwd: "/fixture", modelIds: [], load: async () => "dummy-key",
     request: async () => { calls++; return fixtureResponse("Objective and verified result retained. Continue safely."); } } });
-  const input = request(); input.preparation.previousSummary = "界".repeat(60000);
+  const input = request(); input.preparation.previousSummary = "界".repeat(120000);
   try {
     const result = await summarizer.summarize(input, new AbortController().signal);
     expect(calls).toBeGreaterThan(1); expect(calls).toBeLessThanOrEqual(8);

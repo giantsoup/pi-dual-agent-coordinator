@@ -30,6 +30,9 @@ describe("renderReviewMessage", () => {
     expect(message).toContain("what Agent B changed");
     expect(message).toContain("what verification ran");
     expect(message).toContain("not as a tool call");
+    expect(message).toContain("native observation metadata was not retained");
+    expect(message).toContain("Failed checks do not satisfy an implementation requirement");
+    expect(message).toContain("pipeline can mask a failed child process");
     expect(message).toContain("End your turn with exactly one `pi-final` or `pi-handoff` JSON block");
   });
 });

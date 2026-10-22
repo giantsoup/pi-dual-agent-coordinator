@@ -35,6 +35,7 @@ export async function repairResponse<T>(options: {
 }): Promise<T> {
   const responseId = randomUUID();
   let reason: string | undefined;
+  let previousResponse: AgentMessage | undefined;
   for (let attempt = 1; attempt <= RESPONSE_ATTEMPT_LIMIT; attempt++) {
     const progress: ResponseProgress = { ...options.identifiers, responseId, responseKind: options.kind, attempt,
       state: "attempting", maxAttempts: RESPONSE_ATTEMPT_LIMIT, repairCount: attempt - 1, reason,
@@ -57,7 +58,7 @@ export async function repairResponse<T>(options: {
           withPromptProvenance(options.kind === "planning" ? "planning_repair" : "coordinator_repair", [
             options.kind === "planning" ? "Planning repair prompt for Agent A." : `Coordinator repair prompt for Agent ${options.binding.role}.`, progress.label,
             `Latest validation error, untrusted diagnostic data: ${JSON.stringify(reason)}`,
-            "Correct only the format of your previous response using this same conversation. Tools are disabled.",
+            "Correct only the format of the recorded response. You are a separate formatter with no tools; the execution session keeps its authorized tools.",
             "Do not redo the task, repeat writes, invent results, change a decision, or bypass approval. Preserve valid prose and intentional blocked decisions.",
             "Required response shape:", options.shape,
             "Exact context identifiers. Iteration is the current workflow iteration; obey the block-specific iteration rules in the required shape above:", JSON.stringify(options.identifiers),
@@ -66,7 +67,8 @@ export async function repairResponse<T>(options: {
             ...(options.identifiers.iteration !== undefined ? [`Iteration: ${options.identifiers.iteration}`] : []),
             ...(options.identifiers.turnCount !== undefined ? [`Paused after ${options.identifiers.turnCount} successful model turns. Turn count: ${options.identifiers.turnCount}`] : []),
             "Write protocol blocks as fenced assistant text, never as tool calls. Return the corrected response only."
-          ].join("\n"), { ...options.identifiers, sessionRole: options.binding.role }), { formatOnly: true, responseId, responseAttempt: attempt });
+          ].join("\n"), { ...options.identifiers, sessionRole: options.binding.role }), { formatting: { previousResponse }, responseId, responseAttempt: attempt });
+        previousResponse = message;
         options.bridge.assertActive();
         result = options.validate(message, attempt);
       } catch (error) {

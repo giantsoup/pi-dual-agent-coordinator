@@ -35,3 +35,14 @@ export function parseToolResult(value: unknown): AgentToolResult<unknown> {
   }
   return result;
 }
+
+const shellMetadataSchema = z.object({ exit_code: z.number().int(), truncated: z.boolean() });
+
+/** Pi archives details but not structuredContent. Retain validated shell status before projection. */
+export function retainShellMetadata(result: AgentToolResult<unknown>): AgentToolResult<unknown> {
+  const native = shellMetadataSchema.safeParse(result.structuredContent);
+  if (!native.success) return result;
+  const details = result.details && typeof result.details === "object" && !Array.isArray(result.details) ? result.details : {};
+  return { ...result, details: { ...details, piDualShell: { exitCode: native.data.exit_code,
+    outputTruncated: native.data.truncated || "truncation" in details } } };
+}

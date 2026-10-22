@@ -192,7 +192,7 @@ describe("selected workspace through shared history service", () => {
       expect(lines.join("\n")).toContain("CURRENT REQUEST 1");
       expect(lines.join("\n")).toContain("B turns: 9 successful / A check at 10");
       const tool = lines.findIndex((line) => line.includes("[running] bash verify-current-work"));
-      const active = lines.findIndex((line) => line.includes("Active: B - Junior"));
+      const active = lines.findIndex((line) => line.includes("Current / B - Junior"));
       expect(tool).toBeGreaterThan(-1);
       expect(active).toBeGreaterThan(tool);
       expect(lines.slice(active + 1).join("\n")).not.toContain("[completed]");
@@ -211,7 +211,7 @@ describe("selected workspace through shared history service", () => {
       const lines = strip(app.render(width).join("\n")).split("\n");
       const check = lines.findIndex((line) => line.includes("[completed] Check-in"));
       const resumed = lines.findIndex((line) => line.includes("[running] read after-check.txt"));
-      const active = lines.findIndex((line) => line.includes("Active: B - Junior"));
+      const active = lines.findIndex((line) => line.includes("Current / B - Junior"));
       expect(check).toBeGreaterThan(-1);
       expect(resumed).toBeGreaterThan(check);
       expect(active).toBeGreaterThan(resumed);
@@ -219,9 +219,9 @@ describe("selected workspace through shared history service", () => {
       expect(lines).toHaveLength(height);
       app.handleInput("\x1bOQ"); // F2 opens the optional activity panel.
       const activity = strip(app.render(width).join("\n")).split("\n");
-      expect(activity.findIndex((line) => line.includes("Active: B - Junior"))).toBeGreaterThan(activity.findIndex((line) => line.includes("Activity")));
+      expect(activity.findIndex((line) => line.includes("Current / B - Junior"))).toBeGreaterThan(activity.findIndex((line) => line.includes("Activity")));
       expect(activity.some((line) => line.includes("Now:"))).toBe(false);
-      expect(activity.slice(activity.findIndex((line) => line.includes("Active: B - Junior")) + 1).join("\n")).not.toContain("[completed]");
+      expect(activity.slice(activity.findIndex((line) => line.includes("Current / B - Junior")) + 1).join("\n")).not.toContain("[completed]");
       expect(activity.join("\n")).toContain("B turns: 10 successful / A check at 20");
     } finally { await service.dispose(); }
   });
@@ -242,7 +242,7 @@ describe("selected workspace through shared history service", () => {
       expect(lines.join("\n")).toContain("h help");
     }
     expect(app.render(80).join("\n")).toContain("precious draft");
-    expect(app.render(80).join("\n")).toContain("Active: A - Senior");
+    expect(app.render(80).join("\n")).toContain("Current / A - Senior");
     expect(app.render(80).join("\n")).toContain("B - Junior");
     app.handleInput("\x1b");
     expect(app.render(80).join("\n")).toContain("file-0");
@@ -305,7 +305,7 @@ it.each(["A", "B"] as const)("keeps %s workspace and inspector prose on terminal
       vi.stubEnv("COLORFGBG", background);
       for (const width of [80, 120]) {
         const lines = app.render(width);
-        expect(lines.join("\n")).toContain(`Active: ${role === "A" ? "A - Senior" : "B - Junior"}`);
+        expect(lines.join("\n")).toContain(`Current / ${role === "A" ? "A - Senior" : "B - Junior"}`);
         expect(lines.find((line) => line.includes("CURRENT REQUEST"))).toContain(accent);
         expect(lines.find((line) => line.includes("Inspect tools"))).toContain("\x1b[39;49mInspect tools");
         expect(lines.join("\n")).not.toMatch(/\x1b\[(?:[^m]*;)?(?:4[0-8]|10[0-7])(?:;|m)/);

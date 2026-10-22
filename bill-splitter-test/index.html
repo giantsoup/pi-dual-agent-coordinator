@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tip Calculator &amp; Bill Splitter</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="card">
+    <h1>Tip Calculator &amp; Bill Splitter</h1>
+
+    <form id="split-form" novalidate>
+      <div class="field">
+        <label for="bill">Bill amount</label>
+        <p class="help" id="bill-help">Between $0.00 and $1,000,000.00.</p>
+        <input
+          type="text"
+          id="bill"
+          name="bill"
+          inputmode="decimal"
+          autocomplete="off"
+          aria-describedby="bill-help bill-error"
+          aria-invalid="false"
+        >
+        <p class="error" id="bill-error" hidden></p>
+      </div>
+
+      <div class="field">
+        <label for="tip">Tip percentage</label>
+        <p class="help" id="tip-help">Between 0 and 100%.</p>
+        <input
+          type="text"
+          id="tip"
+          name="tip"
+          inputmode="decimal"
+          autocomplete="off"
+          value="15"
+          aria-describedby="tip-help tip-error"
+          aria-invalid="false"
+        >
+        <p class="error" id="tip-error" hidden></p>
+      </div>
+
+      <div class="field">
+        <label for="people">Number of people</label>
+        <p class="help" id="people-help">Whole number from 1 to 50.</p>
+        <input
+          type="text"
+          id="people"
+          name="people"
+          inputmode="numeric"
+          autocomplete="off"
+          value="2"
+          aria-describedby="people-help people-error"
+          aria-invalid="false"
+        >
+        <p class="error" id="people-error" hidden></p>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="primary">Calculate</button>
+        <button type="reset">Reset</button>
+      </div>
+    </form>
+
+    <section id="results" aria-live="polite" aria-atomic="true" hidden>
+      <h2>Results</h2>
+      <dl>
+        <dt>Tip</dt>
+        <dd id="result-tip"></dd>
+        <dt>Total</dt>
+        <dd id="result-total"></dd>
+      </dl>
+      <h3>Per person</h3>
+      <ul id="result-shares"></ul>
+    </section>
+  </main>
+
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>

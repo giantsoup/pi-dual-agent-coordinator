@@ -10,6 +10,23 @@ import { TelemetryLogger } from "../../src/telemetry/logger.js";
 import { assistantMessage, assistantTurnEnd, createFakeBinding, FakeRuntime, FakeSession } from "../helpers/fakes.js";
 
 describe("runtime event bridge", () => {
+  it.each([false, true])("uses the settled final turn after text-only steering, provider failure=%s", async (failure) => {
+    const root = mkdtempSync(join(tmpdir(), "pi-bridge-steered-"));
+    const bridge = new RuntimeEventBridge(new TelemetryLogger({ filePath: join(root, "events"), jsonLogs: false, verbose: false }), new Metrics());
+    const session = new FakeSession("B", undefined, async () => {
+      await session.emit(assistantTurnEnd("<tool_call>\n[]\n[END_TOOL_REQUEST]"));
+      const final = assistantMessage("Final observed result");
+      if (failure) { final.stopReason = "error"; final.errorMessage = "provider failed after steering"; }
+      await session.emit({ type: "turn_end", message: final, toolResults: [] });
+    });
+    const binding = createFakeBinding("B", new FakeRuntime(root, session, "B")); await bridge.bind(binding);
+    try {
+      const work = bridge.promptAndWaitForTurnEnd(binding, "task");
+      if (failure) await expect(work).rejects.toThrow("provider failed after steering");
+      else await expect(work).resolves.toMatchObject({ content: [{ text: "Final observed result" }] });
+    } finally { bridge.dispose(); }
+  });
+
   it("uses the final assistant turn after tools, rather than an intermediate tool request", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-bridge-tools-"));
     const bridge = new RuntimeEventBridge(new TelemetryLogger({filePath:join(root,"events"),jsonLogs:false,verbose:false}),new Metrics());
@@ -69,7 +86,7 @@ it("keeps provider failures separate even when a partial tool call was streamed"
     await session.emit({ type: "turn_end", message, toolResults: [] });
   });
   const binding = createFakeBinding("A", new FakeRuntime(root, session, "A")); await bridge.bind(binding);
-  try { await expect(bridge.promptAndWaitForTurnEnd(binding, "task", { formatOnly: true, responseId: "response" })).rejects.toThrow("provider authentication failed"); }
+  try { await expect(bridge.promptAndWaitForTurnEnd(binding, "task", { formatting: {}, responseId: "response" })).rejects.toThrow("provider authentication failed"); }
   finally { bridge.dispose(); }
 });
 

@@ -70,7 +70,7 @@ it("requires trusted A summarization instead of local self-compaction", async ()
   const manager = SessionManager.inMemory(options.cwd);
   manager.appendMessage({ role: "user", content: "Earlier task to preserve", timestamp: 1 });
   manager.appendMessage({ role: "user", content: "Historical context ".repeat(6000), timestamp: 1 });
-  const binding = await createRoleRuntime({ ...options, initialSessionManager: manager, role: "B", providerTestBackend: { ...options, modelIds: [], load,
+  const binding = await createRoleRuntime({ ...options, agentDir: join(options.sessionRoot, "agent"), initialSessionManager: manager, role: "B", providerTestBackend: { ...options, modelIds: [], load,
     request: async (url, init) => {
       expect(url).toBe(`${LM_STUDIO_BASE_URL}/chat/completions`);
       expect(JSON.parse(String(init?.body)).model).toBe("qwen/qwen3.8-27b");

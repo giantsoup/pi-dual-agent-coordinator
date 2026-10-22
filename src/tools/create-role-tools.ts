@@ -1,7 +1,7 @@
 import { createCodingTools, createReadOnlyTools } from "@earendil-works/pi-coding-agent";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
-import { parseToolResult } from "./tool-result.js";
+import { parseToolResult, retainShellMetadata } from "./tool-result.js";
 import type { Role } from "../types/role.js";
 import { ToolIsolation, runIsolatedTool } from "../security/isolation.js";
 import { redactValue } from "../security/redact.js";
@@ -26,7 +26,8 @@ export function createRoleTools(options: CreateRoleToolsOptions): AgentTool<TSch
           isolation.verify();
           const result = await runIsolatedTool({ isolation, role: options.role, name: definition.name, args: redactValue(args), skillsDir: options.skillsDir,
             signal, onUpdate: (update) => onUpdate?.(redactValue(parseToolResult(update))) });
-          return redactValue(parseToolResult(result));
+          const parsed = parseToolResult(result);
+          return redactValue(definition.name === "bash" ? retainShellMetadata(parsed) : parsed);
         } finally { if (!options.isolation) isolation.dispose(); }
       }
     };
