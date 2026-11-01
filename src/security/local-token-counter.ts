@@ -1,4 +1,4 @@
-import { LMStudioClient, type ChatMessageData, type LLMTool } from "@lmstudio/sdk";
+import type { ChatMessageData, LLMTool } from "@lmstudio/sdk";
 import { z } from "zod";
 import type { PayloadCounter } from "../runtime/context-budget.js";
 import { ContextManagementError } from "../runtime/context-budget.js";
@@ -31,6 +31,7 @@ export function localTokenCounter(resolveInstance: () => Promise<string>): Paylo
         ...(tool.function.parameters.additionalProperties === undefined ? {} : { additionalProperties: tool.function.parameters.additionalProperties }),
         ...(tool.function.parameters.$defs === undefined ? {} : { $defs: tool.function.parameters.$defs }) } }) } }));
     const instanceId = await resolveInstance();
+    const { LMStudioClient } = await import("@lmstudio/sdk");
     const client = new LMStudioClient({ baseUrl: "ws://127.0.0.1:1234", logger: { debug() {}, info() {}, warn() {}, error() {} } });
     const abort = () => { void client[Symbol.asyncDispose]().catch(() => undefined); };
     const timeout = AbortSignal.timeout(15_000);
