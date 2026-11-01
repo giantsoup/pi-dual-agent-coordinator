@@ -80,5 +80,12 @@
     "@google/genai@2.21.0": true,
     "protobufjs@7.6.6": true,
     "fsevents": false
+  },
+  "overrides": {
+    "@earendil-works/pi-coding-agent": {
+      "undici": "8.12.2",
+      "minimatch": "11.0.1"
+    },
+    "zod": "$zod"
   }
 }
